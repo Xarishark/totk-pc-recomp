@@ -19,11 +19,10 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Features
 
-- Native code, not emulation
+- Native code, not emulation. it already runs on very old systems, while some effort can still be made, it uses a small amount of ram and VRAM to run
 - Base game 1.0.0 only
-- The game's own audio: music, effects and voices, through an SDL 3 device
-- Save data on the host disk, committed transactionally
-- Custom resolutions, AMD FSR 1 upscaling and a 1062p mode that pins the scene above the game's 1600x900
+- The game's own audio: music, effects and voices
+- Custom resolutions, AMD FSR 1 upscaling up to 4K
 - Anisotropic texture filtering up to 16x, for sharp ground into the distance
 - In-game settings menu (F1) and performance overlay (F10)
 - Setup and in-game menu in English, Russian, Brazilian Portuguese and Simplified Chinese
