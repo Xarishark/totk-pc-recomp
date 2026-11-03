@@ -54,9 +54,6 @@ files. The setup carries no game data and no code derived from the game.
 You need Windows 10 or 11 on x86-64 (SSE4.2 at least) and a Vulkan 1.3 graphics card. The exe is unsigned, so
 SmartScreen warns on the first start.
 
-Nothing is published yet: the release is being prepared. Until then, build from source
-([docs/building.md](docs/building.md)); the setup is described in [docs/installer.md](docs/installer.md).
-
 ## Credits
 
 Astral Chain Recomp builds on the pipeline of [TotK Recomp](https://github.com/valentderah/totk-pc-recomp), which
