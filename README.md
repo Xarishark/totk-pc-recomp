@@ -20,6 +20,7 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Features
 
 - Native code, not emulation. it already runs on very old systems, while some effort can still be made, it uses a small amount of ram and VRAM to run
+- Port has been externally tested (Reddit, Youtube, ..) and should be playable from intro to credits with no known visual issues
 - Base game 1.0.0 only
 - The game's own audio: music, effects and voices
 - Custom resolutions, AMD FSR 1 upscaling up to 4K
