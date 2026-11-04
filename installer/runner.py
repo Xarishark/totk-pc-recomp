@@ -3,8 +3,8 @@
 Each step has a key: a fingerprint of everything its output depends on, computed before anything runs (a step's key
 includes the keys of the steps it reads from, so a change upstream reaches every step below it). A step is skipped
 when astralchain-install.json records it with the same key and its output still matches the record (Step.current, cheap).
-Otherwise it runs. A transient step (its output lives in the temp folder and only the next step reads it) runs only
-when the next step runs. `always` steps (check, cleanup) run every time.
+Otherwise it runs. A transient step (whose output only the next step reads) runs only when the next step runs.
+`always` steps (check, cleanup) run every time.
 
 Update mode is the same rule with a newer release: the extraction's key depends only on the expected hashes, so a
 release that changes the lifter or the runtime keeps romfs/ and exefs/ and rebuilds from lift on. Before keeping the
@@ -53,6 +53,9 @@ class Step:
 class Context:
     def __init__(self, layout, dest, temp, reporter, options, state=None, verify=False):
         self.layout, self.dest, self.temp, self.reporter, self.options = layout, dest, temp, reporter, options
+        # status files, rebuild.txt and the lift/compile cache: it stays with the install, so a later lift and compile
+        # are incremental and a finished install leaves no temp folder behind
+        self.cache = dest / 'build-cache'
         self.state = state or statefile.empty(layout.release)
         self.verify = verify
         self.mode = 'install' if state is None else 'resume' if state.get('release') == layout.release else 'update'

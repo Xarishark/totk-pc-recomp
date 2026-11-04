@@ -313,7 +313,7 @@ class CleanupTest(unittest.TestCase):
         (self.dest / 'romfs' / 'index.json').write_text(json.dumps({'romfs_size': len(image), 'romfs_sha256': digest}))
         self.expected = {'romfs': {'size': len(image), 'sha256': digest}}
         self.ctx = SimpleNamespace(reporter=Reporter(out=io.StringIO(), log_path=base / 'x.log'), dest=self.dest,
-                                   temp=temp, lang='en-US', state={},
+                                   temp=temp, cache=self.dest / 'build-cache', lang='en-US', state={},
                                    layout=SimpleNamespace(ini_example=ROOT / 'astralchain.ini.example', dev=False,
                                                           python=base / 'python' / 'python.exe', root=base / 'release'))
         self.saved = steps.expected_game
@@ -334,15 +334,30 @@ class CleanupTest(unittest.TestCase):
     def test_intact_romfs_passes(self):
         self.assertEqual(self.run_cleanup(), 'ok')
 
-    def test_keeps_build_and_writes_rebuild_command(self):
-        for name in ('gen', 'build', 'check'):
+    def test_removes_the_scratch_and_writes_rebuild_command(self):
+        for name in ('check', 'shared-fonts'):
             (self.ctx.temp / name).mkdir()
+        (self.ctx.temp / 'expected-install.json').write_text('{}')
         self.assertEqual(self.run_cleanup(), 'ok')
-        self.assertTrue((self.ctx.temp / 'gen').is_dir() and (self.ctx.temp / 'build').is_dir())
-        self.assertFalse((self.ctx.temp / 'check').exists())
+        self.assertEqual(list(self.ctx.temp.iterdir()), [])
         lines = (self.dest / 'build-cache' / 'rebuild.txt').read_text(encoding='utf-8').splitlines()
         self.assertEqual(lines[1:], ['-c', steps.REBUILD_BOOT, str(self.ctx.layout.root), '--root',
                                      str(self.ctx.layout.root), '--rebuild', str(self.dest)])
+
+    def test_keeps_the_build_cache(self):
+        for name in ('gen', 'build'):
+            (self.ctx.cache / name).mkdir(parents=True)
+        self.assertEqual(self.run_cleanup(), 'ok')
+        self.assertTrue((self.ctx.cache / 'gen').is_dir() and (self.ctx.cache / 'build').is_dir())
+
+    def test_finish_temp_keeps_the_log_in_the_install_folder(self):
+        (self.ctx.temp / 'logs').mkdir(parents=True)
+        (self.ctx.temp / 'logs' / 'install-1.log').write_text('log')
+        (self.ctx.temp / 'check').mkdir()
+        log = self.ctx.cache / 'logs' / 'install-1.log'
+        steps.finish_temp(self.ctx, log)
+        self.assertFalse(self.ctx.temp.exists())
+        self.assertEqual(log.read_text(encoding='utf-8'), 'log')
 
     def test_emptied_romfs_fails(self):
         for p in (self.dest / 'romfs').iterdir():

@@ -18,7 +18,7 @@ from . import layout as layouts
 from . import state as statefile
 from .events import Reporter
 from .runner import Context, run_steps
-from .steps import all_steps
+from .steps import all_steps, finish_temp
 
 EXIT = {'ok': 0, 'failed': 1, 'cancelled': 3}
 
@@ -83,6 +83,20 @@ def main(argv=None):
     rep.emit('start', release=layout.release, mode=ctx.mode, dev=layout.dev, dest=str(dest), log=str(log),
              steps=[s.id for s in steps])
     result = run_steps(steps, ctx)
-    rep.emit('end', result=result, seconds=round(time.monotonic() - t0, 1))
+    seconds = round(time.monotonic() - t0, 1)
+    # A finished install keeps its log in build-cache/logs/ and leaves no temp folder behind; the window shows
+    # that path.
+    final_log = dest / 'build-cache' / 'logs' / log.name if result == 'ok' else None
+    rep.emit('end', result=result, seconds=seconds, **({'log': str(final_log)} if final_log else {}))
     rep.close()
+    if final_log:
+        try:
+            finish_temp(ctx, final_log)
+        except OSError:
+            pass   # the install is done; a file another program still holds keeps the folder for the next run
+        if base and args.temp is None:
+            try:
+                base.rmdir()   # the release's own temp folder, empty once the run's folder is gone
+            except OSError:
+                pass
     return EXIT[result]

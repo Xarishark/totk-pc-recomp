@@ -274,6 +274,8 @@ class Model:
             self.result = e.get('result')
             self.seconds = e.get('seconds')
             self.current = None
+            if e.get('log'):   # a finished install moved its log into the install folder
+                self.log_path = e['log']
 
     def fraction(self):
         """0..1 of the current phase, or None when its size is unknown."""

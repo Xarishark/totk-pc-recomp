@@ -9,7 +9,7 @@ Every event has "type" and "t" (seconds since the start). Types:
               temp, temp_need, temp_free, same_disk
     warning   id, params
     error     id, params, step (absent outside a step)
-    end       result: ok | failed | cancelled, seconds
+    end       result: ok | failed | cancelled, seconds; log (a finished install's log, moved to the install folder)
 
 Text is never the payload: ids name a step ("step.<id>"), a phase ("phase.<step>.<phase>") or a message ("<id>"),
 and installer/text/en.json holds their English text with {param} placeholders. The log renders events with it.

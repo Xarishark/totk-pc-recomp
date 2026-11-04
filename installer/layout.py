@@ -14,7 +14,8 @@ Release (docs/installer.md "Release layout"), root = the unpacked folder:
     data/shader-answers.bin the shader variants players met (a shader-answers.bin recorded in play, tools/prepare_shaders.py)
     astralchain.ini.example
     VERSION                 the release version, one line
-    temp/                   the default temp folder (created)
+    temp/                   the default scratch folder (a successful install removes it; its run logs move to the
+                            install folder's build-cache/logs/)
 
 Linux release (the AppImage's folder, docs/installer.md "Linux release"): python/bin/python3 (python-build-standalone,
 with tkinter), llvm/ with clang, lld and llvm-ar plus llvm/sysroot (the glibc headers and libraries the game links

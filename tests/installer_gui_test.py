@@ -132,6 +132,13 @@ class ModelTest(unittest.TestCase):
         m.finish(3)
         self.assertEqual(m.result, 'cancelled')
 
+    def test_end_names_the_final_log(self):
+        m = fold(START, {'type': 'end', 'result': 'ok', 'seconds': 1,
+                         'log': 'D:\\T\\build-cache\\logs\\install-1.log'})
+        self.assertEqual(m.log_path, 'D:\\T\\build-cache\\logs\\install-1.log')
+        m = fold(START, {'type': 'end', 'result': 'failed', 'seconds': 1})
+        self.assertEqual(m.log_path, 'D:\\T.log')   # a failed run keeps its log in the temp folder
+
     def test_unknown_event_is_ignored(self):
         m = fold(START, {'type': 'future_thing', 'x': 1})
         self.assertEqual(m.states['check'], PENDING)

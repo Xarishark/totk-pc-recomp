@@ -2,20 +2,22 @@
 
 Extraction runs in this process through tools/extract.py (the package's sibling tools/, which ships with it); lift and
 compile run the bundled Python on recomp/gen.py and tools/build_game.py, whose output goes to
-<temp>/logs/<step>-<tool>.log and is read for progress. No Win32 call here: the host check is a small C program built
-with the bundled clang (hostcheck.c). The port builds the game from the player's base game (1.0.0) and update NSP
+build-cache/logs/<step>-<tool>.log and is read for progress. No Win32 call here: the host check is a small C program
+built with the bundled clang (hostcheck.c). The port builds the game from the player's base game (1.0.0) and update NSP
 (1.0.1): the update supplies the ExeFS and its BKTR section, which hactool merges with the base RomFS.
 
 Install folder: exefs/, romfs/ (romfs.bin, index.json), profile/, astralchain.exe and its DLLs, romfs-index.bin,
-ac_xlate.exe, astralchain.ini, astralchain-install.json.
-Temp folder (<temp>/<dest name>-<hash>): check/ (the ExeFS of both inputs and their manifests, the host check), gen/ (C),
-(objects), logs/. The cleanup keeps gen/, build/ and logs/: the next run lifts into the same gen/, where recomp/gen.py
-rewrites only the chunks whose C changed, and Ninja in build/ recompiles only those. A change of the mods' code cheats
-then costs the lift (about a minute) and the chunks it touches, not a full compile.
+ac_xlate.exe, astralchain.ini, astralchain-install.json, build-cache/ (gen/, build/, logs/, the status files and
+rebuild.txt).
+Temp folder (<temp>/<dest name>-<hash>): check/ (the ExeFS of both inputs and their manifests, the host check) and
+logs/. A successful install deletes it, and the run logs move to build-cache/logs/. The generated C and the objects stay
+in build-cache/gen and build-cache/build: the next lift rewrites only the chunks whose C changed, and Ninja recompiles
+only those. A change of the mods' code cheats then costs the lift (about a minute) and the chunks it touches, not a full
+compile.
 
-Install folder build-cache/: cheats.status (tools/cheats.py), exefs.status (tools/exefs_patches.py) and rebuild.txt, the command that starts this setup in
-its rebuild mode on the install folder (installer/gui.py --rebuild), one argument per line; astralchain.exe runs it at start
-when an enabled mod has code cheats the build lacks (runtime/cheats.c).
+build-cache/ also holds cheats.status (tools/cheats.py), exefs.status (tools/exefs_patches.py) and rebuild.txt, the
+command that starts this setup in its rebuild mode on the install folder (installer/gui.py --rebuild), one argument per
+line; astralchain.exe runs it at start when an enabled mod has code cheats the build lacks (runtime/cheats.c).
 """
 import hashlib
 import json
@@ -49,7 +51,8 @@ except ImportError as exc:
 
 GiB = 1 << 30
 DEST_EXTRA = 4 * GiB      # beside the RomFS: shader and pipeline caches (about 2 GB), exefs, astralchain.exe, seed files
-TEMP_NEED = 3 * GiB       # generated C (about 0.9 GB) and objects
+BUILD_NEED = 3 * GiB      # generated C (about 0.9 GB) and objects, in <install>/build-cache
+TEMP_NEED = GiB // 2      # the ExeFS trees, manifests and host check of the version check
 HOSTCHECK = Path(__file__).resolve().parent / 'hostcheck.c'
 STAMP = '.install-key'
 BASE_VERSION = '1.0.0'   # the base game the update is merged with
@@ -143,9 +146,12 @@ def linux_kernel():
 
 
 def run_tool(ctx, step, script, args, parse=None, cwd=None):
-    """Run a tool script with the bundled Python. Its output goes to <temp>/logs/<step>-<script>.log and, line by line,
-    to parse(line). Returns (exit code, log path)."""
-    logs = ctx.temp / 'logs'
+    """Run a tool script with the bundled Python. Its output goes to <install>/build-cache/logs/<step>-<script>.log and,
+    line by line, to parse(line). Returns (exit code, log path).
+
+    The log lives with the install, not in the temp folder, so a warning or an error that names it still points at the
+    file after a successful run removed the temp folder."""
+    logs = ctx.cache / 'logs'
     logs.mkdir(parents=True, exist_ok=True)
     log = logs / f'{step}-{Path(script).stem}.log'
     command = [str(ctx.layout.python), str(script), *map(str, args)]
@@ -450,8 +456,9 @@ class Check(Step):
                 dest_need -= romfs.stat().st_size
         if ctx.will_run('extract'):
             dest_need += DEST_EXTRA
+            temp_need += TEMP_NEED      # the ExeFS trees the version check extracts
         if ctx.will_run('lift') or ctx.will_run('compile'):
-            temp_need += TEMP_NEED
+            dest_need += BUILD_NEED     # the generated C and the objects are in the install folder's build-cache
         dest_free, dest_dev = free_bytes(ctx.dest)
         temp_free, temp_dev = free_bytes(ctx.temp)
         ctx.reporter.log(f'space: install folder needs {dest_need / GiB:.1f} GiB of {dest_free / GiB:.1f} free, '
@@ -687,14 +694,14 @@ class Lift(Step):
                            ctx.layout.tools / 'exefs_patches.py', *exefs_files(ctx))
 
     def current(self, ctx, record):
-        gen = ctx.temp / 'gen'
+        gen = ctx.cache / 'gen'
         stamp = gen / STAMP
         return (gen / 'layout.json').is_file() and stamp.is_file() and stamp.read_text().strip() == ctx.keys['lift']
 
     def run(self, ctx):
-        # gen/ of the last run stays: gen.py rewrites only the chunks whose C changed (and removes the ones a smaller
-        # partition no longer has), so Ninja recompiles only those
-        layout, rep, gen = ctx.layout, ctx.reporter, ctx.temp / 'gen'
+        # gen/ of the last run stays in the install folder: gen.py rewrites only the chunks whose C changed (and removes
+        # the ones a smaller partition no longer has), so Ninja recompiles only those
+        layout, rep, gen = ctx.layout, ctx.reporter, ctx.cache / 'gen'
         (gen / STAMP).unlink(missing_ok=True)
         rep.progress('lift', 'discover', force=True)
 
@@ -775,7 +782,7 @@ class Compile(Step):
 
     def run(self, ctx):
         layout, rep, dest = ctx.layout, ctx.reporter, ctx.dest
-        build = ctx.temp / 'build'
+        build = ctx.cache / 'build'
         phase = ['compile']
 
         def parse(line):
@@ -799,7 +806,7 @@ class Compile(Step):
         expected_install.write_text(json.dumps({'exefs_sha256': hashes}, indent=2) + '\n', encoding='utf-8',
                                     newline='\n')
         code, log = run_tool(ctx, 'compile', layout.tools / 'build_game.py', [
-            '--gen', ctx.temp / 'gen', '--out', build, '--toolchain', layout.llvm, '--cpu', cpu,
+            '--gen', ctx.cache / 'gen', '--out', build, '--toolchain', layout.llvm, '--cpu', cpu,
             *(['--deps', layout.deps] if layout.deps else []), *(['--sysroot', layout.sysroot] if layout.sysroot else []),
             '--runtime', layout.runtime, *(['--runtime-lib', lib] if lib else ()), '--ninja', layout.ninja,
             '--version', version_tag(game_version(ctx)), '--expected', expected_install,
@@ -921,7 +928,9 @@ class Cleanup(Step):
         rep.progress('cleanup', 'temp', force=True)
         for stale in dest.glob('update-merge-*'):
             remove(stale)
-        for name in ('check', 'shared-fonts'):   # gen/ and build/ stay for the next rebuild
+        # The temp folder itself goes once the reporter closed its log (installer/cli.py finish_temp): the generated C,
+        # the objects and the logs live in build-cache/.
+        for name in ('check', 'shared-fonts', 'expected-install.json'):
             remove(ctx.temp / name)
         romfs_problem(dest / 'romfs', expected_game(ctx))
         write_rebuild_command(ctx)
@@ -953,6 +962,30 @@ def write_rebuild_command(ctx):
     tmp = cache / 'rebuild.txt.tmp'
     tmp.write_text('\n'.join(rebuild_command(ctx)) + '\n', encoding='utf-8', newline='\n')
     os.replace(tmp, cache / 'rebuild.txt')
+
+
+def finish_temp(ctx, log):
+    """Delete the temp folder of a finished install, keeping its run logs in build-cache/logs/.
+
+    installer/cli.py calls this after the reporter closed the log file (Windows cannot remove an open file) and names
+    the final path in the end event, which the setup window shows."""
+    logs = ctx.temp / 'logs'
+    if logs.is_dir():
+        log.parent.mkdir(parents=True, exist_ok=True)
+        for p in logs.iterdir():
+            target = log.parent / p.name
+            if target.is_dir():
+                remove(target)
+            elif target.exists():
+                target.unlink()
+            shutil.move(str(p), str(target))
+    for _ in range(10):   # a scanner or an editor may still hold a file for a moment
+        try:
+            remove(ctx.temp)
+            return
+        except OSError:
+            time.sleep(0.2)
+    remove(ctx.temp)
 
 
 def romfs_problem(romfs, expected):

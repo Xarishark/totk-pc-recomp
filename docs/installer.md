@@ -32,6 +32,8 @@ The install folder (`main.c` `portable_paths()` reads this layout; it stays port
   profile/                              saves
   mods/                                 the player's mods, one folder per mod (created by the menu's "Open mods folder")
   logs/                                 astralchain.log of the last run, astralchain.1.log to astralchain.4.log before it
+  build-cache/                          what the setup keeps to rebuild the game for the mods: generated C, objects,
+                                        logs and status files
   astralchain-install.json              what built this folder: release version, input hashes, finished steps
 ```
 
@@ -46,9 +48,9 @@ again: it is rebuilt from the 1.0.1 update.
 
 1. **Check** before writing anything: both files open with the keys, the base game's code modules (`main`, `sdk`, `rtld`)
    match the 1.0.0 hashes, the update's `main` matches 1.0.1, enough space is free on the target disk (about 25 GiB
-   while the update is merged, 14 GiB once it is cleaned up, 4 GiB more for the generated C and the objects), the CPU is
-   at least x86-64-v2 (SSE4.2; with AVX2/FMA the faster `v3` build is used, otherwise the `v2` one), a Vulkan 1.3 GPU
-   exists. Each failure is one clear message.
+   while the update is merged, 14 GiB once it is cleaned up, 4 GiB more for the generated C and the objects in
+   `build-cache/`), the CPU is at least x86-64-v2 (SSE4.2; with AVX2/FMA the faster `v3` build is used, otherwise the
+   `v2` one), a Vulkan 1.3 GPU exists. Each failure is one clear message.
    `main.npdm` is not compared: it is the process's metadata, dumps of the same build carry different ones (repacked
    NSPs, different dumpers), and the game checks the fields it uses at start (`runtime/boot.c` `check_npdm`); a
    differing one is a warning.
@@ -57,8 +59,8 @@ again: it is rebuilt from the 1.0.1 update.
    the player decides.
 2. **Extract** the update's ExeFS into the install folder and merge its RomFS BKTR section with the base game's Program
    NCA through hactool, verifying every IVFC level, and compare the result with `tools/data/expected-v1.0.1.json`.
-3. **Lift** the ExeFS to C (`recomp/gen.py`, `recomp/patches-v101.txt`) into a temp folder next to the installer. The
-   code cheats of the mods' cheat files and the mods' ExeFS patch files become patch sets first
+3. **Lift** the ExeFS to C (`recomp/gen.py`, `recomp/patches-v101.txt`) into `build-cache/gen/` in the install folder.
+   The code cheats of the mods' cheat files and the mods' ExeFS patch files become patch sets first
    (`tools/exefs_patches.py`, status in `build-cache/exefs.status`); a file the tool refuses costs those patches, not
    the install.
 4. **Compile** the generated C, `modules.c`, `romfs.c`, `patches.c` and `ov_zstd.c` (they bake the per-install layout,
@@ -70,16 +72,16 @@ again: it is rebuilt from the 1.0.1 update.
    pipeline once, so the GPU driver's own disk cache holds them. `tools/pack_shader_cache.py` folds the loose files of
    the cache into one `shader-cache.pack`. A driver whose compiler crashes on a variant skips it (the game translates it
    when first needed), reported as a warning.
-6. **Clean up** the temp folder, except the generated C and the objects (about 1.3 GB), remove the copied Program NCAs,
-   and write `build-cache/rebuild.txt` in the install folder.
+6. **Clean up**: delete the temp folder (its run logs move to `build-cache/logs/`), remove the copied Program NCAs, and
+   write `build-cache/rebuild.txt` in the install folder.
 
 A cancelled or failed setup resumes from the last finished step (`astralchain-install.json`).
 
 ## Rebuilding for the mods
 
-The generated C and the objects stay in the temp folder, so the next lift rewrites only the chunks whose C changed and
-Ninja recompiles only those: a new or edited ExeFS patch costs the lift (under a minute on 24 cores, a few minutes on 4)
-and a few dozen chunks, not a full compile.
+The generated C and the objects stay in the install folder's `build-cache/`, so the next lift rewrites only the chunks
+whose C changed and Ninja recompiles only those: a new or edited ExeFS patch costs the lift (under a minute on 24 cores,
+a few minutes on 4) and a few dozen chunks, not a full compile.
 
 `build-cache/rebuild.txt` holds the command that opens the setup window in its rebuild mode on the install folder
 (`installer/gui.py --rebuild <install folder>`, started through `python -c` so the release folder is on `sys.path`
@@ -104,7 +106,7 @@ python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR
 - stdout: one JSON event per line, types `start`, `plan`, `step` (started, done, skipped), `progress` (step, phase,
   done/total/unit), `space` (bytes needed and free on the install disk and the temp disk), `warning`, `error`, `end`
   (`installer/events.py`). Messages are ids with parameters; `installer/text/en.json` holds their English text. The
-  human-readable log goes to `<temp>/logs/`.
+  human-readable log goes to `<install>/build-cache/logs/` (a failed or cancelled run leaves it in `<temp>/logs/`).
 - Exit codes: 0 done, 1 failed, 2 bad command line, 3 cancelled. The window cancels with Ctrl+Break to the installer's
   process group.
 - Each step records a key over its inputs (runner.py). A step with the recorded key and intact output is skipped, so
