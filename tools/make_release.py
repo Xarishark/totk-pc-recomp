@@ -104,7 +104,7 @@ LLVM_SKIP_SUFFIXES = {'.idl', '.tlb'}
 
 # tools/ files the installer steps run (and what they import), copied from the repo.
 TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'check_content.py', 'exefs_patches.py', 'extract.py',
-               'hostmem.py', 'romfs_index.py']
+               'hostmem.py', 'pack_shader_cache.py', 'prepare_shaders.py', 'romfs_index.py', 'shader_census.py']
 TOOLS_DIRS = ['data']   # data/: the expected hashes of the base game and the update
 RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
 
@@ -402,6 +402,14 @@ def build_sources(out):
         shutil.copy2(ROOT / 'tools' / f, out / 'tools' / f)
     for d in TOOLS_DIRS:
         copy_tree(ROOT / 'tools' / d, out / 'tools' / d, lambda r: '__pycache__' in r or r.endswith('.md'))
+    # The shader variants players met, recorded in play and generated into generated/shader-answers.bin
+    # (tools/prepare_shaders.py --recordings); tools/prepare_shaders.py reads them during the prepare step.
+    (out / 'data').mkdir(exist_ok=True)
+    shader_answers = MAIN_ROOT / 'generated' / 'shader-answers.bin'
+    if not shader_answers.is_file():
+        sys.exit('generated/shader-answers.bin is missing: record a play session and run '
+                 'tools/prepare_shaders.py --recordings')
+    shutil.copy2(shader_answers, out / 'data' / 'shader-answers.bin')
     copy_tree(ROOT / 'installer', out / 'installer', lambda r: '__pycache__' in r or r.startswith('launcher/'))
     shutil.copy2(ROOT / 'astralchain.ini.example', out / 'astralchain.ini.example')
     shutil.copy2(ROOT / 'THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')

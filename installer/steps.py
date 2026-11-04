@@ -1,4 +1,4 @@
-"""The five setup steps of docs/installer.md: check, extract, lift, compile, cleanup.
+"""The six setup steps of docs/installer.md: check, extract, lift, compile, prepare, cleanup.
 
 Extraction runs in this process through tools/extract.py (the package's sibling tools/, which ships with it); lift and
 compile run the bundled Python on recomp/gen.py and tools/build_game.py, whose output goes to
@@ -826,7 +826,84 @@ class Compile(Step):
         return {'exe_sha256': file_sha256(dest / exe.name), 'cpu': cpu}
 
 
-# ---- 6. clean up
+# ---- 6. prepare
+
+TRANSLATED = re.compile(r'gfx_shader: prepare: (\d+) of (\d+) pairs')
+# runtime/vk_pipeline.c lb_warm_prepared: variants the driver crashed on in an earlier run (tools/prepare_shaders.py
+# runs the driver step again after such a crash)
+SKIPPED = re.compile(r'prepare-shaders: (\d+) variants skipped: the graphics driver crashed')
+
+
+class Prepare(Step):
+    id = 'prepare'
+
+    def key(self, ctx):
+        layout = ctx.layout
+        xlate_id = layout.xlate.with_suffix('.id')
+        tools = [layout.tools / n for n in ('prepare_shaders.py', 'shader_census.py', 'pack_shader_cache.py')]
+        # not the compile key: a rebuild for the mods' code cheats keeps the prepared shaders
+        return fingerprint('prepare-2', ctx.keys['extract'], runtime_key(ctx), layout.xlate, xlate_id,
+                           layout.shader_answers, *tools)
+
+    def current(self, ctx, record):
+        dest = ctx.dest
+        xlate = dest / ctx.layout.xlate.name
+        return ((dest / 'shader-prepared.bin').is_file() and (dest / 'shader-cache' / 'shader-cache.pack').is_file()
+                and xlate.is_file() and file_sha256(xlate) == record.get('xlate_sha256'))
+
+    def run(self, ctx):
+        layout, rep, dest = ctx.layout, ctx.reporter, ctx.dest
+        xlate = dest / layout.xlate.name
+        if xlate.is_file() and file_sha256(xlate) != file_sha256(layout.xlate):
+            # Another translator: its cache keys differ, so the old translations would only take space.
+            for name in ('shader-cache', 'shader-prepared.bin'):
+                remove(dest / name)
+        # astralchain.exe starts ac_xlate.exe as a child while it prepares shaders; a preparation that was stopped from
+        # outside leaves that child holding this file, and Windows then refuses to replace it.
+        try:
+            replace_file(layout.xlate, xlate)
+        except PermissionError:
+            raise InstallError('prepare.xlate_in_use', path=str(xlate)) from None
+        xlate_id = layout.xlate.with_suffix('.id')
+        if xlate_id.is_file():
+            try:
+                replace_file(xlate_id, xlate.with_suffix('.id'))
+            except PermissionError:
+                raise InstallError('prepare.xlate_in_use', path=str(xlate.with_suffix('.id'))) from None
+        else:
+            remove(xlate.with_suffix('.id'))
+
+        skipped = [0]
+
+        def parse(line):
+            m = TRANSLATED.search(line)
+            if m:
+                rep.progress('prepare', 'translate', int(m.group(1)), int(m.group(2)), 'shaders')
+            elif SKIPPED.search(line):
+                skipped[0] = int(SKIPPED.search(line).group(1))
+            elif 'variants' in line:
+                rep.progress('prepare', 'translate', force=True)
+            elif 'gfx_shader: prepare:' in line and 'translated' in line and 'programs' in line:
+                rep.progress('prepare', 'libraries', force=True)
+
+        rep.progress('prepare', 'seed', force=True)
+        code, log = run_tool(ctx, 'prepare', layout.tools / 'prepare_shaders.py',
+                             [dest, '--version', version_tag(game_version(ctx)), '--romfs', dest / 'romfs',
+                              '--answers', layout.shader_answers], parse)
+        if code or not (dest / 'shader-prepared.bin').is_file():
+            raise InstallError('prepare.shaders_failed', code=code, log=str(log))
+        if skipped[0]:
+            rep.warning('warn.shaders_skipped', count=skipped[0], log=str(log))
+
+        # One shader-cache.pack instead of four files per shader (~117,000): astralchain.exe reads the pack first.
+        rep.progress('prepare', 'pack', force=True)
+        code, log = run_tool(ctx, 'prepare', layout.tools / 'pack_shader_cache.py', [dest / 'shader-cache'])
+        if code:
+            raise InstallError('prepare.pack_failed', code=code, log=str(log))
+        return {'xlate_sha256': file_sha256(xlate)}
+
+
+# ---- 7. clean up
 
 class Cleanup(Step):
     id = 'cleanup'
@@ -844,7 +921,7 @@ class Cleanup(Step):
         rep.progress('cleanup', 'temp', force=True)
         for stale in dest.glob('update-merge-*'):
             remove(stale)
-        for name in ('check', 'shader_list.tsv', 'shared-fonts'):   # gen/ and build/ stay for the next rebuild
+        for name in ('check', 'shared-fonts'):   # gen/ and build/ stay for the next rebuild
             remove(ctx.temp / name)
         romfs_problem(dest / 'romfs', expected_game(ctx))
         write_rebuild_command(ctx)
@@ -894,4 +971,4 @@ def romfs_problem(romfs, expected):
 
 
 def all_steps():
-    return [Check(), Extract(), Lift(), Compile(), Cleanup()]
+    return [Check(), Extract(), Lift(), Compile(), Prepare(), Cleanup()]

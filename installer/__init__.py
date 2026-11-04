@@ -4,7 +4,7 @@
                         [--temp DIR]
 
 Modules: layout (where the bundled tools are, release or repository), events (JSON progress on stdout and the log
-file), state (astralchain-install.json), runner (which steps run: resume and update), steps (the five steps), ini (astralchain.ini),
+file), state (astralchain-install.json), runner (which steps run: resume and update), steps (the six steps), ini (astralchain.ini),
 cli (the command line). text/en.json holds the English text of every message id the events carry.
 
 Standard library only, apart from what the extraction tools import (cryptography). Runs on Python 3.14.

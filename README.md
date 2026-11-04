@@ -2,7 +2,7 @@
 
 **Astral Chain Recomp** is a static recompilation of *Astral Chain* (Nintendo Switch, 2019) into a native x86-64
 application for Windows, built on the pipeline of [TotK Recomp](https://github.com/valentderah/totk-pc-recomp)
-([docs/architecture.md](docs/architecture.md), [docs/astral-chain.md](docs/astral-chain.md)).
+([docs/architecture.md](docs/architecture.md)).
 
 > [!IMPORTANT]
 > **No game files are included.** You need your own legally obtained copy of *Astral Chain*, dumped from your own

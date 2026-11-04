@@ -1,8 +1,7 @@
 # Astral Chain Recomp
 
 Static recompilation of *Astral Chain* (Switch, ARM64) into a native Windows x86-64 exe with a Vulkan renderer, built
-on the pipeline of the TotK Recomp project (see `docs/astral-chain.md` for port notes). Design: `docs/architecture.md`.
-Toolchain, build commands and tests: `docs/building.md`.
+on the pipeline of the TotK Recomp project. Design: `docs/architecture.md`. Toolchain, build commands and tests: `docs/building.md`.
 
 
 ## Priorities

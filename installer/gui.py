@@ -549,7 +549,7 @@ class App:
 # ---- self test ---------------------------------------------------------------------------------------------------
 
 SAMPLE_START = {'type': 'start', 'release': 'selftest', 'mode': 'install', 'dest': 'Z:/selftest/Astral Chain', 'log': 'D:\\log.txt',
-                'steps': ['check', 'extract', 'lift', 'compile', 'cleanup']}
+                'steps': ['check', 'extract', 'lift', 'compile', 'prepare', 'cleanup']}
 SAMPLE_RUN = [
     SAMPLE_START,
     {'type': 'plan', 'run': ['check', 'extract'], 'skip': {}},
@@ -566,6 +566,7 @@ SAMPLE_RUN = [
 
 SAMPLE_OK = [SAMPLE_START, {'type': 'plan', 'run': ['check', 'extract'], 'skip': {'lift': 'current',
                                                                        'compile': 'current',
+                                                                       'prepare': 'current',
                                                                        'cleanup': 'not_needed'}},
              {'type': 'step', 'step': 'check', 'state': 'started'},
              {'type': 'step', 'step': 'check', 'state': 'done', 'seconds': 1.0},
@@ -573,6 +574,7 @@ SAMPLE_OK = [SAMPLE_START, {'type': 'plan', 'run': ['check', 'extract'], 'skip':
              {'type': 'step', 'step': 'extract', 'state': 'done', 'seconds': 1.0},
              {'type': 'step', 'step': 'lift', 'state': 'skipped', 'reason': 'current'},
              {'type': 'step', 'step': 'compile', 'state': 'skipped', 'reason': 'current'},
+             {'type': 'step', 'step': 'prepare', 'state': 'skipped', 'reason': 'current'},
              {'type': 'step', 'step': 'cleanup', 'state': 'done', 'seconds': 0.1},
              {'type': 'end', 'result': 'ok', 'seconds': 3}]
 

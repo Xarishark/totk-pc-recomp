@@ -11,7 +11,7 @@ Release (docs/installer.md "Release layout"), root = the unpacked folder:
                             patches.c, ov_zstd.c) and astralchain.ico; runtime/deps/ holds
                             include/ + lib/ of Vulkan, SDL3, Opus, libvpx and VMA (build_game.py --deps)
     bin/                    ac_xlate.exe (+ ac_xlate.id), hactool.exe, ninja.exe, SDL3.dll, libopus-0.dll
-    data/shader_list.tsv    the MacNativeGames shader list
+    data/shader-answers.bin the shader variants players met (a shader-answers.bin recorded in play, tools/prepare_shaders.py)
     astralchain.ini.example
     VERSION                 the release version, one line
     temp/                   the default temp folder (created)
@@ -23,8 +23,8 @@ against), runtime/deps/ with include/ and the static Opus, libvpx and zstd, bin/
 Dev mode, root = a repository checkout (no python/python.exe): build/py314-embed/py/python.exe (the embeddable
 Python the release ships, with the same packages), else this Python; toolchain/llvm-mingw-*/ and toolchain/deps-mingw;
 runtime/ as the sources with build/install-rtlib/libacrt.a and libacrt-v2.a (tools/build_game.py --make-runtime-lib
---out build/install-rtlib, once per --cpu); MSYS2 UCRT64 ninja.exe; toolchain/hactool; build/xlate/ac_xlate.exe; the shader list from
-refs/MacNativeGames; build/install-temp. The version is VERSION with -dev and the commit: 0.1.0-dev+973c626. On Linux,
+--out build/install-rtlib, once per --cpu); MSYS2 UCRT64 ninja.exe; toolchain/hactool; build/xlate/ac_xlate.exe; the
+recorded shader variants in generated/; build/install-temp. The version is VERSION with -dev and the commit: 0.1.0-dev+973c626. On Linux,
 dev mode takes clang, lld and ninja from PATH and the system's libraries (no deps folder, no SDL3 copy).
 """
 import os
@@ -61,7 +61,7 @@ class Layout:
     hactool: Path
     xlate: Path           # ac_xlate.exe; a ac_xlate.id beside it is copied too
     dlls: tuple = field(default_factory=tuple)
-    shader_list: Path | None = None   # None: dev, read from refs/MacNativeGames through git
+    shader_answers: Path | None = None   # the shader variants players met (tools/prepare_shaders.py)
     ini_example: Path | None = None
     temp: Path | None = None
     sysroot: Path | None = None       # Linux release: what the game links against, instead of the host's
@@ -92,12 +92,15 @@ class Layout:
         lib = self.runtime_lib_for(cpu)
         need = [self.python, self.tools / 'extract.py', self.tools / 'build_game.py', self.tools / 'build_shaders.py',
                 self.tools / 'check_content.py', self.tools / 'romfs_index.py', self.tools / 'exefs_patches.py',
+                self.tools / 'prepare_shaders.py', self.tools / 'shader_census.py', self.tools / 'pack_shader_cache.py',
                 self.expected('1.0.0'),
                 self.recomp / 'gen.py', self.clang,
                 *((self.deps / 'include', self.deps / 'lib') if self.deps else ()), self.runtime, *([lib] if lib else ()),
                 self.ninja, self.hactool,
                 self.xlate, *self.dlls,
                 *(f(v) for v in SUPPORTED for f in (self.patches, self.expected))]
+        if self.shader_answers:
+            need.append(self.shader_answers)
         if self.sysroot:
             need.append(self.sysroot)
         return [str(p) for p in need if not p.exists()]
@@ -124,7 +127,7 @@ def release_layout(root):
         ninja=root / 'bin' / ('ninja' + EXE), hactool=root / 'bin' / ('hactool' + EXE),
         xlate=root / 'bin' / ('ac_xlate' + EXE),
         dlls=(root / 'bin' / 'SDL3.dll', root / 'bin' / 'libopus-0.dll') if WIN else (root / 'bin' / 'libSDL3.so.0',),
-        shader_list=root / 'data' / 'shader_list.tsv', ini_example=root / 'astralchain.ini.example',
+        shader_answers=root / 'data' / 'shader-answers.bin', ini_example=root / 'astralchain.ini.example',
         # Linux: None, the install folder's .setup-temp (installer/cli.py): the AppImage is mounted read-only, and on
         # a Steam Deck /home is often too full for the generated C while the install folder is on the SD card
         temp=root / 'temp' if WIN else None,
@@ -150,7 +153,8 @@ def dev_layout(root):
         ninja=UCRT / ('ninja' + EXE), hactool=root / 'toolchain' / 'hactool' / ('hactool' + EXE),
         xlate=root / 'build' / 'xlate' / ('ac_xlate' + EXE),
         dlls=tuple(sorted((deps / 'bin').glob('*.dll'))),
-        shader_list=None, ini_example=root / 'astralchain.ini.example', temp=root / 'build' / 'install-temp')
+        shader_answers=root / 'generated' / 'shader-answers.bin', ini_example=root / 'astralchain.ini.example',
+        temp=root / 'build' / 'install-temp')
 
 
 def dev_commit(root):
@@ -169,7 +173,8 @@ def dev_layout_posix(root):
         runtime_lib_v2=root / 'build' / 'install-rtlib' / 'libacrt-v2.a',
         ninja=Path(ninja) if ninja else root / 'toolchain' / 'ninja-missing',
         hactool=root / 'toolchain' / 'hactool' / 'hactool', xlate=root / 'build' / 'xlate' / 'ac_xlate',
-        shader_list=None, ini_example=root / 'astralchain.ini.example', temp=root / 'build' / 'install-temp')
+        shader_answers=root / 'generated' / 'shader-answers.bin', ini_example=root / 'astralchain.ini.example',
+        temp=root / 'build' / 'install-temp')
 
 
 def find(root=None):

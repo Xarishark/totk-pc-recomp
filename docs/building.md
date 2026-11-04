@@ -108,11 +108,12 @@ From the repository root, in PowerShell. Every step that depends on the game ver
    they write `build\<ver>\romfs-patches-xbox` and `romfs-patches-xbox-label` ([controls.md](controls.md), "Xbox
    button prompts"), which `build_game.py` copies next to `astralchain.exe` like `romfs-patches`.
 
-6. Prepare the shaders (once per build folder and translator). It needs `refs\MacNativeGames` (`tools\fetch_refs.sh`)
-   for the shared shader list:
+6. Prepare the shaders (once per build folder and translator). It reads the variants players met from
+   `generated\shader-answers.bin` (recorded in play; `tools\prepare_shaders.py --recordings` turns a recording into it)
+   and the shaders themselves from the extracted RomFS:
 
    ```powershell
-   .venv\Scripts\python tools\prepare_shaders.py build\v101 --version v101
+   .venv-py314\Scripts\python tools\prepare_shaders.py build\v101 --version v101
    ```
 
    Without this step the first launch compiles shaders and pipelines during play and stutters until the caches fill.
@@ -165,8 +166,8 @@ Requirements:
 The steps are the Windows ones with POSIX paths: `.venv/bin/python` in place of `.venv\Scripts\python`, and `totk` in
 place of `astralchain.exe`. `build_game.py` takes clang, lld and Ninja from PATH (or the ones in `<dir>/bin` with
 `--toolchain <dir>`) and links against the system libraries, with `libstdc++` static and an `$ORIGIN` rpath;
-`build_hactool.py` builds `hactool` with make. `tools/prepare_shaders.py` reads the shader list from
-`refs/MacNativeGames` at `origin/HEAD`, which must be the pinned commit with its history (the list format changed later).
+`build_hactool.py` builds `hactool` with make. `tools/prepare_shaders.py` reads the recorded shader variants from
+`generated/shader-answers.bin`.
 
 The probes open a window, so from an SSH session they need the desktop session's display, or they stop at `gpu 0
 skipped: no graphics+compute+present queue family`: on Wayland `XDG_RUNTIME_DIR=/run/user/$(id -u)

@@ -27,6 +27,8 @@ The install folder (`main.c` `portable_paths()` reads this layout; it stays port
   astralchain.exe, SDL3.dll, libopus-0.dll, ac_xlate.exe
   astralchain.ini                       language; the other keys as commented defaults (astralchain.ini.example)
   exefs/, romfs/                        extracted from the player's files
+  shader-cache/                         the translated shaders, packed into one shader-cache.pack
+  shader-prepared.bin                   the variants prepared ahead of play (read at boot to warm the driver)
   profile/                              saves
   mods/                                 the player's mods, one folder per mod (created by the menu's "Open mods folder")
   logs/                                 astralchain.log of the last run, astralchain.1.log to astralchain.4.log before it
@@ -62,7 +64,13 @@ again: it is rebuilt from the 1.0.1 update.
 4. **Compile** the generated C, `modules.c`, `romfs.c`, `patches.c` and `ov_zstd.c` (they bake the per-install layout,
    RomFS hashes and the game version's patch page) and link them with the prebuilt runtime library for the host's level
    (`libacrt.a` or `libacrt-v2.a`) into `astralchain.exe` (`build_game.py --runtime-lib`; about 3 min on 24 cores).
-5. **Clean up** the temp folder, except the generated C and the objects (about 1.3 GB), remove the copied Program NCAs,
+5. **Prepare** the shaders: `tools/prepare_shaders.py` reads the variants players met (`data/shader-answers.bin`) and
+   the shaders themselves from the RomFS (`tools/shader_census.py`), adds each shader's default variant, and writes the
+   seed files; `astralchain.exe --prepare-shaders` then translates every variant and builds each stage library or compute
+   pipeline once, so the GPU driver's own disk cache holds them. `tools/pack_shader_cache.py` folds the loose files of
+   the cache into one `shader-cache.pack`. A driver whose compiler crashes on a variant skips it (the game translates it
+   when first needed), reported as a warning.
+6. **Clean up** the temp folder, except the generated C and the objects (about 1.3 GB), remove the copied Program NCAs,
    and write `build-cache/rebuild.txt` in the install folder.
 
 A cancelled or failed setup resumes from the last finished step (`astralchain-install.json`).
