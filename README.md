@@ -32,11 +32,12 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - Keyboard, mouse and gamepad, with remapping, rumble and gyro
 - Xbox button prompts, with either button layout
 - Mods and data cheats from the emulator formats
+- Shaders prepared at install instead of during play
 
 ## Planned
 
-- Shaders prepared at install instead of during play
 - A Linux release
+- Optimizations for 4gb VRAM GPU and Steam Deck
 
 ## Installing
 
