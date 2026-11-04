@@ -255,7 +255,32 @@ static void res_shadow_range(void) {
 }
 
 // ---- start: the patch page and the sets
+// res1080 and res1062 (recomp/patches-v101.txt) patch the same instructions, so one of them at most is on. res1080 is the
+// default; AC_RES1062=1 asks for the community 1062p instead and wins.
+static void game_res_pick(void) {
+    int s1080 = rt_patch_set("res1080"), s1062 = rt_patch_set("res1062");
+    if (rt_patch_enabled(s1080) && rt_patch_enabled(s1062)) {
+        rt_patch_switch(s1080, 0);
+        rt_log("resolution: AC_RES1062 asks for 1062p: the res1080 set is off");
+    }
+    unsigned g[2];
+    res_game_size(g);
+    if (s1080 >= 0 || s1062 >= 0) rt_log("resolution: the game renders %ux%u", g[0], g[1]);
+}
+
+void res_game_size(unsigned out[2]) {
+    if (rt_patch_enabled(rt_patch_set("res1080"))) {
+        out[0] = 1920, out[1] = 1080;
+    } else if (rt_patch_enabled(rt_patch_set("res1062"))) {
+        out[0] = 1888, out[1] = 1062;
+    } else {
+        unsigned scene[2];
+        res_sizes(out, scene);
+    }
+}
+
 void res_init(void) {
+    game_res_pick();
     res_shadow_range();
     if (!bigger()) {
         rt_log("resolution: the game's own (output 1920x1080, scene 1600x900)");

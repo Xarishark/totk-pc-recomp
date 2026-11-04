@@ -36,6 +36,48 @@ spin main 855894 855a50 855a64   # 36 instructions; loads
 spin main 87adb0 87ade8   # 14 instructions; loads
 spin main 9a8274 9a829c   # 5 instructions; loads
 
+# 1062p (no dynamic resolution): KeatonTheBot's pchtxt for 1.0.1. The pchtxt's @flag offset_shift 0x100 names module
+# offsets after the shift; these are those offsets. Width 0x760 = 1888, height 0x426 = 1062. Off by default: res1080
+# below takes the same sites (runtime/resolution.c game_res_pick keeps one of the two on).
+set  res1062 AC_RES1062 0
+site res1062 main 4328c0 5280c808 5280ec08   # mov w8, #1600 -> #1888 (render width)
+site res1062 main 4328c8 52807088 528084c8   # mov w8, #900 -> #1062 (render height)
+site res1062 main 40d5e4 5280c809 5280ec09   # mov w9, #1600 -> #1888 (docked)
+site res1062 main 40d5f0 52807089 528084c9   # mov w9, #900 -> #1062
+site res1062 main 40fb04 5280c809 5280ec09   # mov w9, #1600 -> #1888 (handheld)
+site res1062 main 40fb14 52807089 528084c9   # mov w9, #900 -> #1062
+site res1062 main 40f184 7119001f 711d801f   # cmp w0, #1600 -> #1888 (ladder)
+site res1062 main 40f188 52807088 528084c8   # mov w8, #900 -> #1062
+site res1062 main 40f1a4 321603e8 5280a008   # mov w8, #1024 -> #1280
+site res1062 main 40f1a8 5280b409 5280ec09   # mov w9, #1440 -> #1888
+site res1062 main 40f1ac 7119001f 711d801f   # cmp w0, #1600 -> #1888
+site res1062 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720
+site res1062 main 40f1b4 52806556 528084d6   # mov w22, #810 -> #1062
+site res1062 main 40f1d0 7119001f 711d801f   # cmp w0, #1600 -> #1888
+site res1062 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias)
+
+# 1080p: the res1062 sites with 1920x1080 (0x780 x 0x438), as 1.0.0's res1080 set, the ladder's entries included, so the
+# scene stays at 1920x1080 whatever scale the dynamic-resolution logic picks. 1920x1080 is the engine's maximum (on
+# 1.0.0, 2048x1152 crashed its render-context setup). On by default: AC_SSAA's 1440p and 2160p are then exactly 4/3
+# and 2, the render-target sizes the Intel Arc 140T played for hours (other enlarged sizes, such as 1888x1062 x 4/3 =
+# 2517x1416, lost the device on entering play).
+set  res1080 AC_RES1080 1
+site res1080 main 4328c0 5280c808 5280f008   # mov w8, #1600 -> #1920 (render width)
+site res1080 main 4328c8 52807088 52808708   # mov w8, #900 -> #1080 (render height)
+site res1080 main 40d5e4 5280c809 5280f009   # mov w9, #1600 -> #1920 (docked)
+site res1080 main 40d5f0 52807089 52808709   # mov w9, #900 -> #1080
+site res1080 main 40fb04 5280c809 5280f009   # mov w9, #1600 -> #1920 (handheld)
+site res1080 main 40fb14 52807089 52808709   # mov w9, #900 -> #1080
+site res1080 main 40f184 7119001f 711e001f   # cmp w0, #1600 -> #1920 (ladder)
+site res1080 main 40f188 52807088 52808708   # mov w8, #900 -> #1080
+site res1080 main 40f1a4 321603e8 5280f008   # mov w8, #1024 -> #1920
+site res1080 main 40f1a8 5280b409 5280f009   # mov w9, #1440 -> #1920
+site res1080 main 40f1ac 7119001f 711e001f   # cmp w0, #1600 -> #1920
+site res1080 main 40f1b0 52804ed4 52808714   # mov w20, #630 -> #1080
+site res1080 main 40f1b4 52806556 52808716   # mov w22, #810 -> #1080
+site res1080 main 40f1d0 7119001f 711e001f   # cmp w0, #1600 -> #1920
+site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
+
 # 60 fps: the community static 60 fps patch for 1.0.1 (MrComputerRevo's IPS). The IPS offsets count the 0x100-byte
 # NSO header, so each lands at module offset -0x100 here. It halves the frame-time constants of the game's frame
 # accumulator (1.0 -> 0.5 and 2.0 -> 1.0) and clears the argument that makes the frame call wait a second vsync.

@@ -323,26 +323,34 @@ static int shadow_scale_of(const nvn_texdesc *d, const TexVkFormat *f, uint32_t 
     return d->width * (uint32_t)scale <= most ? scale : 1;
 }
 
-// AC_SSAA (1, 1.333, 1.5 or 2): emulator-style resolution scaling. A texture the game uses as a render target or as the
-// window is made this many times larger on each side; the replay multiplies the game's viewports, scissors, clears and
-// copies by the same factor (vk_exec.c pass_scale, vk_exec_xfer.c), and shaders sample it with normalised coordinates, so
-// the game sees its own logical resolution while the picture is rendered at the larger one. The present then hands that
-// larger image to the window (vk_backend.c). Textures sampled only, uploaded from guest memory, CPU-written (mirrored),
-// linear, multisampled, 1D or 3D keep their size, as their texels must match the guest layout.
+// AC_SSAA (off, 1440p or 2160p): emulator-style resolution scaling to a screen height. The game renders at its own size
+// (res_game_size: 1920x1080 with the res1080 set); a texture it uses as a render target or as the window is made
+// 1440 or 2160 divided by the game's height larger on each side, so 1080p becomes exactly 2560x1440 or 3840x2160. The
+// setting names a screen size rather than a factor because the factor alone gave sizes Intel's Arc 140T driver cannot
+// take: 1888x1062 x 4/3 = 2517x1416 (and 2480x1395, 2832x1593...) lost the device in one plain draw on entering play,
+// the viewport's size being the trigger, while 2560x1440 and 3840x2160 played for hours. The replay multiplies the
+// game's viewports, scissors, clears and copies by the same factor (vk_exec.c pass_scale, vk_exec_xfer.c), and shaders
+// sample it with normalised coordinates, so the game sees its own logical resolution while the picture is rendered at
+// the larger one. The present then hands that larger image to the window (vk_backend.c). Textures sampled only,
+// uploaded from guest memory, CPU-written (mirrored), linear, multisampled, 1D or 3D keep their size, as their texels
+// must match the guest layout.
 static float render_scale(void) {
     static float scale = -1;
     if (scale < 0) {
         const char *e = cfg_value("AC_SSAA");
-        double v = e && *e ? atof(e) : 1.0;
-        if (!(v >= 1.0 && v <= 2.0)) {
-            rt_log("resolution: AC_SSAA=%s is not 1, 1.333, 1.5 or 2; render targets keep the game's size", e);
-            v = 1.0;
+        unsigned game[2], target = 0;
+        res_game_size(game);
+        if (!strcmp(e, "1440p")) target = 1440;
+        else if (!strcmp(e, "2160p")) target = 2160;
+        else if (strcmp(e, "off")) {   // a factor from 0.2.x/0.3.0 (1, 1.333, 1.5, 2): the screen size it was for
+            double v = atof(e);
+            target = v > 1.01 ? (v < 1.75 ? 1440 : 2160) : 0;
+            rt_log("resolution: AC_SSAA=%s is a factor; taken as %s", e, target == 1440 ? "1440p" : target ? "2160p" : "off");
         }
-        // 1.333 means 4/3: 1920x1080 becomes 2560x1440 exactly. 1.333 itself gives 2559x1440, and an odd-width colour
-        // and depth pair lost the device on Intel's Arc 140T when the HQ's lighting pass started.
-        if (fabs(v - 4.0 / 3.0) < 0.01) v = 4.0 / 3.0;
-        scale = (float)v;
-        if (scale > 1.0f) rt_log("vk: render targets %.3gx larger than the game's (AC_SSAA)", scale);
+        scale = target > game[1] && game[1] ? (float)target / (float)game[1] : 1.0f;
+        if (scale > 1.0f)
+            rt_log("vk: render targets %ux%u, %.4gx the game's %ux%u (AC_SSAA=%up)",
+                   (unsigned)lroundf((float)game[0] * scale), target, scale, game[0], game[1], target);
     }
     return scale;
 }

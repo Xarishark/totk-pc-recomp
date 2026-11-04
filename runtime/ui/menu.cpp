@@ -51,6 +51,7 @@ void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void vk_queue_lock(void);
 void vk_queue_unlock(void);
 void res_sizes(unsigned out[2], unsigned scene[2]);
+void res_game_size(unsigned out[2]);
 int rt_patch_set(const char *name);
 float vk_render_scale(void);
 double frame_step_limit_hz(void);
@@ -485,12 +486,12 @@ static void row_window_size(void) {
     opt_choice_list("AC_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
 }
 
-// AC_SSAA (vk_texture.c): render targets made larger on each side, the emulator-style resolution scale. The game keeps
-// its logical size; the window shows the larger picture.
+// AC_SSAA (vk_texture.c render_scale): the game's 1080p rendered at a screen size, the emulator-style resolution
+// scale. The game keeps its logical size; the window shows the larger picture.
 static void row_render_scale(void) {
-    static const char *const vals[] = {"1", "1.333", "1.5", "2"};
-    static const char *const names[] = {"Off (1x)", "1.33x (1440p)", "1.5x (1620p)", "2x (2160p)"};
-    opt_choice_list("AC_SSAA", UI_MENU_RENDER_SCALE, vals, names, 4, UI_MENU_RENDER_SCALE_DESC);
+    static const char *const vals[] = {"off", "1440p", "2160p"};
+    const char *names[] = {menu_text(UI_MENU_OFF), "1440p (2560 × 1440)", "2160p (3840 × 2160)"};
+    opt_choice_list("AC_SSAA", UI_MENU_RENDER_SCALE, vals, names, 3, UI_MENU_RENDER_SCALE_DESC);
 }
 
 static void row_shadow_res(void) {
@@ -1106,6 +1107,8 @@ static float perf_gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
 static void perf_picture(const MenuTarget *t, const ImVec4 &c) {
     unsigned out[2], scene[2];
     res_sizes(out, scene);
+    res_game_size(out);   // the res1080 / res1062 sets: the game renders its scene at its output size
+    scene[0] = out[0], scene[1] = out[1];
     float rs = vk_render_scale();
     unsigned rw = (unsigned)lroundf(scene[0] * rs), rh = (unsigned)lroundf(scene[1] * rs);
     char v[6][64];

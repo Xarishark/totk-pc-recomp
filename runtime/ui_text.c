@@ -53,9 +53,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Picture",
     [UI_MENU_RENDER_SCALE] = "3D render scale",
-    [UI_MENU_RENDER_SCALE_DESC] = "Render targets made larger than the game resolution (emulator-style resolution "
-                                  "scale). 1.33x turns the game's 1600x900 into 2133 x 1200; the game keeps its logical size and the "
-                                  "window shows the larger picture.",
+    [UI_MENU_RENDER_SCALE_DESC] = "Renders the game's 1080p picture at a higher resolution (emulator-style resolution "
+                                  "scale): 1440p draws it at 2560 x 1440, 2160p at 3840 x 2160. The game keeps its "
+                                  "logical size and the window shows the larger picture.",
     [UI_MENU_RENDER_SCALE_GAME] = "Game (83 %)",
     [UI_MENU_UPSCALER] = "Scaling to the window",
     [UI_MENU_UPSCALER_DESC] = "How the picture is scaled to the window. FSR keeps edges and detail sharper than "
@@ -461,8 +461,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_PERF_LINE_FPS] = "%.0f к/с",
     [UI_MENU_GRAPHICS] = "Изображение",
     [UI_MENU_RENDER_SCALE] = "Масштаб 3D-отрисовки",
-    [UI_MENU_RENDER_SCALE_DESC] = "Цели рендеринга крупнее разрешения игры (масштабирование как в эмуляторах). 1.33x "
-                                  "превращает 1600x900 игры в 2133 × 1200; игра сохраняет свой логический размер.",
+    [UI_MENU_RENDER_SCALE_DESC] = "Отрисовывает картинку игры 1080p в более высоком разрешении (масштабирование как в "
+                                  "эмуляторах): 1440p — 2560 × 1440, 2160p — 3840 × 2160. Игра сохраняет свой "
+                                  "логический размер.",
     [UI_MENU_RENDER_SCALE_GAME] = "Как в игре (83 %)",
     [UI_MENU_UPSCALER] = "Масштабирование под окно",
     [UI_MENU_UPSCALER_DESC] = "Как картинка подгоняется под окно. FSR сохраняет края и детали чётче билинейного и "
@@ -895,8 +896,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Imagem",
     [UI_MENU_RENDER_SCALE] = "Escala da renderização 3D",
-    [UI_MENU_RENDER_SCALE_DESC] = "Alvos de renderização maiores que a resolução do jogo (escala de resolução como nos "
-                                  "emuladores). 1.33x transforma os 1600x900 do jogo em 2133 × 1200; o jogo mantém o tamanho lógico.",
+    [UI_MENU_RENDER_SCALE_DESC] = "Renderiza a imagem 1080p do jogo numa resolução maior (escala de resolução como nos "
+                                  "emuladores): 1440p a desenha em 2560 × 1440, 2160p em 3840 × 2160. O jogo mantém o "
+                                  "tamanho lógico.",
     [UI_MENU_RENDER_SCALE_GAME] = "Jogo (83 %)",
     [UI_MENU_UPSCALER] = "Escala para a janela",
     [UI_MENU_UPSCALER_DESC] = "Como a imagem é ajustada à janela. O FSR mantém bordas e detalhes mais nítidos que o "
@@ -1351,8 +1353,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
 
     [UI_MENU_GRAPHICS] = "画面",
     [UI_MENU_RENDER_SCALE] = "3D 渲染比例",
-    [UI_MENU_RENDER_SCALE_DESC] = "渲染目标比游戏分辨率更大（模拟器式分辨率缩放）。"
-                                  "1.33 倍可将游戏的 1600x900 变为 2133 × 1200；游戏保持其逻辑尺寸。",
+    [UI_MENU_RENDER_SCALE_DESC] = "以更高的分辨率渲染游戏的 1080p 画面（模拟器式分辨率缩放）："
+                                  "1440p 为 2560 × 1440，2160p 为 3840 × 2160。游戏保持其逻辑尺寸。",
     [UI_MENU_RENDER_SCALE_GAME] = "游戏（83%）",
     [UI_MENU_UPSCALER] = "放大到窗口",
     [UI_MENU_UPSCALER_DESC] = "画面缩放到窗口的方式。"
