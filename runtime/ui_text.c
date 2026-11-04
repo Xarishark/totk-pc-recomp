@@ -52,13 +52,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     // printf format of the overlay line in FPS mode: the frame rate
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Picture",
-    [UI_MENU_OUTPUT_RES] = "Game resolution",
-    [UI_MENU_OUTPUT_RES_DESC] = "The size the game renders its frame in: 1062p (the community resolution mod) or 1080p "
-                                "(the engine's maximum). The picture is then drawn to the window; AC_SSAA can render it "
-                                "larger than the game's size.",
     [UI_MENU_RENDER_SCALE] = "3D render scale",
     [UI_MENU_RENDER_SCALE_DESC] = "Render targets made larger than the game resolution (emulator-style resolution "
-                                  "scale). 1.33x turns 1080p into 2560 x 1440; the game keeps its logical size and the "
+                                  "scale). 1.33x turns the game's 1600x900 into 2133 x 1200; the game keeps its logical size and the "
                                   "window shows the larger picture.",
     [UI_MENU_RENDER_SCALE_GAME] = "Game (83 %)",
     [UI_MENU_UPSCALER] = "Scaling to the window",
@@ -135,13 +131,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_FXAA] = "Game anti-aliasing (FXAA)",
     [UI_MENU_FXAA_DESC] = "The game's own FXAA edge smoothing. It blurs fine detail a little; with DLAA on it is not needed.",
 
-    [UI_MENU_FPS_LIMIT] = "Frame rate limit",
-    [UI_MENU_FPS_LIMIT_DESC] = "The most frames per second the game draws. Above 60 is experimental and needs Game speed "
-                               "follows the clock.",
-    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
-    // the monitor's refresh rate; printf format with the rate in Hz when it is known
-    [UI_MENU_FPS_DISPLAY] = "Monitor rate", [UI_MENU_FPS_DISPLAY_HZ] = "Monitor rate (%.0f Hz)",
+    [UI_MENU_FPS_LIMIT] = "Frame rate",
+    [UI_MENU_FPS_LIMIT_DESC] = "60 FPS runs the game's 60 fps patch; 30 FPS switches it off. Read live.",
+    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_60] = "60 FPS",
     [UI_MENU_REALTIME] = "Game speed follows the clock",
     [UI_MENU_REALTIME_DESC] = "Steps the game by real time, so a slow frame does not slow the game down.",
     [UI_MENU_CLOTH_REALTIME] = "Cloth on the clock",
@@ -468,12 +460,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OFF] = "Выкл.", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Полный",
     [UI_PERF_LINE_FPS] = "%.0f к/с",
     [UI_MENU_GRAPHICS] = "Изображение",
-    [UI_MENU_OUTPUT_RES] = "Разрешение игры",
-    [UI_MENU_OUTPUT_RES_DESC] = "Размер, в котором игра рисует кадр: 1062p (мод сообщества) или 1080p (максимум "
-                                "движка). Затем картинка выводится в окно; AC_SSAA может отрисовать её крупнее.",
     [UI_MENU_RENDER_SCALE] = "Масштаб 3D-отрисовки",
     [UI_MENU_RENDER_SCALE_DESC] = "Цели рендеринга крупнее разрешения игры (масштабирование как в эмуляторах). 1.33x "
-                                  "превращает 1080p в 2560 × 1440; игра сохраняет свой логический размер.",
+                                  "превращает 1600x900 игры в 2133 × 1200; игра сохраняет свой логический размер.",
     [UI_MENU_RENDER_SCALE_GAME] = "Как в игре (83 %)",
     [UI_MENU_UPSCALER] = "Масштабирование под окно",
     [UI_MENU_UPSCALER_DESC] = "Как картинка подгоняется под окно. FSR сохраняет края и детали чётче билинейного и "
@@ -550,12 +539,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_FXAA] = "Сглаживание игры (FXAA)",
     [UI_MENU_FXAA_DESC] = "Собственное сглаживание FXAA. Слегка размывает мелкие детали; с DLAA оно не нужно.",
 
-    [UI_MENU_FPS_LIMIT] = "Ограничение частоты кадров",
-    [UI_MENU_FPS_LIMIT_DESC] = "Наибольшее число кадров в секунду. Выше 60 — экспериментальный режим, нужна «Скорость "
-                               "игры по часам».",
-    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
-    [UI_MENU_FPS_DISPLAY] = "Как у монитора", [UI_MENU_FPS_DISPLAY_HZ] = "Как у монитора (%.0f Гц)",
+    [UI_MENU_FPS_LIMIT] = "Частота кадров",
+    [UI_MENU_FPS_LIMIT_DESC] = "60 FPS включает патч игры на 60 кадров; 30 FPS отключает его. Читается на лету.",
+    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_60] = "60 FPS",
     [UI_MENU_REALTIME] = "Скорость игры по часам",
     [UI_MENU_REALTIME_DESC] = "Игра идёт по реальному времени, медленный кадр её не замедляет.",
     [UI_MENU_CLOTH_REALTIME] = "Ткань по часам",
@@ -908,12 +894,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OFF] = "Desligado", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Completo",
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Imagem",
-    [UI_MENU_OUTPUT_RES] = "Resolução do jogo",
-    [UI_MENU_OUTPUT_RES_DESC] = "O tamanho em que o jogo desenha o quadro: 1062p (mod da comunidade) ou 1080p (máximo "
-                                "do motor). A imagem é então desenhada na janela; AC_SSAA pode renderizá-la maior.",
     [UI_MENU_RENDER_SCALE] = "Escala da renderização 3D",
     [UI_MENU_RENDER_SCALE_DESC] = "Alvos de renderização maiores que a resolução do jogo (escala de resolução como nos "
-                                  "emuladores). 1.33x transforma 1080p em 2560 × 1440; o jogo mantém o tamanho lógico.",
+                                  "emuladores). 1.33x transforma os 1600x900 do jogo em 2133 × 1200; o jogo mantém o tamanho lógico.",
     [UI_MENU_RENDER_SCALE_GAME] = "Jogo (83 %)",
     [UI_MENU_UPSCALER] = "Escala para a janela",
     [UI_MENU_UPSCALER_DESC] = "Como a imagem é ajustada à janela. O FSR mantém bordas e detalhes mais nítidos que o "
@@ -926,17 +909,14 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SHARPNESS] = "Nitidez do FSR",
     [UI_MENU_SHARPNESS_DESC] = "Aumento de nitidez após a ampliação do FSR; 0 desliga.",
 
-    [UI_MENU_FPS_LIMIT] = "Limite de quadros",
-    [UI_MENU_FPS_LIMIT_DESC] = "O máximo de quadros por segundo que o jogo desenha. Acima de 60 é experimental e "
-                               "precisa de Velocidade do jogo pelo relógio.",
-    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_40] = "40 FPS", [UI_MENU_FPS_45] = "45 FPS",
-    [UI_MENU_FPS_60] = "60 FPS", [UI_MENU_FPS_90] = "90 FPS", [UI_MENU_FPS_120] = "120 FPS", [UI_MENU_FPS_144] = "144 FPS",
+    [UI_MENU_FPS_LIMIT] = "Taxa de quadros",
+    [UI_MENU_FPS_LIMIT_DESC] = "60 FPS usa o patch de 60 fps do jogo; 30 FPS o desliga. Lido na hora.",
+    [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_60] = "60 FPS",
     [UI_MENU_ASSUME_FOCUS] = "Continuar rodando fora de foco",
     [UI_MENU_ASSUME_FOCUS_DESC] = "Ligado (o padrão), o jogo continua rodando enquanto você está em outra janela, e o "
                                   "teclado fica sem efeito até a janela voltar para a frente. Desligado, ele pausa quando "
                                   "a janela perde o foco, como no Switch ao apertar Home; um carregamento interrompido "
                                   "assim pode parar de vez.",
-    [UI_MENU_FPS_DISPLAY] = "Taxa do monitor", [UI_MENU_FPS_DISPLAY_HZ] = "Taxa do monitor (%.0f Hz)",
     [UI_MENU_REALTIME] = "Velocidade do jogo pelo relógio",
     [UI_MENU_REALTIME_DESC] = "Avança o jogo pelo tempo real, para que um quadro lento não deixe o jogo mais lento.",
     [UI_MENU_CLOTH_REALTIME] = "Tecidos pelo relógio",
@@ -1370,12 +1350,9 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_PERF_LINE_FPS] = "%.0f fps",
 
     [UI_MENU_GRAPHICS] = "画面",
-    [UI_MENU_OUTPUT_RES] = "游戏分辨率",
-    [UI_MENU_OUTPUT_RES_DESC] = "游戏绘制画面的尺寸：1062p（社区分辨率模组）或 1080p（引擎上限）。"
-                                "随后画面会输出到窗口；AC_SSAA 可将其渲染得更大。",
     [UI_MENU_RENDER_SCALE] = "3D 渲染比例",
     [UI_MENU_RENDER_SCALE_DESC] = "渲染目标比游戏分辨率更大（模拟器式分辨率缩放）。"
-                                  "1.33 倍可将 1080p 变为 2560 × 1440；游戏保持其逻辑尺寸。",
+                                  "1.33 倍可将游戏的 1600x900 变为 2133 × 1200；游戏保持其逻辑尺寸。",
     [UI_MENU_RENDER_SCALE_GAME] = "游戏（83%）",
     [UI_MENU_UPSCALER] = "放大到窗口",
     [UI_MENU_UPSCALER_DESC] = "画面缩放到窗口的方式。"
@@ -1408,18 +1385,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_COLOR_SATURATION_DESC] = "颜色相对灰色的强度；100% 表示不调整。",
     [UI_MENU_COLOR_GAMMA] = "伽马",
     [UI_MENU_COLOR_GAMMA_DESC] = "小于 1 提亮暗部与中间调，大于 1 压暗；1 表示不调整。",
-    [UI_MENU_FPS_LIMIT] = "帧率上限",
-    [UI_MENU_FPS_LIMIT_DESC] = "游戏每秒绘制的最高帧数。高于 60 帧为实验性功能，"
-                               "需要开启“游戏速度跟随时钟”。",
+    [UI_MENU_FPS_LIMIT] = "帧率",
+    [UI_MENU_FPS_LIMIT_DESC] = "60 FPS 启用游戏的 60 帧补丁；30 FPS 关闭它。即时生效。",
     [UI_MENU_FPS_30] = "30 FPS",
-    [UI_MENU_FPS_40] = "40 FPS",
-    [UI_MENU_FPS_45] = "45 FPS",
     [UI_MENU_FPS_60] = "60 FPS",
-    [UI_MENU_FPS_90] = "90 FPS",
-    [UI_MENU_FPS_120] = "120 FPS",
-    [UI_MENU_FPS_144] = "144 FPS",
-    [UI_MENU_FPS_DISPLAY] = "显示器刷新率",
-    [UI_MENU_FPS_DISPLAY_HZ] = "显示器刷新率（%.0f Hz）",
     [UI_MENU_REALTIME] = "游戏速度跟随时钟",
     [UI_MENU_REALTIME_DESC] = "按真实时间推进游戏，帧率低时游戏速度也不会变慢。",
     [UI_MENU_CLOTH_REALTIME] = "布料跟随时钟",

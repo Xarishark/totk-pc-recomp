@@ -114,7 +114,7 @@ Never commit `shader-cache/`, `pipeline-cache.bin`, `pipeline-keys.bin`, `shader
 - A **release zip exists and was tested end to end**: `build\release\Astral Chain-Setup-0.1.0-windows.zip`
   (132.5 MiB, 483 MiB unpacked). It installs in ~65 s and the installed game boots (`boot: passed`). It is not
   published; nothing was pushed to GitHub Releases.
-- What ships: the **base game 1.0.0 only**, Windows x64, Vulkan, the game's own 30 fps tick.
+- What ships: the **1.0.1 update**, merged from the player's base game 1.0.0, Windows x64, Vulkan, the game's own 30 fps tick.
 
 ---
 
@@ -124,13 +124,15 @@ Never commit `shader-cache/`, `pipeline-cache.bin`, `pipeline-keys.bin`, `shader
 - RomFS mount, directory enumeration, `root.pkz`, `st*.pkz`, `ui`, `um`, `wet`, `wp`, `core`, the sound archives.
 - Shader lookup in `shader2.dat`, VSO/PSO validation, translation through `ac_xlate`.
 - Title screen, `ZL + ZR` prompt, main menu, LOAD DATA, New Game, the save system, scripted input.
+- **1.0.1**: built from the update NSP, merges its BKTR RomFS with the base game, boots to the opening scene
+  (`boot: passed`, 1197 frames, no unimplemented NVN calls, 1600x900 shot).
 - Vulkan rendering: FSR 1 upscale from 1600x900 to the window, ~30 fps present loop, no validation errors, no shader
   failures, no skipped draws in the last runs.
 - The opening cutscene and the first gameplay scene (police HQ), in the language the ini selects.
 - **Audio**: `audout:u` with a full `IAudioOut` session over an SDL3 stream (music, effects, voices); the `hwopus`
   service and its decoder over libopus are implemented but not exercised yet (section 4).
 - **Save data** through the host layer: mount, atomic commit, recovery of an interrupted commit, `CommitSaveData`.
-- **1062p mode** (`res1062 = 1`) and the matching +1 mipmap bias; anisotropic filtering up to 16x.
+- Anisotropic filtering up to 16x, AMD FSR 1 upscaling and emulator-style 3D render scaling (`AC_SSAA`).
 - In-game menu (F1), performance overlay (F10 / L3+R3), four UI languages.
 - **The setup**: check, extract, lift, compile, cleanup on the player's machine, from the player's own base game.
 
@@ -141,10 +143,12 @@ overlay, memory census 2586.8 MiB of imported pools at frame 600.
 
 - **Play coverage stops at the opening.** The longest verified run is a 45 s scripted New Game that reaches the police
   HQ cutscene. Nothing past it was played; expect missing services or render issues there.
-- **1.0.1 is not supported.** The user has no 1.0.1 exefs, so the update cannot be mapped or lifted. The base title id
-  is `01007300020FA000`, the update's `01007300020FA800`.
-- **60 fps is not implemented.** Forcing the present interval to 1 gives 58.9 fps but the game then runs 2x fast: the
-  guest tick stays 1/30 per frame. This needs a tick patch, not a present-interval change.
+- **1.0.1 is the target.** The installer takes the base game (1.0.0) and the update NSP (1.0.1), merges the update's
+  BKTR RomFS section and builds from the update's ExeFS. The base title id is `01007300020FA000`, the update's
+  `01007300020FA800`.
+- **60 fps is on by default** (`AC_FPS`, menu 30/60): `recomp/patches-v101.txt` set `fps60` halves the game's frame
+  time, and `runtime/frame_rate.c` `cutscene_rate` keeps cutscenes at 30. Measured 59.5 fps mean in play, 29.9 with the
+  switch at 30.
 - **AOT shaders are not done** (section 1): shaders translate during play.
 - **`hwopus` decoding is unexercised.** The service and the decoder exist, but the game has only asked for work-buffer
   sizes so far; no decoder was ever opened, so the Opus path never ran.
@@ -165,7 +169,7 @@ overlay, memory census 2586.8 MiB of imported pools at frame 600.
    host override.
 3. **Support services**, in this order: `nfp:user`/amiibo, the `account`/`friends` commands a longer run reaches,
    `prepo:u`/`nifm:u` kept local, shared fonts.
-4. Optional, later: 1.0.1 support, the 60 fps tick patch, a Linux release.
+4. Optional, later: frame rates above 60, a Linux release.
 
 The user asked for real implementations, not stubs that report success: a service that returns success without doing
 the work leaves the game waiting for data it never gets.
@@ -187,13 +191,13 @@ Definition of done for this handover:
 | Python | `.venv` (3.12) for extraction, lifting, building, tests |
 | Python for releases | `.venv-py314` (3.14): only `tools/make_release.py` needs it |
 | .NET | 10.0 SDK, needed by `tools/build_xlate.py` |
-| Config | `config.local.toml` (ignored): `input.base`, `input.keys`, `work.dir = 'build'` |
+| Config | `config.local.toml` (ignored): `input.base`, `input.update`, `input.keys`, `work.dir = 'build'` |
 | Extract | `.venv\Scripts\python tools\extract.py` → `build/extracted/v0/{exefs,romfs}` |
 | Translator | `.venv\Scripts\python tools\build_xlate.py` → `build/xlate/ac_xlate.exe` (~15 s once NuGet is warm) |
-| Generate C | `.venv\Scripts\python recomp\gen.py --exefs build\extracted\v0\exefs --out generated/v0 --jobs 16 --patches recomp\patches-v0.txt` |
-| Build | `.venv\Scripts\python tools\build_game.py --version v0 --jobs 16` |
-| Run | `build\v0\astralchain.exe --seconds 30 [--shot PNG]` |
-| Log | `build/v0/logs/astralchain.log` (rotated to `astralchain.1.log` … on each start) |
+| Generate C | `.venv\Scripts\python recomp\gen.py --exefs build\extracted\v101\exefs --out generated/v101 --jobs 16 --patches recomp\patches-v101.txt --version v101` |
+| Build | `.venv\Scripts\python tools\build_game.py --version v101 --jobs 16` |
+| Run | `build\v101\astralchain.exe --seconds 30 [--shot PNG]` |
+| Log | `build/v101/logs/astralchain.log` (rotated to `astralchain.1.log` … on each start) |
 | Traces | `AC_TRACE=host,gfx,kernel,svc,ipc,fs,perf,sched,present,audio` or `all`; a bare `1` is rejected |
 | Content check | `.venv\Scripts\python tools\check_content.py --staged` |
 
@@ -201,8 +205,8 @@ Facts that cost time when forgotten:
 
 - `tools/build_game.py` does **not** regenerate the lifted C. After changing `recomp/`, a patch table or the generated
   C, run `recomp/gen.py` first (about 11 s for the whole game).
-- `--patches recomp/patches-v0.txt` is mandatory. It holds the 32 spin waits found by
-  `tools/spin_waits.py --exefs build\extracted\v0\exefs --modules main`. Without them clang hoists a guest spin loop's
+- `--patches recomp/patches-v101.txt` is mandatory. It holds the 32 spin waits found by
+  `tools/spin_waits.py --exefs build\extracted\v101\exefs --modules main`. Without them clang hoists a guest spin loop's
   load and turns it into a tight `jmp $`; the game then stops making progress.
 - The translator is auto-detected as the nearest `build/xlate/ac_xlate.exe` above the exe. `AC_XLATE` overrides it,
   `AC_XLATE_ID` overrides its cache identity; keep `ac_xlate.id` next to it.
@@ -241,12 +245,12 @@ It needs `toolchain/hactool/hactool.exe` (`tools/build_hactool.py`) and `build/x
   53/313; the shader GPU code minor version is **15** (Astral Chain's shaders are 1.15).
 - No C++ exceptions, no `_Unwind_*` or `longjmp` imports; only `__cxa_guard_*` and `__cxa_pure_virtual`, so
   `recomp/regs.py`'s callee-saved assumptions hold.
-- Memory layout (`generated/v0/layout.h`, decided only by `recomp/layout.py`):
+- Memory layout (`generated/v101/layout.h`, decided only by `recomp/layout.py`):
 
   | Region | Base | Size |
   |---|---|---|
-  | `main` | `0x7000000000` | `0xcccc000` |
-  | RomFS image | `0x7000d1b000` | `0x2667f6a3c` |
+  | `main` | `0x7000000000` | `0xcce6000` |
+  | RomFS image | `0x7000d35000` | `0x26689fefc` |
   | `sdk` | `0x7267600000` | `0xc75000` |
   | kernel / helpers | `0x7268400000` | — |
   | host functions | `0x7300000000` | — |
@@ -326,7 +330,7 @@ Each of these was a crash, a hang or a visibly broken feature; all are in the bo
 1. **RomFS mount cache.** Build it and copy it into the guest allocation with `mem_thaw` + `memcpy`. Never
    `plat_mem_protect` an allocation that is not page-exclusive: the next allocation can share the last page.
 2. **RomFS root and nested listings.** Accept the mount root and trim trailing `/` in `romfs_dir_list`.
-3. **Spin waits.** `recomp/patches-v0.txt` has 32 `spin main` lines; build with `--patches` or the port hangs.
+3. **Spin waits.** `recomp/patches-v101.txt` has 32 `spin main` lines; build with `--patches` or the port hangs.
 4. **Shader GPU code minor version.** `runtime/nvn_api_core.c` reports `[0x30] = 15`; 14 rejects every shader.
 5. **Per-stage NVN programs.** The game binds a vertex and a fragment program separately with stage masks.
    `nvnCommandBufferBindProgram` fills `ex->prog_stage[6]`, and `shader_for`, the memo key and the descriptor signature
@@ -349,10 +353,7 @@ Each of these was a crash, a hang or a visibly broken feature; all are in the bo
 13. **`nn::settings::LanguageCode::Make`.** A `LanguageCode` is an 8-byte code string, not an enum index. `set:` cmd 5
     answers the string and `runtime/ov_settings.c` overrides `Make`; without it the game compared empty codes and stayed
     on English whatever the ini said.
-14. **1062p (`recomp/patches-v0.txt`, `res1062`).** A patch set replaces the render sizes and the three scale
-    comparisons, so the scene renders at 1888x1062; `runtime/vk_texture.c` `make_sampler` adds the matching +1 mipmap
-    bias for the scene's filtered, repeating samplers.
-15. **The install bakes its own ExeFS hashes.** `runtime/boot.c` `ldr_read_verified` refuses any ExeFS file whose
+14. **The install bakes its own ExeFS hashes.** `runtime/boot.c` `ldr_read_verified` refuses any ExeFS file whose
     SHA-256 differs from `rt_exefs_sha256`, which `tools/build_game.py` writes from `--expected`. The installer
     therefore writes `<temp>/expected-install.json` from the files it extracted and passes that: a player's
     `main.npdm` legitimately differs from ours, and `--accept-unknown-version` lets their code differ too. Never pass
@@ -387,10 +388,10 @@ AOT work (section 1.3).
 
 - **check**: release files present, destination empty, language, host probe (`installer/hostcheck.c` built with the
   bundled clang: x86-64-v2 minimum, v3 when AVX2/FMA, a Vulkan 1.3 device), disk space (RomFS size + 4 GiB + the
-  generated C), the game file opens with the keys and its ExeFS matches `tools/data/expected-v1.0.0.json`.
+  generated C), the game file opens with the keys and the base ExeFS matches `tools/data/expected-v1.0.0.json` and the update `expected-v1.0.1.json`.
 - **extract**: `tools/extract.py` `extract_exefs` + `extract_romfs`, every IVFC level verified, then the ExeFS and
   RomFS hashes compared with the expected file.
-- **lift**: `recomp/gen.py` with `recomp/patches-v0.txt`, after `tools/exefs_patches.py` turns the mods' ExeFS patch
+- **lift**: `recomp/gen.py` with `recomp/patches-v101.txt`, after `tools/exefs_patches.py` turns the mods' ExeFS patch
   files into a patch set (a file the tool refuses costs those patches, not the install).
 - **compile**: `tools/build_game.py --runtime-lib` with the prebuilt `libacrt.a`/`libacrt-v2.a`, then the exe,
   `romfs-index.bin`, `ac_xlate.exe` (+ `.id`) and the DLLs copied into the install folder. The `ac_xlate` copy is
@@ -403,7 +404,7 @@ Measured on this machine: 64.6 s for a full install (extract 19 s, lift 13 s, co
 
 `tools/make_release.py` assembles the folder: bundled Python 3.14.9 (tkinter, numpy, lz4, cryptography, cffi,
 pycparser), llvm-mingw, `runtime/` (libacrt, headers, deps), `bin/` (ac_xlate, hactool, ninja, SDL3, opus), `recomp/`,
-`tools/` (with `tools/data/expected-v1.0.0.json`), `licenses/`, the notices, the ini example and `VERSION`. It then
+`tools/` (with `tools/data/expected-v1.0.0.json` and `expected-v1.0.1.json`), `licenses/`, the notices, the ini example and `VERSION`. It then
 runs `check_content.py`, starts the folder's own installer to see it reach `check.inputs_needed`, builds every window
 screen in both languages, and drops `__pycache__` and the setup's `temp/` before zipping.
 
@@ -447,8 +448,6 @@ Full instructions are in `AGENTS.md` ("Controller"). Summary:
   any texture or sampler change.
 - Graphics pipeline libraries, a replay recorder thread, fast links and library builds on workers are what keep the
   30 fps tick; the overlay shows translation, pipeline build, replay, upload and present per frame.
-- The 1062p set changes the render size, not the window: FSR upscales 1888x1062 to the window, as it does from
-  1600x900 without it.
 
 ---
 
@@ -458,7 +457,7 @@ After each significant change:
 
 1. `.venv\Scripts\python tools\check_content.py --staged` before a commit.
 2. Regenerate the C with `--patches`, then `tools/build_game.py`.
-3. `build\v0\astralchain.exe --seconds 10 --shot build\v0\title.png`: the Astral Chain logo and `ZL + ZR`, not black.
+3. `build\v101\astralchain.exe --seconds 10 --shot build\v101\title.png`: the Astral Chain logo and `ZL + ZR`, not black.
 4. A scripted New Game (`AC_INPUT_SCRIPT=build\play_seq.txt`, `--seconds 45`) reaches the police HQ scene, ~30 fps, no
    fatal, no shader failure, no skipped draw. `build\play_seq.txt` is the user's own sequence: ZL+ZR, stick up, A,
    A, stick left, A, stick left, A.

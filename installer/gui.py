@@ -60,7 +60,7 @@ class App:
         self.run_args = run_args or {}   # extra CLI options for tests: temp, verify
         self.log_entries = []            # events and raw lines of the run, rendered by render_log
         self.bound = []                  # (widget, option, id, params) retranslated on a language switch
-        self.vars = {n: tk.StringVar() for n in ('base', 'keys', 'dest')}
+        self.vars = {n: tk.StringVar() for n in ('base', 'update', 'keys', 'dest')}
         self.accept_version = False   # the next run carries on past the version check
         self.vars['lang'] = tk.StringVar()
         self.lang_code = default_game_language(ui_lang)
@@ -207,7 +207,8 @@ class App:
         grid = ttk.Frame(f)
         grid.pack(fill='x')
         grid.columnconfigure(1, weight=1)
-        rows = (('base', 'ui.base', 'ui.pick_game'), ('keys', 'ui.keys', 'ui.pick_keys'))
+        rows = (('base', 'ui.base', 'ui.pick_game'), ('update', 'ui.update', 'ui.pick_update'),
+                ('keys', 'ui.keys', 'ui.pick_keys'))
         self.form_rows = {}
         for i, (name, label_id, pick_id) in enumerate(rows):
             lab = self.label(grid, label_id)
@@ -289,8 +290,8 @@ class App:
     # ---- form -----------------------------------------------------------------------------------------------------
 
     def form(self):
-        return Form(base=self.vars['base'].get(), keys=self.vars['keys'].get(), lang=self.selected_lang(),
-                    dest=self.vars['dest'].get())
+        return Form(base=self.vars['base'].get(), update=self.vars['update'].get(), keys=self.vars['keys'].get(),
+                    lang=self.selected_lang(), dest=self.vars['dest'].get())
 
     def refresh_form(self):
         form = self.form()
@@ -306,6 +307,8 @@ class App:
 
     def pick_file(self, name, pick_id):
         types = [(self.cat('ui.type_game'), '*.nsp *.xci'), (self.cat('ui.type_all'), '*.*')]
+        if name == 'update':
+            types = [(self.cat('ui.type_update'), '*.nsp'), (self.cat('ui.type_all'), '*.*')]
         if name == 'keys':
             types = [(self.cat('ui.type_keys'), '*.keys'), (self.cat('ui.type_all'), '*.*')]
         path = filedialog.askopenfilename(title=self.cat(pick_id), filetypes=types)
@@ -604,6 +607,7 @@ def selftest(layout, shots=None):
             tag = lang
             app.vars['dest'].set('Z:/selftest/Astral Chain')
             app.vars['base'].set('Z:/selftest/astralchain.xci')
+            app.vars['update'].set('Z:/selftest/astralchain-1.0.1.nsp')
             app.vars['keys'].set('Z:/selftest/prod.keys')
             app.show('form')
             app.start()   # missing files: shows the problems

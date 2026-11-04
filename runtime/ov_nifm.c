@@ -1,4 +1,4 @@
-// The network interface manager service ("nifm:u") for Astral Chain 1.0.0.
+// The network interface manager service ("nifm:u") for Astral Chain 1.0.1.
 //
 // The game opens nifm:u while it starts up, before the intro menu. Nothing on this host needs a network, so every
 // command is accepted and returns no output: the SDK's client sees a successful request with a zero-filled reply buffer,

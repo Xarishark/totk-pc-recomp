@@ -1,4 +1,4 @@
-// The settings service ("set", settings:u) for Astral Chain 1.0.0.
+// The settings service ("set", settings:u) for Astral Chain 1.0.1.
 //
 // At boot the game's language setup calls ISettingsServer::MakeLanguageCode through the SDK's hipc2 client, and the
 // SDK only reached "set" through sm:, so this service is the first thing the game needs that TotK never did (TotK's

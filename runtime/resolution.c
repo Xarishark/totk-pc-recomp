@@ -254,32 +254,9 @@ static void res_shadow_range(void) {
     rt_log("resolution: shadow cascades end at %g, %g, %g and %g m", d[0], d[1], d[2], d[3]);
 }
 
-// ---- the game's logical render size on 1.0.0: res1062 (1888x1062) or res1080 (1920x1080, the engine's maximum).
-// AC_GAME_RES picks one; AC_SSAA (vk_texture.c) makes the render targets larger than that, so the picture is drawn at
-// 1440p or more while the game keeps a size its renderer supports.
-static int game_res_1080(void) { return !strcmp(cfg_value("AC_GAME_RES"), "1080p"); }
-
-static void game_res_apply(void) {
-    int s1062 = rt_patch_set("res1062"), s1080 = rt_patch_set("res1080");
-    if (s1062 < 0 && s1080 < 0) return;
-    int want = game_res_1080();
-    if (s1062 >= 0) rt_patch_switch(s1062, !want);
-    if (s1080 >= 0) rt_patch_switch(s1080, want);
-    R.on = 1;
-    R.ow = want ? 1920 : 1888;
-    R.oh = want ? 1080 : 1062;
-    R.sw = R.ow;
-    R.sh = R.oh;
-    rt_log("resolution: game renders %ux%u (%s)", R.ow, R.oh,
-           want ? "1080p, the engine's maximum; AC_SSAA scales the render targets" : "1062p community mod");
-}
-
+// ---- start: the patch page and the sets
 void res_init(void) {
     res_shadow_range();
-    if (rt_patch_set("res1062") >= 0 || rt_patch_set("res1080") >= 0) {
-        game_res_apply();
-        return;
-    }
     if (!bigger()) {
         rt_log("resolution: the game's own (output 1920x1080, scene 1600x900)");
         shadow_init(rt_patch_page());

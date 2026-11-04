@@ -53,29 +53,27 @@ hactool reads `-k <prod.keys>`; MSYS2 shells set `HOME`, which hides its default
 
 ## Build
 
-From the repository root, in PowerShell. Every step that depends on the game version takes it as `<ver>`: `v143` for
-1.4.3, `v121` for 1.2.1 or `v110` for 1.1.0. The tools default to `v121` when `--version` is left out. Saves load on any
-of them.
+From the repository root, in PowerShell. Every step that depends on the game version takes it as `<ver>`: `v101` for
+1.0.1. The tools default to `v101` when `--version` is left out. Saves load the same way.
 
-1. Python environments (once). `.venv` runs the lifter and the build; `.venv-py314` runs the extraction scripts, which
-   need the stdlib `compression.zstd` of Python 3.14:
+1. Python environments (once). `.venv` runs the lifter, the build and the extraction scripts:
 
    ```powershell
    uv venv --python 3.12 .venv
    uv pip install --python .venv/Scripts/python.exe -r tools/requirements.txt
-   uv venv --python 3.14 .venv-py314
-   uv pip install --python .venv-py314/Scripts/python.exe -r tools/requirements-py314.txt
    ```
 
-2. Copy `config.example.toml` to `config.local.toml` and set the paths to your base game, the update and your console's
-   keys file. `config.local.toml` is ignored by git. The tools read the keys file themselves.
+2. Copy `config.example.toml` to `config.local.toml` and set the paths to your base game, the 1.0.1 update and your
+   console's keys file. `config.local.toml` is ignored by git. The tools read the keys file themselves.
 
-3. Extract and verify. This writes `build\extracted\v0` (1.0.0) and `build\extracted\<ver>` for each update in
-   `updates`, identified by its hash; a hash mismatch stops the run. With another `[work] dir` in `config.local.toml`,
-   `extracted` goes there instead, and `build_game.py` reads the ExeFS and RomFS from there:
+3. Extract and verify. This writes `build\extracted\v0` (the base ExeFS, checked as 1.0.0) and `build\extracted\v101`
+   (the update's ExeFS and the RomFS merged through hactool), identified by its hash; a hash mismatch stops the run.
+   The merge needs about 21 GiB free next to `build\extracted\v101` (the two Program NCAs and the merged image). With
+   another `[work] dir` in `config.local.toml`, `extracted` goes there instead, and `build_game.py` reads the ExeFS and
+   RomFS from there:
 
    ```powershell
-   .venv-py314\Scripts\python tools\extract.py
+   .venv\Scripts\python tools\extract.py
    ```
 
 4. Shader translator (no game files; again after a change to its sources, and `tools\make_release.py` stops on an older
@@ -85,13 +83,11 @@ of them.
    .venv\Scripts\python tools\build_xlate.py
    ```
 
-5. Lift the modules to C, write the RomFS overlay (the frame-rate fix), then compile and link
-   `build\<ver>\astralchain.exe`:
+5. Lift the modules to C, then compile and link `build\v101\astralchain.exe`:
 
    ```powershell
-   .venv\Scripts\python recomp\gen.py --exefs build\extracted\<ver>\exefs --out generated\<ver> --patches recomp\patches-<ver>.txt
-   .venv-py314\Scripts\python tools\make_romfs_patches.py --version <ver>
-   .venv\Scripts\python tools\build_game.py --version <ver>
+   .venv\Scripts\python recomp\gen.py --exefs build\extracted\v101\exefs --out generated\v101 --patches recomp\patches-v101.txt --version v101
+   .venv\Scripts\python tools\build_game.py --version v101
    ```
 
    `--cpu v2` targets x86-64-v2 (SSE4.2, no AVX2/FMA) for older CPUs; the default `v3` needs AVX2. The v2 build links
@@ -104,7 +100,7 @@ of them.
 
    ```powershell
    $env:SCCACHE = "path\to\sccache.exe"
-   .venv\Scripts\python tools\build_game.py --version <ver>
+   .venv\Scripts\python tools\build_game.py --version v101
    ```
    `--patches` builds in the frame-rate, resolution and other patch sets, switchable at run time. The link copies
    `SDL3.dll`, `libiconv-2.dll` and `libopus-0.dll` next to the exe.
@@ -116,7 +112,7 @@ of them.
    for the shared shader list:
 
    ```powershell
-   .venv-py314\Scripts\python tools\prepare_shaders.py build\<ver> --version <ver>
+   .venv\Scripts\python tools\prepare_shaders.py build\v101 --version v101
    ```
 
    Without this step the first launch compiles shaders and pipelines during play and stutters until the caches fill.
@@ -136,7 +132,7 @@ of them.
    ```
 
 Settings live in `astralchain.ini` next to `astralchain.exe` ([astralchain.ini.example](../astralchain.ini.example) lists them). Saves go to
-`build\profile` for `v121` and `build\profile-<ver>` for other versions (`build_game.py --profile` changes it).
+`build\profile-v101` (`build_game.py --profile` changes it).
 
 ### Portable folder
 
@@ -193,10 +189,10 @@ Before a commit:
 
 - `python tools/check_content.py --staged`: nothing game-derived is staged. CI runs the same check;
   `git config core.hooksPath .githooks` runs it before each local commit.
-- `build\<ver>\astralchain.exe --selftest`: layout, dispatch table and host-function registry, without game files.
+- `build\v101\astralchain.exe --selftest`: layout, dispatch table and host-function registry, without game files.
 
 A change to the button prompts (`tools/make_romfs_patches.py --prompts`, `tools/button_icons.py`) passes
-`.venv-py314\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
+`.venv\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
 files); a change to the settings passes `astralchain.exe --probe-cfg`.
 
 The lifter (`recomp/`) and the CPU headers (`runtime/cpu.h`, `runtime/simd.h`) are checked against Unicorn. Every lifter

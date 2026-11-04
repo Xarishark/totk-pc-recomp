@@ -3,12 +3,12 @@
 Extraction runs in this process through tools/extract.py (the package's sibling tools/, which ships with it); lift and
 compile run the bundled Python on recomp/gen.py and tools/build_game.py, whose output goes to
 <temp>/logs/<step>-<tool>.log and is read for progress. No Win32 call here: the host check is a small C program built
-with the bundled clang (hostcheck.c). The port builds the base game only, so there is no update to merge and no
-firmware folder to read: the game's own data carries everything.
+with the bundled clang (hostcheck.c). The port builds the game from the player's base game (1.0.0) and update NSP
+(1.0.1): the update supplies the ExeFS and its BKTR section, which hactool merges with the base RomFS.
 
 Install folder: exefs/, romfs/ (romfs.bin, index.json), profile/, astralchain.exe and its DLLs, romfs-index.bin,
 ac_xlate.exe, astralchain.ini, astralchain-install.json.
-Temp folder (<temp>/<dest name>-<hash>): check/ (the ExeFS and its manifest, the host check), gen/ (C), build/
+Temp folder (<temp>/<dest name>-<hash>): check/ (the ExeFS of both inputs and their manifests, the host check), gen/ (C),
 (objects), logs/. The cleanup keeps gen/, build/ and logs/: the next run lifts into the same gen/, where recomp/gen.py
 rewrites only the chunks whose C changed, and Ninja in build/ recompiles only those. A change of the mods' code cheats
 then costs the lift (about a minute) and the chunks it touches, not a full compile.
@@ -30,20 +30,21 @@ import time
 from pathlib import Path
 
 from . import ini
-from .layout import EXE, version_tag
+from .layout import EXE, SUPPORTED, version_tag
 from .runner import InstallError, Step
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 try:
     import extract  # noqa: E402
-    from extract import (common_tickets, container_entries, load_keys, nca_ctr_key, nca_inventory,  # noqa: E402
-                         program_nca)
+    from extract import (DamagedFile, common_tickets, container_entries, identify_update, load_expected,  # noqa: E402
+                         load_keys, merge_space, merge_update_romfs, nca_ctr_key, nca_inventory, program_nca)
     TOOLS_IMPORT_ERROR = None
 except ImportError as exc:
     # A release folder whose tools/ is missing or partly copied: the check step names the missing files, so the setup
     # reports check.release_incomplete instead of stopping on an import before it reaches any step.
     extract = None
-    common_tickets = container_entries = load_keys = nca_ctr_key = nca_inventory = program_nca = None
+    DamagedFile = common_tickets = container_entries = identify_update = load_expected = None
+    load_keys = merge_space = merge_update_romfs = nca_ctr_key = nca_inventory = program_nca = None
     TOOLS_IMPORT_ERROR = exc
 
 GiB = 1 << 30
@@ -51,7 +52,8 @@ DEST_EXTRA = 4 * GiB      # beside the RomFS: shader and pipeline caches (about 
 TEMP_NEED = 3 * GiB       # generated C (about 0.9 GB) and objects
 HOSTCHECK = Path(__file__).resolve().parent / 'hostcheck.c'
 STAMP = '.install-key'
-VERSION = '1.0.0'        # the game version the port builds: the base game, no update
+BASE_VERSION = '1.0.0'   # the base game the update is merged with
+DEFAULT_VERSION = '1.0.1'   # the version a fresh install builds (SUPPORTED in installer/layout.py)
 
 
 # ---- helpers
@@ -174,6 +176,10 @@ def free_bytes(path):
     return shutil.disk_usage(p).free, os.stat(p).st_dev
 
 
+def size_of(paths):
+    return sum(p.stat().st_size for p in paths if p.is_file())
+
+
 def raise_if_damaged(error, name, path):
     """InstallError check.input_damaged when a reader's ValueError says the file's data fails its hashes or ends early."""
     if re.search(r'mismatch|truncat|bounds|short', str(error), re.IGNORECASE):
@@ -192,14 +198,19 @@ def romfs_verified(romfs, expected):
 
 
 def game_version(ctx):
-    """The game version this install is built from. The port builds the base game only, so there is no update to
-    identify: every install is 1.0.0."""
-    return VERSION
+    """The game version this install is built from: what the check identified, else the recorded one. An install made
+    before update support records none (or 1.0.0) and is rebuilt from the update the player chooses."""
+    return ctx.state.get('version', DEFAULT_VERSION)
 
 
 def expected_game(ctx):
-    """The expected hashes of the base game: tools/data/expected-v1.0.0.json."""
-    return extract.exefs_expected()
+    """The expected hashes of the version this install builds: tools/data/expected-v<version>.json."""
+    return load_expected()[game_version(ctx)]
+
+
+def expected_base():
+    """The expected hashes of the base game (1.0.0): the code modules the update is merged with."""
+    return load_expected()[BASE_VERSION]
 
 
 class Watch(threading.Thread):
@@ -253,6 +264,16 @@ def base_misuse(records):
     return None
 
 
+def update_misuse(records):
+    """Name why a file chosen as the update holds a base game or a combined package, or return None."""
+    metadata = [r['title_id'] for r, _ in records if r['content_type'] == 1]
+    if len(metadata) > 1:
+        return 'check.update_combined'
+    if UPDATE_TITLE_ID not in metadata:
+        return 'check.update_is_base'
+    return None
+
+
 class Check(Step):
     id = 'check'
     always = True
@@ -288,6 +309,10 @@ class Check(Step):
             raise InstallError('check.lang_unknown', lang=lang, known=', '.join(ini.LANGUAGES))
         ctx.lang = lang
         ctx.temp.mkdir(parents=True, exist_ok=True)
+        if game_version(ctx) not in SUPPORTED:
+            # an install made before update support records 1.0.0 (or nothing): the game files are needed again to
+            # rebuild it from the update, so the extraction cannot stay current
+            ctx.plan(ctx.forced | {'extract'})
 
         rep.progress('check', 'host', force=True)
         self.host(ctx)
@@ -350,9 +375,9 @@ class Check(Step):
         ctx.host = host
 
     def inputs(self, ctx):
-        """Open the base game and the keys file as the extraction will. Returns the bytes of the Program NCA."""
+        """Open both files with the keys as the extraction will. Returns the bytes of both Program NCAs."""
         o = ctx.options
-        for name in ('base', 'keys'):
+        for name in ('base', 'update', 'keys'):
             path = getattr(o, name)
             if not path:
                 raise InstallError('check.inputs_needed')
@@ -364,19 +389,23 @@ class Check(Step):
             raise InstallError('check.keys_unreadable') from None
         if 'header_key' not in keys:
             raise InstallError('check.keys_no_header_key')
-        path = Path(o.base)
-        with path.open('rb') as f:
-            total = self.open_input(f, path, keys, 'base')
+        total = 0
+        for name, is_update in (('base', False), ('update', True)):
+            path = Path(getattr(o, name))
+            with path.open('rb') as f:
+                total += self.open_input(f, path, keys, name, is_update)
         del keys
         return total
 
     @staticmethod
-    def open_input(f, path, keys, name):
+    def open_input(f, path, keys, name, is_update):
         try:
             kind, entries = container_entries(f, path.stat().st_size)
         except ValueError as e:
             raise_if_damaged(e, name, path)
             raise InstallError('check.not_game_file', input=name) from None
+        if is_update and kind != 'nsp':
+            raise InstallError('check.update_not_nsp') from None
         try:
             tickets = common_tickets(f, entries)
         except ValueError as e:
@@ -391,12 +420,14 @@ class Check(Step):
                 raise InstallError('check.keys_wrong', input=name) from None
             raise_if_damaged(e, name, path)
             raise InstallError('check.file_unreadable', input=name, detail=str(e)) from None
+        reason = update_misuse(records) if is_update else base_misuse(records)
+        if reason:
+            raise InstallError(reason)
         try:
-            record, header = program_nca(records)
+            record, header = program_nca(records, update=is_update)
         except ValueError as e:
-            reason = base_misuse(records)
-            if reason:
-                raise InstallError(reason) from None
+            if is_update:
+                raise InstallError('check.update_not_astral', detail=str(e)) from None
             raise InstallError('check.base_not_astral', detail=str(e)) from None
         try:
             nca_ctr_key(header, keys, tickets)
@@ -410,7 +441,10 @@ class Check(Step):
     def space(self, ctx, ncas):
         dest_need = temp_need = 0
         if ctx.will_run('extract'):
-            dest_need += expected_game(ctx)['romfs']['size'] + ncas
+            # the update is identified after this estimate: the larger RomFS of the supported ones, plus the two
+            # Program NCAs the update merge copies into the install folder (about 10.5 GB for 1.0.1)
+            versions = load_expected()
+            dest_need += max(versions[v]['romfs']['size'] for v in SUPPORTED) + ncas
             romfs = ctx.dest / 'romfs' / 'romfs.bin'
             if romfs.is_file():   # a resumed extraction replaces it
                 dest_need -= romfs.stat().st_size
@@ -433,23 +467,69 @@ class Check(Step):
                                    free_gb=round(free / 1e9, 1))
 
     def versions(self, ctx):
-        """Extract the ExeFS of the base game into the temp folder, verifying every block, and check it against the
-        hashes of the 1.0.0 dump this port was built from: a file that differs stops the install here, before ten
-        gigabytes of RomFS are written."""
+        """Extract both ExeFS into the temp folder (verifying every block), check the base game against the 1.0.0
+        hashes and identify the update by the SHA-256 of its `main`.
+
+        Only the code modules decide the version (main.npdm is the process's metadata, and dumps of the same build
+        carry different ones). A differing code module is not a dead end: --accept-unknown-version carries on as a
+        warning. An update that matches no supported version cannot be built from its patch table, so it needs the
+        same explicit acceptance.
+        """
         o, work = ctx.options, ctx.temp / 'check'
-        out = work / 'base'
-        remove(out)
-        try:
-            extract.extract_exefs(Path(o.base), Path(o.keys), out / 'exefs')
-        except ValueError as e:
-            raise_if_damaged(e, 'base', Path(o.base))
-            raise InstallError('check.file_unreadable', input='base', detail=str(e)) from None
-        ok, problems = extract.exefs_ok(out / 'exefs', expected_game(ctx))
+        accept = getattr(ctx.options, 'accept_unknown_version', False)
+        for name, is_update in (('base', False), ('update', True)):
+            out = work / name
+            remove(out)
+            path = Path(getattr(o, name))
+            try:
+                extract.extract_exefs(path, Path(o.keys), out / 'exefs', update=is_update)
+            except DamagedFile as e:
+                raise InstallError('check.input_damaged', input=name, path=str(e.path), detail=e.detail) from None
+            except ValueError as e:
+                raise_if_damaged(e, name, path)
+                raise InstallError('check.file_unreadable', input=name, detail=str(e)) from None
+
+        base_expected = expected_base()
+        ok, problems = extract.exefs_ok(work / 'base' / 'exefs', base_expected)
         if not ok:
-            if not getattr(ctx.options, 'accept_unknown_version', False):
+            if not accept:
                 raise InstallError('check.base_wrong_version', modules=', '.join(problems))
             ctx.reporter.warning('warn.version_accepted', modules=', '.join(problems))
-        ctx.state['version'] = game_version(ctx)
+        if extract.sha256(work / 'base' / 'exefs' / 'main.npdm') != base_expected['exefs_sha256']['main.npdm']:
+            ctx.reporter.warning('warn.npdm_differs', version=BASE_VERSION)
+
+        versions = load_expected()
+        try:
+            found = extract.identify_update(work / 'update' / 'exefs', versions)
+        except ValueError:
+            found = None
+        if found is not None and found['display_version'] not in SUPPORTED:
+            if not accept:
+                raise InstallError('check.update_wrong_version', found=found['display_version'],
+                                   wanted=' / '.join(SUPPORTED))
+            found = None
+        if found is None:
+            if not accept:
+                raise InstallError('check.update_wrong_version', found='unknown', wanted=' / '.join(SUPPORTED))
+            found = versions[DEFAULT_VERSION]
+            ctx.reporter.warning('warn.update_accepted', version=found['display_version'], modules='main')
+        ok, problems = extract.exefs_ok(work / 'update' / 'exefs', found)
+        if not ok:
+            if not accept:
+                raise InstallError('check.update_wrong_version', found=found['display_version'],
+                                   wanted=' / '.join(SUPPORTED))
+            ctx.reporter.warning('warn.update_accepted', version=found['display_version'],
+                                 modules=', '.join(problems))
+        if extract.sha256(work / 'update' / 'exefs' / 'main.npdm') != found['exefs_sha256']['main.npdm']:
+            ctx.reporter.warning('warn.npdm_differs', version=found['display_version'])
+
+        version = found['display_version']
+        if version != game_version(ctx):   # another update than the recorded one: every step builds again from it
+            ctx.reporter.log(f'check: update {version} (recorded {game_version(ctx)})')
+            ctx.state['version'] = version
+            ctx.keys = {}
+            ctx.plan(ctx.forced | {'extract', 'lift', 'compile'})
+        ctx.state['version'] = version
 
 
 # ---- 2. extract
@@ -462,6 +542,14 @@ class Extract(Step):
         return fingerprint('extract-1', ctx.layout.expected(game_version(ctx)))
 
     def current(self, ctx, record):
+        # Another base game or update file than the recorded one extracts again; the check then identifies it.
+        for name in ('base', 'update'):
+            path, known = getattr(ctx.options, name, None), ctx.state['inputs'].get(name)
+            if path and known and Path(path).is_file():
+                st = Path(path).stat()
+                if (st.st_size, st.st_mtime_ns) != (known.get('size'), known.get('mtime_ns')) \
+                        and file_sha256(Path(path)) != known.get('sha256'):
+                    return False
         expected = expected_game(ctx)
         romfs = ctx.dest / 'romfs'
         if not extract.exefs_ok(ctx.dest / 'exefs', expected)[0] or not romfs_verified(romfs, expected):
@@ -478,28 +566,35 @@ class Extract(Step):
     def run(self, ctx):
         o, dest, rep = ctx.options, ctx.dest, ctx.reporter
         expected = expected_game(ctx)
-        base, keys = Path(o.base), Path(o.keys)
-        st = base.stat()
-        known = ctx.state['inputs'].get('base', {})
-        if known.get('size') == st.st_size and known.get('mtime_ns') == st.st_mtime_ns and known.get('sha256'):
-            inputs = {'base': known}
-        else:
-            digest = file_sha256(base, lambda d, t: rep.progress('extract', 'hash_base', d, t, 'bytes'))
-            inputs = {'base': {'name': base.name, 'size': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': digest}}
+        base, update, keys = Path(o.base), Path(o.update), Path(o.keys)
+        inputs = {}
+        for name, path in (('base', base), ('update', update)):
+            known = ctx.state['inputs'].get(name, {})
+            st = path.stat()
+            if known.get('size') == st.st_size and known.get('mtime_ns') == st.st_mtime_ns and known.get('sha256'):
+                inputs[name] = known
+                continue
+            digest = file_sha256(path, lambda d, t, n=name: rep.progress('extract', 'hash_' + n, d, t, 'bytes'))
+            inputs[name] = {'name': path.name, 'size': st.st_size, 'mtime_ns': st.st_mtime_ns, 'sha256': digest}
         ctx.state['inputs'] = inputs
         ctx.save()
 
         dest.mkdir(parents=True, exist_ok=True)
+        for stale in dest.glob('update-merge-*'):   # a killed merge leaves its NCA copies behind
+            remove(stale)
         rep.progress('extract', 'exefs', force=True)
-        staged = ctx.temp / 'check' / 'base'
-        if not (staged / 'exefs').is_dir():
-            remove(staged)
+        staged = ctx.temp / 'check' / 'update' / 'exefs'
+        if not staged.is_dir():
+            remove(ctx.temp / 'check' / 'update')
             try:
-                extract.extract_exefs(base, keys, staged / 'exefs')
+                extract.extract_exefs(update, keys, staged, update=True)
+            except DamagedFile as e:
+                raise InstallError('check.input_damaged', input='update', path=str(e.path), detail=e.detail) from None
             except ValueError as e:
-                raise InstallError('check.file_unreadable', input='base', detail=str(e)) from None
+                raise_if_damaged(e, 'update', update)
+                raise InstallError('check.file_unreadable', input='update', detail=str(e)) from None
         remove(dest / 'exefs')
-        shutil.move(str(staged / 'exefs'), str(dest / 'exefs'))
+        shutil.move(str(staged), str(dest / 'exefs'))
         ok, problems = extract.exefs_ok(dest / 'exefs', expected)
         if not ok:
             if not getattr(ctx.options, 'accept_unknown_version', False):
@@ -513,21 +608,31 @@ class Extract(Step):
             remove(romfs)   # the full hash failed: index.json still claims the extraction's hash
         if not romfs_verified(romfs, expected):
             remove(romfs)
-            manifest_path = staged / 'extraction-manifest.json'
-            if not manifest_path.is_file():
-                # the ExeFS was staged by an earlier run whose manifest went away: extract it again
-                remove(staged)
-                try:
-                    extract.extract_exefs(base, keys, staged / 'exefs')
-                except ValueError as e:
-                    raise InstallError('check.file_unreadable', input='base', detail=str(e)) from None
-            manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
             rep.progress('extract', 'copy', force=True)
+            watch = Watch(rep, 'extract')
+            watch.start()
             try:
-                extract.extract_romfs(base, keys, manifest, romfs)
+                copy_total = merge_space(base, update, keys)
+
+                def phase(name):
+                    if name == 'copy':
+                        watch.set('copy', lambda: size_of(dest.glob('update-merge-*/*.nca')), copy_total)
+                    elif name == 'merge':
+                        watch.set('merge', lambda: size_of(dest.glob('update-merge-*/result/romfs.bin')),
+                                  expected['romfs']['size'])
+                    else:
+                        watch.set(name)
+
+                extract.merge_update_romfs(base, update, keys, ctx.layout.hactool, romfs, ctx.temp / 'logs',
+                                           expected['romfs']['size'], phase=phase)
+            except DamagedFile as e:
+                raise InstallError('check.input_damaged', input='base' if e.path == base else 'update',
+                                   path=str(e.path), detail=e.detail) from None
             except ValueError as e:
-                remove(romfs)
-                raise InstallError('extract.romfs_failed', detail=str(e)) from None
+                raise InstallError('extract.romfs_merge_failed', detail=str(e),
+                                   log=str(ctx.temp / 'logs' / f'merge_romfs-{dest.name}.log')) from None
+            finally:
+                watch.stop()
         report = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
         if report['romfs_size'] != expected['romfs']['size'] or report['romfs_sha256'] != expected['romfs']['sha256']:
             if not getattr(ctx.options, 'accept_unknown_version', False):
@@ -616,7 +721,7 @@ class Lift(Step):
                 skipped[warn] = log
             else:
                 patches = ctx.temp / out
-        args = ['--exefs', ctx.dest / 'exefs', '--out', gen]
+        args = ['--exefs', ctx.dest / 'exefs', '--out', gen, '--version', version_tag(game_version(ctx))]
         code, log = run_tool(ctx, 'lift', layout.recomp / 'gen.py', args + ['--patches', patches], parse)
         if code and patches != plain:
             for tool, out, status, inputs, warn in stages:

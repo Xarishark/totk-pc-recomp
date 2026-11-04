@@ -37,12 +37,11 @@ from pathlib import Path
 WIN = os.name == 'nt'
 EXE = '.exe' if WIN else ''
 UCRT = Path(r'C:\msys64\ucrt64\bin')
-SUPPORTED = ('1.0.0',)   # the game version the installer builds: the base game, no update
+SUPPORTED = ('1.0.1',)   # updates the installer builds; the check identifies the player's by hash
 
 
 def version_tag(version):
-    """'1.0.0' -> 'v0': the version name of build_game.py, recomp/gen.py and the patch tables. The port builds the base
-    game, whose tables and generated C are named v0."""
+    """'1.0.0' -> 'v0', '1.0.1' -> 'v101': the version name of build_game.py, recomp/gen.py and the patch tables."""
     return 'v0' if version == '1.0.0' else 'v' + version.replace('.', '')
 
 
@@ -93,12 +92,12 @@ class Layout:
         lib = self.runtime_lib_for(cpu)
         need = [self.python, self.tools / 'extract.py', self.tools / 'build_game.py', self.tools / 'build_shaders.py',
                 self.tools / 'check_content.py', self.tools / 'romfs_index.py', self.tools / 'exefs_patches.py',
-                self.tools / 'data' / 'expected-v1.0.0.json',
-                self.recomp / 'gen.py', self.patches(SUPPORTED[0]),
-                self.clang,
+                self.expected('1.0.0'),
+                self.recomp / 'gen.py', self.clang,
                 *((self.deps / 'include', self.deps / 'lib') if self.deps else ()), self.runtime, *([lib] if lib else ()),
                 self.ninja, self.hactool,
-                self.xlate, *self.dlls, self.expected(SUPPORTED[0])]
+                self.xlate, *self.dlls,
+                *(f(v) for v in SUPPORTED for f in (self.patches, self.expected))]
         if self.sysroot:
             need.append(self.sysroot)
         return [str(p) for p in need if not p.exists()]

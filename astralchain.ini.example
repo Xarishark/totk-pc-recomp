@@ -1,15 +1,12 @@
 # astralchain.ini: settings for astralchain.exe. Copy this file to astralchain.ini next to astralchain.exe and remove
 # the '#' of a line to change it. Each line shows the default; on a Steam Deck the device profile ([display]) changes
-# a few of them. An AC_* environment variable of the same name (AC_FPS_LIMIT for fps_limit) overrides the file. Keys are case-insensitive;
+# a few of them. An AC_* environment variable of the same name (AC_FPS for fps) overrides the file. Keys are case-insensitive;
 # '#' and ';' start a comment; [sections] only group lines.
 
 [frame rate]
-# Frame rate limit: 30, 40, 45, 60, 90, 120, 144, any whole rate from 30 to 240, or display (the refresh rate of the
-# window's monitor, at most 240). A higher rate gives 240: above it the game's physics runs out of memory. Above 60
-# is experimental and needs realtime = 1. Changes while the game runs take effect at once.
-# fps_limit = 60
-# Older key, read only while fps_limit is unset: fps60 = 0 means a limit of 30.
-# fps60 = 1
+# Frame rate: 60 runs the game's community 60 fps patch (the default), 30 switches it off for the game's own rate.
+# Changes while the game runs take effect at once; the cutscene fix follows the patch.
+# fps = 60
 # Real-time frame step: game speed follows the clock instead of the frame count.
 # realtime = 1
 # Cloth simulation on the real-time clock. Needs realtime = 1.
@@ -109,8 +106,8 @@
 
 [display]
 # Device profile: auto (the Steam Deck when this is one), desktop or deck. On a Steam Deck the keys this file does not
-# set default to fullscreen = 1, window_size = 1280x800, game_res = 1080p, ssaa = 1, vk_present = fifo
-# and fps_limit = 40 (starting points, not measured yet). Read at start.
+# set default to fullscreen = 1, window_size = 1280x800, ssaa = 1, vk_present = fifo, fps = 60
+# and realtime = 1 (starting points, not measured yet). Read at start.
 # device_profile = auto
 # Presentation mode: mailbox (default when the driver offers it, vsync otherwise), fifo (vsync) or immediate.
 # vk_present = mailbox
@@ -129,12 +126,8 @@
 # Which GPU to use: its index in the log, or part of its name. Default: the first discrete GPU with Vulkan 1.3.
 # gpu_index = 0
 # gpu_name = NVIDIA
-# Game resolution: the size the game renders its frame in. 1062p is the community resolution mod (1888x1062); 1080p is
-# the engine's maximum (1920x1080; anything larger crashes its render-context setup). The present scales the picture to
-# the window. Read at start.
-# game_res = 1080p
 # 3D render scale (AC_SSAA): render targets made larger than the game resolution on each side, the emulator-style
-# resolution scale. 1.333 (taken as 4/3) turns 1080p into 2560x1440; the game keeps its logical size and the window
+# resolution scale. 1.333 (taken as 4/3) turns the game's 1600x900 into 2133x1200; the game keeps its logical size and
 # shows the larger picture. 1 (the default) is off; 1.5 and 2 supersample further. Read at start.
 # ssaa = 1
 # Scaling to the window when it is larger than the game resolution: fsr (AMD FSR 1) or bilinear, and FSR's sharpening

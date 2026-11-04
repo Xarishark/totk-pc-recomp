@@ -20,12 +20,12 @@ MacNativeGames cannot run on x86-64 as is: its CPU path executes ARM64 code nati
 
 ### 1. Input
 
-- Base 1.0.0 (`0100F2C0115B6000`) and one cumulative update (`0100F2C0115B6800`), NSP or XCI, plus the keys of the user's console.
-- ExeFS and RomFS extraction: MacNativeGames' Python extractor (Python 3.14 for `compression.zstd`, `.venv-py314`).
+- Base 1.0.0 (`01007300020FA000`) and its 1.0.1 update (`01007300020FA800`), NSP, plus the keys of the user's console.
+- ExeFS and RomFS extraction: MacNativeGames' Python extractor (`.venv`; the port's tools decode zstd through the `zstandard` package).
 - Update merging: hactool at `1d64a83` with MacNativeGames' BKTR patches, built by `tools/build_hactool.py`.
-- Verification: MacNativeGames' `expected-v*.json` hashes of ExeFS, RomFS and fonts.
-- Primary version: 1.4.3, the last update; performance work targets it. It replaced all three modules of the earlier updates (new SDK 20.5.22, RELR relocations, audio renderer REV15) and builds with `--version v143`, `recomp/patches-v143.txt`. 1.2.1 is a second target on the same build path; 1.0.0, 1.1.2 and 1.2.1 share `sdk`, `subsdk0` and `rtld` byte for byte, so only `main` differs among them. Saves load on either.
-- Windows driver: `tools/extract.py` runs the vendored extractors (`tools/vendor/macnativegames/`) and identifies the update by the SHA-256 of its `main`. hactool has no Darwin `funopen` here, so the base Program NCA is copied out of the NSP before the BKTR merge (about 17 GB of temporary space).
+- Verification: our `tools/data/expected-v*.json` hashes of the ExeFS and the merged RomFS.
+- Primary version: 1.0.1, the only update. It replaces `main`; `sdk` and `rtld` are byte-identical to 1.0.0. It builds with `--version v101`, `recomp/patches-v101.txt`; the fixed RomFS address differs from 1.0.0 and is chosen by `recomp/layout.py`.
+- Windows driver: `tools/extract.py` runs the vendored extractors (`tools/vendor/macnativegames/`) and identifies the update by the SHA-256 of its `main`. hactool has no Darwin `funopen` here, so the base Program NCA is copied out of the NSP before the BKTR merge (about 11 GB of temporary space).
 
 ### 2. CPU: lift ARM64 to C
 

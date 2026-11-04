@@ -21,8 +21,8 @@ cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismat
 --prove compiles the generated C and links build/release-check/astralchain.exe with nothing but the folder's python/, llvm/,
 runtime/ and bin/ (PATH holds the Windows system directory and those), then runs the four probes there.
 
-Both need one game version extracted and lifted first (tools/extract.py, recomp/gen.py): generated/v121 or, without
-it, generated/v143, and for --prove its build/extracted/<version> (they are read, nothing is written to them). The
+Both need the game version extracted and lifted first (tools/extract.py, recomp/gen.py): generated/v101, and for
+--prove its build/extracted/v101 (they are read, nothing is written to them). The
 runtime library reads only what both versions' layout.h share (MOD_COUNT, MOD_MAIN_BASE), so either serves.
 
 A release also needs build/xlate built from the current sources (tools/build_xlate.py); the script stops first if not.
@@ -105,7 +105,7 @@ LLVM_SKIP_SUFFIXES = {'.idl', '.tlb'}
 # tools/ files the installer steps run (and what they import), copied from the repo.
 TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'check_content.py', 'exefs_patches.py', 'extract.py',
                'hostmem.py', 'romfs_index.py']
-TOOLS_DIRS = ['data']   # data/: the expected hashes of the 1.0.0 dump
+TOOLS_DIRS = ['data']   # data/: the expected hashes of the base game and the update
 RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
 
 PROBES = ['--probe-kernel', '--probe-vkexec', '--probe-nvn-tex', '--probe-shader']
@@ -366,11 +366,11 @@ def collect_licenses(out):
 # ---- runtime/, recomp/, tools/, data/ ---------------------------------------------------------------------------------
 
 def lifted_version():
-    """The game version whose generated C the runtime library and --prove build against: this port builds the base
-    game, so generated/v0."""
-    if (MAIN_ROOT / 'generated' / 'v0' / 'layout.json').is_file():
-        return 'v0'
-    sys.exit('generated/v0 is missing: extract the base game and lift it first '
+    """The game version whose generated C the runtime library and --prove build against: this port builds 1.0.1,
+    so generated/v101."""
+    if (MAIN_ROOT / 'generated' / 'v101' / 'layout.json').is_file():
+        return 'v101'
+    sys.exit('generated/v101 is missing: extract the game files and lift them first '
              '(tools/extract.py, recomp/gen.py; docs/building.md)')
 
 

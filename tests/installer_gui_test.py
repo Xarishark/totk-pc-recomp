@@ -182,8 +182,8 @@ class FormTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def form(self, **kw):
-        values = dict(base=str(self.dir / 'base.nsp'), keys=str(self.dir / 'prod.keys'),
-                      lang='en-US', dest=str(self.dir / 'out'))
+        values = dict(base=str(self.dir / 'base.nsp'), update=str(self.dir / 'upd.nsp'),
+                      keys=str(self.dir / 'prod.keys'), lang='en-US', dest=str(self.dir / 'out'))
         values.update(kw)
         return Form(**values)
 
@@ -191,11 +191,13 @@ class FormTest(unittest.TestCase):
         self.assertEqual(self.form().problems(), [])
 
     def test_empty_form(self):
-        self.assertEqual(Form().problems(), ['ui.need_dest', 'ui.need_base', 'ui.need_keys', 'ui.need_lang'])
+        self.assertEqual(Form().problems(),
+                         ['ui.need_dest', 'ui.need_base', 'ui.need_update', 'ui.need_keys', 'ui.need_lang'])
 
     def test_missing_files(self):
-        self.assertEqual(self.form(base=str(self.dir / 'no.nsp'), keys=str(self.dir / 'no.keys')).problems(),
-                         ['ui.missing_base', 'ui.missing_keys'])
+        self.assertEqual(self.form(base=str(self.dir / 'no.nsp'), update=str(self.dir / 'no-upd.nsp'),
+                                   keys=str(self.dir / 'no.keys')).problems(),
+                         ['ui.missing_base', 'ui.missing_update', 'ui.missing_keys'])
 
     def test_unknown_language(self):
         self.assertEqual(self.form(lang='xx').problems(), ['ui.need_lang'])
@@ -203,7 +205,7 @@ class FormTest(unittest.TestCase):
     def test_command(self):
         cmd = self.form().command('py.exe', root=ROOT, temp=self.dir / 't', verify_hashes=True)
         self.assertEqual(cmd[:3], ['py.exe', '-m', 'installer'])
-        for flag in ('--base', '--keys', '--lang', '--dest', '--root', '--temp', '--verify'):
+        for flag in ('--base', '--update', '--keys', '--lang', '--dest', '--root', '--temp', '--verify'):
             self.assertIn(flag, cmd)
         self.assertEqual(cmd[cmd.index('--lang') + 1], 'en-US')
 
@@ -215,16 +217,22 @@ class FormTest(unittest.TestCase):
 
     def test_installed_folder_needs_only_itself(self):
         out = self.dir / 'out'
-        statefile.save(self._mkdir(out), statefile.empty('r0') | {'lang': 'ru'})
+        statefile.save(self._mkdir(out), statefile.empty('r0') | {'lang': 'ru', 'version': '1.0.1'})
         form = Form(dest=str(out))
         self.assertTrue(form.update_mode())
         self.assertEqual(form.problems(), [])
         cmd = form.command('py.exe')
         self.assertEqual(cmd, ['py.exe', '-m', 'installer', '--dest', str(out)])
 
+    def test_old_install_asks_for_the_game_files_again(self):
+        out = self.dir / 'out'
+        statefile.save(self._mkdir(out), statefile.empty('r0') | {'version': '1.0.0'})
+        self.assertEqual(Form(dest=str(out)).problems(),
+                         ['ui.need_base', 'ui.need_update', 'ui.need_keys', 'ui.need_lang'])
+
     def test_installed_folder_still_checks_given_files(self):
         out = self.dir / 'out'
-        statefile.save(self._mkdir(out), statefile.empty('r0'))
+        statefile.save(self._mkdir(out), statefile.empty('r0') | {'version': '1.0.1'})
         self.assertEqual(Form(dest=str(out), base=str(self.dir / 'no.nsp')).problems(), ['ui.missing_base'])
 
     def test_broken_state_is_a_new_install(self):
@@ -366,10 +374,6 @@ def make_fixture():
     ctx = Context(layout, FIXTURE, ROOT / 'build' / 'inst-gui' / 'e2e-temp', Reporter(out=io.StringIO()), options, state=state)
     ctx.steps = all_steps()
     ctx.plan()
-    # An install made before the fonts step has no record for it: record it as current when its output is (the
-    # languages that need the fonts have them in shared-fonts/).
-    if Fonts().current(ctx, {}):
-        state['steps'].setdefault('fonts', {'release': state.get('release', ''), 'key': ctx.keys['fonts']})
     for step_id, record in state['steps'].items():
         record['key'] = ctx.keys[step_id]
     statefile.save(FIXTURE, state)

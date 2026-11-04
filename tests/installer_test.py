@@ -384,6 +384,19 @@ class BaseGameCheckTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             steps.program_nca([self.nca(0, '0100F2C0115B6000')])
 
+    def test_update_slot_accepts_the_update(self):
+        records = [self.nca(0, self.BASE), self.nca(1, self.UPDATE)]
+        self.assertIsNone(steps.update_misuse(records))
+        self.assertEqual(steps.program_nca(records, update=True)[0]['title_id'], self.BASE)
+
+    def test_update_slot_names_a_base_game(self):
+        records = [self.nca(0, self.BASE), self.nca(1, self.BASE)]
+        self.assertEqual(steps.update_misuse(records), 'check.update_is_base')
+
+    def test_update_slot_names_a_combined_package(self):
+        records = [self.nca(0, self.BASE), self.nca(1, self.BASE), self.nca(1, self.UPDATE)]
+        self.assertEqual(steps.update_misuse(records), 'check.update_combined')
+
 
 class EventsTest(unittest.TestCase):
     def test_lines_are_json_and_the_log_is_english(self):

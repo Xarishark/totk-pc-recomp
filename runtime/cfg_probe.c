@@ -25,7 +25,7 @@ int probe_cfg(void) {
         "\xEF\xBB\xBF# comment\r\n"
         "; another comment\r\n"
         "[frame rate]\r\n"
-        "  fps60 = 0  \r\n"
+        "  fps = 30  \r\n"
         "Realtime=0\r\n"
         "[Display]\r\n"
         "GPU_name = \"My GPU 1\"\r\n"
@@ -37,10 +37,10 @@ int probe_cfg(void) {
         "no equals sign\r\n"
         "last = no newline at the end";
     plat_setenv("AC_LOCALE", NULL);
-    plat_setenv("AC_FPS60", NULL);
+    plat_setenv("AC_FPS", NULL);
     CHECK(plat_file_write(path, ini, sizeof ini - 1), "write the probe ini");
     CHECK(cfg_load(path) == 1, "load the probe ini");
-    CHECK(EQ(cfg_get("AC_FPS60"), "0"), "value read, whitespace trimmed, lower-case key");
+    CHECK(EQ(cfg_get("AC_FPS"), "30"), "value read, whitespace trimmed, lower-case key");
     CHECK(EQ(cfg_get("AC_REALTIME"), "0"), "key without spaces, mixed case");
     CHECK(EQ(cfg_get("AC_GPU_NAME"), "My GPU 1"), "quoted value, section ignored");
     CHECK(EQ(cfg_get("AC_LOCALE"), "de-DE"), "AC_ prefix accepted in the file");
@@ -49,19 +49,19 @@ int probe_cfg(void) {
     CHECK(cfg_get("AC_CLOTH_REALTIME") == NULL, "absent key is NULL");
     CHECK(cfg_get("AC_comment") == NULL, "comment is not a key");
     CHECK(EQ(cfg_get("AC_NO_SUCH_SETTING"), "1"), "unknown key is still readable");
-    plat_setenv("AC_FPS60", "1");
-    CHECK(EQ(cfg_get("AC_FPS60"), "1"), "environment overrides the file");
-    plat_setenv("AC_FPS60", NULL);
-    CHECK(EQ(cfg_get("AC_FPS60"), "0"), "file value returns when the variable is removed");
+    plat_setenv("AC_FPS", "60");
+    CHECK(EQ(cfg_get("AC_FPS"), "60"), "environment overrides the file");
+    plat_setenv("AC_FPS", NULL);
+    CHECK(EQ(cfg_get("AC_FPS"), "30"), "file value returns when the variable is removed");
     plat_file_delete(path);
     CHECK(cfg_load(path) == 0, "missing file is not an error");
-    CHECK(cfg_get("AC_FPS60") == NULL, "missing file leaves no keys");
+    CHECK(cfg_get("AC_FPS") == NULL, "missing file leaves no keys");
 
     // cfg_set / cfg_save: only changed lines move, comments stay, a missing key goes under its section
     static const char before[] =
         "\xEF\xBB\xBF# my settings\r\n"
         "[frame rate]\r\n"
-        "  FPS60 = 1\r\n"
+        "  FPS = 60\r\n"
         "; keep this\r\n"
         "\r\n"
         "[input]\r\n"
@@ -75,7 +75,7 @@ int probe_cfg(void) {
     static const char after[] =
         "\xEF\xBB\xBF# my settings\r\n"
         "[frame rate]\r\n"
-        "  FPS60 = 0\r\n"
+        "  FPS = 30\r\n"
         "; keep this\r\n"
         "\r\n"
         "[input]\r\n"
@@ -97,12 +97,12 @@ int probe_cfg(void) {
     CHECK(plat_file_write(path, before, sizeof before - 1), "write the save ini");
     CHECK(cfg_load(path) == 1, "load the save ini");
     unsigned v0 = cfg_version();
-    cfg_set("AC_FPS60", "0");
+    cfg_set("AC_FPS", "30");
     cfg_set("AC_MOTION", "0");
     cfg_set("AC_RUMBLE_STRENGTH", "80");
     cfg_set("AC_VOLUME", "40");
     CHECK(cfg_version() == v0 + 4, "cfg_set bumps the version");
-    CHECK(EQ(cfg_get("AC_FPS60"), "0") && EQ(cfg_get("AC_VOLUME"), "40"), "cfg_set values are read back at once");
+    CHECK(EQ(cfg_get("AC_FPS"), "30") && EQ(cfg_get("AC_VOLUME"), "40"), "cfg_set values are read back at once");
     CHECK(cfg_save_to(path) == 1, "cfg_save_to writes");
     uint64_t got_n = 0;
     uint8_t *got = plat_file_read(path, &got_n);
@@ -114,7 +114,7 @@ int probe_cfg(void) {
     got = plat_file_read(path, &got_n);
     CHECK(got && got_n == sizeof after - 1 && !memcmp(got, after, got_n), "a save with nothing changed keeps the file");
     free(got);
-    CHECK(cfg_load(path) == 1 && EQ(cfg_get("AC_FPS60"), "0") && EQ(cfg_get("AC_MOTION"), "0") &&
+    CHECK(cfg_load(path) == 1 && EQ(cfg_get("AC_FPS"), "30") && EQ(cfg_get("AC_MOTION"), "0") &&
           EQ(cfg_get("AC_RUMBLE_STRENGTH"), "80") && EQ(cfg_get("AC_VOLUME"), "40") &&
           EQ(cfg_get("AC_ROMFS_MODS"), "C:\\mods"), "the saved file reads back");
     const char *held = cfg_get("AC_VOLUME");
@@ -131,8 +131,8 @@ int probe_cfg(void) {
     free(got);
 
     // Defaults table: the menu's "default" marks and Reset
-    const CfgMeta *m = cfg_meta("FPS60");
-    CHECK(m && EQ(m->def, "1") && m->live, "meta: fps60 defaults to 1 and is live");
+    const CfgMeta *m = cfg_meta("FPS");
+    CHECK(m && EQ(m->def, "60") && m->live, "meta: fps defaults to 60 and is live");
     m = cfg_meta("ASYNC_PREEMPT");
     CHECK(m && EQ(m->values, "0|1|2") && !m->live, "meta: async_preempt takes 0|1|2 and needs a restart");
     m = cfg_meta("astralchain_vk_present");
@@ -392,10 +392,10 @@ int probe_cfg(void) {
     CHECK(!strcmp(line, "none"), "edit: a stick direction without keys is none");
     // defaults live in the CfgMeta table: cfg_value and the typed accessors fall back to it
     cfg_load("cfg-probe-missing.ini");
-    plat_setenv("AC_FPS60", NULL);
+    plat_setenv("AC_FPS", NULL);
     plat_setenv("AC_MOUSE_SENS", NULL);
     plat_setenv("AC_FREE_CORES", NULL);
-    CHECK(cfg_bool("AC_FPS60") == 1, "default: unset FPS60 is on");
+    CHECK(cfg_bool("AC_FPS") == 1, "default: unset FPS is on (60)");
     CHECK(EQ(cfg_value("AC_VK_PRESENT"), "mailbox") && cfg_int("AC_SPLIT_DRAWS") == 64, "default: text and integer");
     plat_setenv("AC_MOUSE_SENS", "2.5");
     CHECK(cfg_double("AC_MOUSE_SENS") == 2.5, "double: the environment value");

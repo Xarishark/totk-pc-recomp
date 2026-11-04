@@ -13,7 +13,7 @@ writes it, and <romfs>/romfs.bin, whose size must match. Output, both in the bui
 
 Both are rewritten only when their bytes change, so Ninja does not rebuild romfs.c for nothing.
 
-    .venv\\Scripts\\python tools\\romfs_index.py --romfs build\\extracted\\v121\\romfs --out build\\v121
+    .venv\\Scripts\\python tools\\romfs_index.py --romfs build\\extracted\\v101\\romfs --out build\\v101
 
 Standard library only.
 """

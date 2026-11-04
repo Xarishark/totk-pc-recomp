@@ -151,7 +151,7 @@ void gfx_window_request_close(void) {
     if (g_hwnd) PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
 }
 
-// ---- refresh rate of the window's monitor (AC_FPS_LIMIT=display), measured when the window opens, lands on another
+// ---- refresh rate of the window's monitor (the frame rate setting), measured when the window opens, lands on another
 // monitor or the display mode changes (gfx_window_set_refresh keeps it). QueryDisplayConfig gives the exact rational
 // rate (59.94, 143.998); EnumDisplaySettings' whole hertz is the fallback.
 static HMONITOR g_rate_mon;

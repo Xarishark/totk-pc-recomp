@@ -485,14 +485,6 @@ static void row_window_size(void) {
     opt_choice_list("AC_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
 }
 
-// The game's logical render size (resolution.c): 1062p is the community mod's 1888x1062; 1080p is the engine's own
-// maximum (1920x1080). AC_SSAA then makes the render targets larger than that, which is how the picture reaches 1440p.
-static void row_game_res(void) {
-    static const char *const vals[] = {"1062p", "1080p"};
-    static const char *const names[] = {"1062p (mod)", "1080p (engine max)"};
-    opt_choice_list("AC_GAME_RES", UI_MENU_OUTPUT_RES, vals, names, 2, UI_MENU_OUTPUT_RES_DESC);
-}
-
 // AC_SSAA (vk_texture.c): render targets made larger on each side, the emulator-style resolution scale. The game keeps
 // its logical size; the window shows the larger picture.
 static void row_render_scale(void) {
@@ -558,24 +550,17 @@ static void row_game_lang(void) {
     opt_choice_list("AC_LANG", UI_MENU_GAME_LANG, vals, names, N, UI_MENU_GAME_LANG_DESC, cur);
 }
 
-// The frame limit (frame_rate.c): unset, the older fps60 = 0 still means 30. The monitor choice shows the rate it gives.
+// The game's frame rate (frame_rate.c, patches-v101.txt): 60 fps runs the community 60 fps patch, 30 fps switches it
+// off. The row is the patch switch itself, so it takes effect on the next frame.
 static void row_fps_limit() {
-    // 40 and 45: the Steam Deck's screen runs at 40 to 60 Hz (the OLED to 90); 40 divides 40 and 120 Hz evenly
-    static const char *const vals[] = {"30", "40", "45", "60", "90", "120", "144", "display"};
-    static const UiTextId ids[] = {UI_MENU_FPS_30, UI_MENU_FPS_40,  UI_MENU_FPS_45,  UI_MENU_FPS_60,
-                                   UI_MENU_FPS_90, UI_MENU_FPS_120, UI_MENU_FPS_144, UI_MENU_FPS_DISPLAY};
+    static const char *const vals[] = {"30", "60"};
+    static const UiTextId ids[] = {UI_MENU_FPS_30, UI_MENU_FPS_60};
     enum { N = sizeof vals / sizeof *vals };
     const char *names[N];
     for (int i = 0; i < N; i++) names[i] = menu_text(ids[i]);
-    static char display[64];
-    double hz = gfx_window_refresh_hz();
-    if (hz > 0) {
-        snprintf(display, sizeof display, menu_text(UI_MENU_FPS_DISPLAY_HZ), hz);
-        names[N - 1] = display;
-    }
-    const char *set = cfg_get("AC_FPS_LIMIT"), *old = cfg_get("AC_FPS60");
-    int cur = (!set || !*set) && old && !strcmp(old, "0") ? 0 : -1;
-    opt_choice_list("AC_FPS_LIMIT", UI_MENU_FPS_LIMIT, vals, names, N, UI_MENU_FPS_LIMIT_DESC, cur);
+    const char *set = cfg_get("AC_FPS");
+    int cur = set && !strcmp(set, "30") ? 0 : 1;
+    opt_choice_list("AC_FPS", UI_MENU_FPS_LIMIT, vals, names, N, UI_MENU_FPS_LIMIT_DESC, cur);
 }
 
 // The menu's name of a TOTK_VK_PRESENT mode (gfx_window_present_mode); NULL for another.
@@ -638,7 +623,6 @@ static void tab_screen(float scale) {
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
     opt_choice("AC_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
-    row_game_res();
     row_render_scale();
     if (rt_patch_set("shadow") >= 0) row_shadow_res();
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};

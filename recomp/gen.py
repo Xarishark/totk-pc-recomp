@@ -1,8 +1,8 @@
 # Adapted from LAS Recomp tools/gen.py @ da35b83 (MIT, Copyright (c) 2026 Peiikai).
 """Generate C for the ExeFS modules: function discovery, then parallel emission into chunked C files.
 
-Usage: gen.py --exefs build/extracted/v0/exefs --out generated/v0 [--modules main,sdk] [--jobs N]
-              [--limit N] [--chunk-fns N] [--chunk-bytes B] [--big-fn B] [--patches FILE]
+Usage: gen.py --exefs build/extracted/v101/exefs --out generated/v101 [--modules main,sdk] [--jobs N]
+              [--version v0|v101] [--limit N] [--chunk-fns N] [--chunk-bytes B] [--big-fn B] [--patches FILE]
 
 Output, under --out:
   layout.h, layout.json        module bases (recomp/layout.py)
@@ -44,7 +44,7 @@ import jumptables  # noqa: E402
 import patches  # noqa: E402
 import regs  # noqa: E402
 from check_content import GENERATED_MARKER  # noqa: E402
-from layout import layout, romfs_size, write as write_layout  # noqa: E402
+from layout import base_of, layout, romfs_size, write as write_layout  # noqa: E402
 from lifter import hx  # noqa: E402
 from module import Module  # noqa: E402
 
@@ -653,6 +653,9 @@ def main():
     ap.add_argument('--big-fn', type=int, default=300000, help='estimated bytes of C from which a function gets '
                                                                'its own chunk')
     ap.add_argument('--patches', type=Path, help='code patch table (recomp/patches.py)')
+    ap.add_argument('--version', default='v101',
+                    help='game version tag: v101 (1.0.1, default) or v0 (1.0.0); picks the fixed RomFS address '
+                         '(recomp/layout.py)')
     ap.add_argument('--reg-locals', type=int, default=regs.LOCALS,
                     help=f'guest registers per function kept in C locals (recomp/regs.py; default {regs.LOCALS}, 0: none)')
     ap.add_argument('--no-callee-saved-trust', action='store_true',
@@ -662,8 +665,9 @@ def main():
     opts = {'reg_locals': args.reg_locals, 'callee_saved': not args.no_callee_saved_trust}
 
     t0 = time.perf_counter()
-    mods = layout(args.exefs)
-    write_layout(mods, args.out, romfs_size(args.exefs))
+    romfs_base = base_of(args.version)
+    mods = layout(args.exefs, args.version)
+    write_layout(mods, args.out, romfs_size(args.exefs), romfs_base)
     table = patches.load(args.patches, mods) if args.patches else patches.Table()
     write_if_changed(args.out / 'patches.h', patches.header_text(table, GENERATED_MARKER))
     want = args.modules.split(',')

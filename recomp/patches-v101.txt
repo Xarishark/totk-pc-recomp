@@ -1,0 +1,50 @@
+# Code patch table for Astral Chain 1.0.1 (main build 4b159f0f7a360669738390ee8657b4f0).
+# The spin waits below were found by tools/spin_waits.py on the update's ExeFS; recomp/gen.py checks every
+# head and back-edge against the module before it emits anything.
+
+# main: 32 spin waits
+spin main 3e0724 3e0728   # 2 instructions; loads
+spin main 3e39d8 3e39dc   # 2 instructions; loads
+spin main 3e3e74 3e3e78   # 2 instructions; loads
+spin main 3e415c 3e4160   # 2 instructions; loads
+spin main 4be7fc 4be88c   # 6 instructions; loads
+spin main 5009ac 5009c8   # 5 instructions; loads
+spin main 500ac0 500adc   # 5 instructions; loads
+spin main 5317d4 5317f0   # 5 instructions; loads
+spin main 586314 586318   # 2 instructions; loads
+spin main 73a40c 73a448   # 16 instructions; loads
+spin main 7a7208 7a7210   # 3 instructions; loads
+spin main 7a76c8 7a76d0   # 3 instructions; loads
+spin main 7a7784 7a778c   # 3 instructions; loads
+spin main 7afec8 7afed0   # 3 instructions; loads
+spin main 7b0018 7b0020   # 3 instructions; loads
+spin main 7b00e0 7b00e8   # 3 instructions; loads
+spin main 7b0288 7b0290   # 3 instructions; loads
+spin main 7b0320 7b0328   # 3 instructions; loads
+spin main 7b04c0 7b04c8   # 3 instructions; loads
+spin main 7b07e8 7b07f0   # 3 instructions; loads
+spin main 7b0950 7b0958   # 3 instructions; loads
+spin main 7cdacc 7cdb08   # 16 instructions; loads
+spin main 7fa0e4 7fa0ec   # 3 instructions; loads
+spin main 80a2d4 80a3f4   # 2 instructions; loads
+spin main 80a4f0 80a610   # 2 instructions; loads
+spin main 81b53c 81b544   # 3 instructions; loads
+spin main 81b9e8 81b9f0   # 3 instructions; loads
+spin main 81c71c 81c724   # 3 instructions; loads
+spin main 8254d4 8254dc   # 3 instructions; loads
+spin main 855894 855a50 855a64   # 36 instructions; loads
+spin main 87adb0 87ade8   # 14 instructions; loads
+spin main 9a8274 9a829c   # 5 instructions; loads
+
+# 60 fps: the community static 60 fps patch for 1.0.1 (MrComputerRevo's IPS). The IPS offsets count the 0x100-byte
+# NSO header, so each lands at module offset -0x100 here. It halves the frame-time constants of the game's frame
+# accumulator (1.0 -> 0.5 and 2.0 -> 1.0) and clears the argument that makes the frame call wait a second vsync.
+# On by default; the menu's AC_FPS=30 (the ini's fps = 30) runs the original instructions, i.e. the game's shipping
+# 30 fps.
+set  fps60 FPS60 1
+site fps60 main 3e39d0 320003e0 52800001   # orr w0, wzr, #1 -> mov w1, #0 (frame call's second argument)
+site fps60 main 91dc94 1e2e1001 1e2c1001   # fmov s1, #1.0 -> #0.5 (frame-time clamp, low)
+site fps60 main 91dca0 1e2e1001 1e2c1001   # fmov s1, #1.0 -> #0.5 (frame-time clamp, remainder)
+site fps60 main 91dcac 32091be8 52a7e008   # 1.0f -> 0.5f (stored frame-time scale)
+site fps60 main 91dccc 1e201001 1e2e1001   # fmov s1, #2.0 -> #1.0 (frame-time clamp, high)
+site fps60 main 91dcd8 320203e8 32091be8   # 2.0f -> 1.0f (stored frame-time clamp)

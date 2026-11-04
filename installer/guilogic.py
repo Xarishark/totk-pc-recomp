@@ -22,6 +22,7 @@ from pathlib import Path
 from . import ini
 from . import state as statefile
 from .events import render
+from .layout import SUPPORTED
 
 TEXT = Path(__file__).resolve().parent / 'text'
 UI_LANGUAGES = ('en', 'ru', 'pt-BR', 'zh-Hans')
@@ -132,6 +133,7 @@ def amount(cat, done, total, unit):
 @dataclass
 class Form:
     base: str = ''
+    update: str = ''
     keys: str = ''
     lang: str = ''
     dest: str = ''
@@ -149,16 +151,17 @@ class Form:
         return self.installed_state() is not None
 
     def problems(self):
-        """Ids of the entries that are missing or wrong, in screen order. A folder with an install record needs only
-        itself; the CLI asks for the game files when it must extract again. The setup takes the base game and the keys
-        file only: the port supports version 1.0.0, so there is no update to pick, and the Switch system fonts come
-        from the game data."""
+        """Ids of the entries that are missing or wrong, in screen order. A folder with an install record of a supported
+        version needs only itself; the CLI asks for the game files when it must extract again. A first install (or one
+        made before update support, recorded as 1.0.0) takes the base game (1.0.0), the update NSP (1.0.1) and the keys
+        file; the Switch system fonts come from the game data."""
         found = []
-        update = self.update_mode()
+        state = self.installed_state()
+        update = state is not None
         if not self.dest.strip():
             found.append('ui.need_dest')
-        if not update:
-            for name in ('base', 'keys'):
+        if not update or state.get('version') not in SUPPORTED:
+            for name in ('base', 'update', 'keys'):
                 value = getattr(self, name).strip()
                 if not value:
                     found.append(f'ui.need_{name}')
@@ -167,7 +170,7 @@ class Form:
             if self.lang not in ini.LANGUAGES:
                 found.append('ui.need_lang')
         else:
-            for name in ('base', 'keys'):
+            for name in ('base', 'update', 'keys'):
                 value = getattr(self, name).strip()
                 if value and not Path(value).is_file():
                     found.append(f'ui.missing_{name}')
@@ -175,8 +178,8 @@ class Form:
 
     def command(self, python, root=None, temp=None, verify_hashes=False, accept_version=False):
         cmd = [str(python), '-m', 'installer']
-        for flag, value in (('--base', self.base), ('--keys', self.keys), ('--lang', self.lang),
-                            ('--dest', self.dest)):
+        for flag, value in (('--base', self.base), ('--update', self.update), ('--keys', self.keys),
+                            ('--lang', self.lang), ('--dest', self.dest)):
             if value.strip():
                 cmd += [flag, value.strip()]
         if root:

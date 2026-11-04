@@ -97,7 +97,7 @@ void gfx_cfg_window_size(int *w, int *h) {
     *h = y;
 }
 
-// The refresh rate of the window's monitor (AC_FPS_LIMIT=display), measured by the back end's window thread when the
+// The refresh rate of the window's monitor (the frame rate setting), measured by the back end's window thread when the
 // window opens, lands on another monitor or the display mode changes; readers take the stored value.
 static volatile int32_t g_rate_mhz;   // millihertz, 0 unknown
 

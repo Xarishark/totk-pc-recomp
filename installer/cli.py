@@ -1,10 +1,11 @@
-"""Command line: python -m installer --base FILE --keys FILE --lang CODE --dest DIR
+"""Command line: python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR
                                      [--root DIR] [--temp DIR] [--verify]
 
-A first install needs every option. On a folder with astralchain-install.json (resume after a cancel or failure, or
-update with a newer release) only --dest is needed: --lang defaults to the recorded language, and the game files are
-needed only when the extraction has to run again. Prints JSON events on stdout (events.py). Exit code: 0 done,
-1 failed, 2 bad command line, 3 cancelled (Ctrl+C or Ctrl+Break).
+A first install needs every option: the base game (1.0.0) and the update NSP (1.0.1). On a folder with
+astralchain-install.json (resume after a cancel or failure, or update with a newer release) only --dest is needed:
+--lang defaults to the recorded language, and the game files are needed only when the extraction has to run again.
+Prints JSON events on stdout (events.py). Exit code: 0 done, 1 failed, 2 bad command line, 3 cancelled (Ctrl+C or
+Ctrl+Break).
 """
 import argparse
 import hashlib
@@ -46,6 +47,7 @@ def cancel(signum, frame):
 def main(argv=None):
     ap = Parser(prog='python -m installer', description=__doc__.splitlines()[0])
     ap.add_argument('--base', type=Path, help='base game, XCI or NSP (version 1.0.0)')
+    ap.add_argument('--update', type=Path, help='the update NSP (version 1.0.1)')
     ap.add_argument('--keys', type=Path, help='prod.keys')
     ap.add_argument('--lang', help='game language, a Switch language code (en-US, en-GB, ja, de, ru, ...)')
     ap.add_argument('--dest', type=Path, required=True, help='install folder')
@@ -54,8 +56,8 @@ def main(argv=None):
                                               'the install folder on Linux, build/install-temp in a repository)')
     ap.add_argument('--verify', action='store_true', help='hash every kept file, also those this release made')
     ap.add_argument('--accept-unknown-version', action='store_true',
-                    help='carry on when the game files do not match the reference 1.0.0 hashes (the window asks '
-                         'first); the game may not run')
+                    help='carry on when the game files do not match the reference hashes (the window asks first); '
+                         'the game may not run')
     args = ap.parse_args(argv)
 
     # The window cancels with Ctrl+Break to the installer's process group (CREATE_NEW_PROCESS_GROUP), which also reaches

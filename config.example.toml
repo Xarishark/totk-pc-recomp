@@ -3,6 +3,8 @@
 [input]
 # Base game 1.0.0, title id 01007300020FA000, as NSP.
 base = 'C:\Games\AstralChain\base.nsp'
+# Update 1.0.1, title id 01007300020FA800, as NSP.
+update = 'C:\Games\AstralChain\update-1.0.1.nsp'
 # Keys dumped from your own console. Never printed or copied by the tools.
 keys = 'C:\Switch\prod.keys'
 

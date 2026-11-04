@@ -1,13 +1,13 @@
 """End-to-end run of the installer in dev mode with the game files named in config.local.toml.
 
-Reads input.base and input.keys, and passes them to `python -m installer` started the way the release launcher starts
-it: with this checkout on sys.path (the embeddable Python of build/py314-embed when it exists, this interpreter
-otherwise). The paths are never printed. Events go to <events> (JSON lines); stdout gets each step's state and time,
-warnings and errors.
+Reads input.base, input.update and input.keys, and passes them to `python -m installer` started the way the release
+launcher starts it: with this checkout on sys.path (the embeddable Python of build/py314-embed when it exists, this
+interpreter otherwise). The paths are never printed. Events go to <events> (JSON lines); stdout gets each step's state
+and time, warnings and errors.
 
     python tests/installer_e2e.py --dest build/install-test --lang en-US [--events FILE] [--no-inputs] [-- extra args]
 
---no-inputs leaves the game files out (update mode on an existing folder).
+--no-inputs leaves the game files out (resume mode on an existing folder).
 """
 import argparse
 import json
@@ -24,7 +24,7 @@ BOOT = ('import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); '
 
 def game_inputs():
     config = tomllib.loads((ROOT / 'config.local.toml').read_text(encoding='utf-8'))['input']
-    return ['--base', config['base'], '--keys', config['keys']]
+    return ['--base', config['base'], '--update', config['update'], '--keys', config['keys']]
 
 
 def main():

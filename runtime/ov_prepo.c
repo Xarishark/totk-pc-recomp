@@ -1,4 +1,4 @@
-// The play-report service ("prepo:u") for Astral Chain 1.0.0.
+// The play-report service ("prepo:u") for Astral Chain 1.0.1.
 //
 // The game opens it during the start-up task, before any scene exists. A play report only feeds Nintendo's
 // telemetry, so every command is accepted and returns no output: the SDK's client sees a successful request and the

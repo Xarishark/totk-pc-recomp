@@ -1,19 +1,24 @@
 # Astral Chain port notes
 
-Working notes for porting the TotK Recomp pipeline to Astral Chain 1.0.0 (01007300020FA000). Facts marked
-"nxnative" come from the MIT nxnative project's game profile; they apply to 1.0.1 and need re-verification
-against our 1.0.0 base game.
+Working notes for porting the TotK Recomp pipeline to Astral Chain 1.0.1 (01007300020FA000, update
+01007300020FA800). Facts marked "nxnative" come from the MIT nxnative project's game profile and are
+re-verified against our own 1.0.1 dump where possible.
 
 ## Iteration 1 scope
 
-Base 1.0.0 only, no update, no 60 fps, stop at the title screen. Windows only.
+Base 1.0.0 + update 1.0.1, 60 fps by default with a 30 fps switch. Windows only.
 
-## Verified from the user's dump (base 1.0.0)
+## Verified from the user's dumps
 
-- ExeFS modules: `main` (7 644 617 B), `sdk` (5 231 344 B), `rtld`, `main.npdm`. No `subsdk0`.
+- Base 1.0.0 ExeFS modules: `main` (7 644 617 B), `sdk` (5 231 344 B), `rtld`, `main.npdm`. No `subsdk0`.
+- Update 1.0.1 ExeFS: `main` (7 700 590 B, 4b159f0f7a360669738390ee8657b4f0), `sdk` and `rtld` byte-identical
+  to 1.0.0, `main.npdm` different (same priority 44, core 0, stack 0x100000). The only new import is
+  `nn::oe::SetUserInactivityDetectionTimeExtended`.
 - main.npdm: main thread priority 44, core 0, stack 0x100000 (matches `runtime/kernel.c` MAIN_*).
-- RomFS: 8 701 files, 10 309 560 892 B.
-- Ticketless dump (key-area AES-CTR); no hactool needed for the base game.
+- Base RomFS: 8 701 files, 10 309 560 892 B. The 1.0.1 update carries a BKTR delta section (about 183 MB),
+  merged with the base Program NCA by hactool; its image and hash are in `tools/data/expected-v1.0.1.json`.
+- Ticketless base dump (key-area AES-CTR); the update NSP carries a common ticket. hactool is only needed for
+  the BKTR merge.
 
 ## Textures: ASTC
 
@@ -34,11 +39,15 @@ Watch at runtime:
 - 82 PKZ archives (version 0x10000), 8 556 entries, zstd compression (not Oodle); DAT/DTT containers.
 - 1 348 shaders (540 VS, 738 PS, 70 CS) in PlatinumGames VSO/PSO/CSO/HSO/DSO objects; 1 620 cover pairs.
 - GPU code versions 1.9/1.12/1.15; the loader compares byte 7 with the driver at main+0x9e97d0.
-- Swap chain 1600x900, present interval 2 (30 fps shipping). Heap ~3 GB, BSS 191 MB (image ~0xccf0000).
+- Swap chain 1600x900, present interval 2 at the shipping 30 fps; with the 60 fps patch interval 1. Heap ~3 GB, BSS
+  191 MB (image ~0xccf0000).
 - mem_reserve 0xf0000000, app_pool 0xCD500000, sys_resource 0; depth mode near=0; upper-left origin;
   alpha test GREATER via its own lib; swkbd for character creation.
-- 60 fps mods (later iteration): FPSLocker write `00B5CE8C` `3D088889`->`3C888889`; nxnative patch = 112 hooks,
-  30 Hz clock, integer timers.
+- 60 fps: `recomp/patches-v101.txt` set `fps60` runs the community static 60 fps patch (MrComputerRevo's IPS, its
+  offsets include the NSO header): the frame-time constants go from 1.0/2.0 to 0.5/1.0 and the frame call's wait
+  argument is cleared. The menu's `AC_FPS` (60 default, 30) switches the set live. `runtime/frame_rate.c`
+  `cutscene_rate` writes the cutscene selector 2 (30 fps) while the game's cutscene speed variable is 1/30, as
+  Hazerou's cutscene fix does.
 
 ## Risks to check during the census and boot
 
@@ -64,15 +73,18 @@ Watch at runtime:
   elsewhere, watch at boot), nn::mem, nn::nifm (Initialize), nn::time, nn::util, nn::codec (1 direct opus
   import), nn::image JpegDecoder/JpegEncoder (new vs TotK, resolved by sdk), nn::prepo, nn::swkbd, nn::fontll,
   nn::account, nn::friends, nv::InitializeGraphics, plain libc/musl/math (73) and C++/libc++ support (25).
-- Dead host overrides to purge later (not imported by main): hid GetNpadStates/GetSixAxisSensor/GetVibrationDevice/
+- Dead host overrides to purge later (not imported by main 1.0.0): hid GetNpadStates/GetSixAxisSensor/GetVibrationDevice/
   detail::*, fs InitializeForApplication, oe Initialize/TryPopLaunchParameter/FinishStartupLogo/SetCpuBoostMode/
-  GetExpectedVolumeBalance/PopNotificationMessage/SetUserInactivityDetectionTimeExtended, pl
-  GetSharedFontLoadState, vi GetDisplayVsyncEvent, aoc, err, am, nfp.
+  GetExpectedVolumeBalance/PopNotificationMessage, pl
+  GetSharedFontLoadState, vi GetDisplayVsyncEvent, aoc, err, am, nfp. 1.0.1's `main` newly imports
+  `oe::SetUserInactivityDetectionTimeExtended`, which the host already answers as a no-op (`runtime/ov_system.c`).
 
-## Code generation notes (base 1.0.0)
+## Code generation notes (base 1.0.0, update 1.0.1)
 
-- main: 27 788 functions, 2 670 jump tables, 44 297 traps, 1 552 branches through dispatch, 0 unsupported
+- main 1.0.0: 27 788 functions, 2 670 jump tables, 44 297 traps, 1 552 branches through dispatch, 0 unsupported
   instructions. sdk: 33 564 functions, 516 jump tables, 36 919 traps, 0 unsupported.
+- main 1.0.1: 27 890 functions, 2 701 jump tables, 44 452 traps, 1 558 branches through dispatch, 0 unsupported
+  instructions. sdk is byte-identical to 1.0.0.
 - Three R_AARCH64_RELATIVE relocations in main's .rodata point at module base +0/+1 (the MOD0 header itself).
   recomp/module.py seeds() now ignores RELATIVE addends below 0x24 so the lifter no longer decodes header words
   as code (fix for the bogus `rt_udf` at 0x7000000014).
@@ -80,12 +92,12 @@ Watch at runtime:
 ## RomFS: fixed image address
 
 - Unlike TotK, Astral Chain never opens RomFS files through nn::fs (the boot traces only
-  QueryMountRomCacheSize and MountRom). The game parses the RomFS image in memory at the fixed address
-  **0x7000d1b000** (hardcoded in the content manager, f_70005693e0, and passed to the reader init
-  f_70000001c0). The MountRom cache pointer the game passes is just scratch; the image itself must be
-  mapped at that address.
-- The host does not map the file directly: `MapViewOfFileEx` needs a 64 KiB-aligned base and 0x7000d1b000 is
-  not. `recomp/layout.py` reserves `[ROMFS_BASE, ROMFS_BASE + ROMFS_SIZE)` between main and sdk, and
+  QueryMountRomCacheSize and MountRom). The game parses the RomFS image in memory at a fixed address baked
+  into its content manager: **0x7000d1b000** in 1.0.0 (f_70005693e0), **0x7000d35000** in 1.0.1
+  (f_700056e800). The MountRom cache pointer the game passes is just scratch; the image itself must be
+  mapped at that address, so `recomp/layout.py` picks `ROMFS_BASE` per version (`gen.py --version`).
+- The host does not map the file directly: `MapViewOfFileEx` needs a 64 KiB-aligned base and neither address
+  is. `recomp/layout.py` reserves `[ROMFS_BASE, ROMFS_BASE + ROMFS_SIZE)` between main and sdk, and
   `runtime/romfs.c` `romfs_read_fault` commits each 4 KiB page on the first guest read and fills it from
   `romfs.bin`. The image is ~10.3 GB, so sdk starts above the image; `runtime/host.h` keeps the kernel at
   0x7268400000 and the host-function window at 0x7300000000. Regenerating after changing layout.py is

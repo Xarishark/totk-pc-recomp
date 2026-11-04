@@ -6,7 +6,8 @@ application for Windows, built on the pipeline of [TotK Recomp](https://github.c
 
 > [!IMPORTANT]
 > **No game files are included.** You need your own legally obtained copy of *Astral Chain*, dumped from your own
-> console: the base game, version 1.0.0. Instructions for obtaining those files will not be provided.
+> console: the base game (version 1.0.0) and the 1.0.1 update. Instructions for obtaining those files will not be
+> provided.
 >
 > The game is built from your files on your machine, so the result contains the game. It is for your own use. Do not
 > share it.
@@ -19,11 +20,12 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Features
 
-- Native code, not emulation. it already runs on very old systems, while some effort can still be made, it uses a small amount of ram and VRAM to run
-- Port has been externally tested (Reddit, Youtube, ..) and should be playable from intro to credits with no known visual issues
-- Base game 1.0.0 only
+- Native code, not emulation. It already runs on very old systems; it uses a small amount of RAM and VRAM to run.
+- Externally tested (Reddit, YouTube, ...): playable from intro to credits with no known visual issues.
+- Base game 1.0.0 with its 1.0.1 update
+- 60 fps by default, with a 30 fps switch and a cutscene speed fix
 - The game's own audio: music, effects and voices
-- Custom resolutions, AMD FSR 1 upscaling up to 4K
+- Custom resolutions, AMD FSR 1 upscaling up to 4K and emulator-style 3D render scaling
 - Anisotropic texture filtering up to 16x, for sharp ground into the distance
 - In-game settings menu (F1) and performance overlay (F10)
 - Setup and in-game menu in English, Russian, Brazilian Portuguese and Simplified Chinese
@@ -33,8 +35,6 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Planned
 
-- The 1.0.1 update
-- 60 fps and higher frame-rate limits
 - Shaders prepared at install instead of during play
 - A Linux release
 
@@ -43,13 +43,13 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 Download `Astral Chain-Setup-<version>-windows.zip` from [Releases](../../releases), unpack it anywhere and start
 `Astral Chain-Setup.exe`. It asks for:
 
-- your own copy of the base game (version 1.0.0, XCI or NSP);
+- your own copy of the base game (version 1.0.0, XCI or NSP) and of the 1.0.1 update (NSP);
 - your `prod.keys`;
 - the game language and the folder to install into.
 
-It then extracts the game's data, lifts the game's code to C, and builds `astralchain.exe` on your machine: about a
-minute on a fast CPU, a few minutes on a slow one, and about 14 GB for the installed folder plus 4 GB of temporary
-files. The setup carries no game data and no code derived from the game.
+It then extracts the game's data, merges the update into it, lifts the game's code to C, and builds `astralchain.exe` on
+your machine: about a minute on a fast CPU, a few minutes on a slow one, about 14 GB for the installed folder and about
+11 GB of temporary space while the update is merged. The setup carries no game data and no code derived from the game.
 
 You need Windows 10 or 11 on x86-64 (SSE4.2 at least) and a Vulkan 1.3 graphics card. The exe is unsigned, so
 SmartScreen warns on the first start.

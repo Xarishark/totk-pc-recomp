@@ -1858,21 +1858,11 @@ static VkSampler make_sampler(VkCtx *c, const samp_par *d) {
     if (si.maxLod < si.minLod) si.maxLod = si.minLod;
     float lim = c->props.limits.maxSamplerLodBias, bias = d->lod_bias;
     // DLSS upscaling (resolution.c): the scene's material textures, the filtered mipmapped ones that repeat, are
-    // sampled for the output's resolution; clamped ones (post effects, LUTs, the UI) keep the game's bias. The
-    // community 1062p cheat carries the same kind of bias ("Mipmap Bias", fmov s0, #1.00 at 1.0.1's 009ED178) and its
-    // site has no 1.0.0 counterpart to map, so the res1062 set applies the bias here instead, to the same samplers.
-    int scene_sampler =
-        !d->cmp_mode && mf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
+    // sampled for the output's resolution; clamped ones (post effects, LUTs, the UI) keep the game's bias.
+    if (!d->cmp_mode && mf == NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR &&
         (si.addressModeU == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeU == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT ||
-         si.addressModeV == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT);
-    if (scene_sampler) {
+         si.addressModeV == VK_SAMPLER_ADDRESS_MODE_REPEAT || si.addressModeV == VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT))
         bias += res_dlss_lod_bias();
-        static int said;
-        if (rt_patch_enabled(rt_patch_set("res1062"))) {
-            bias += 1.0f;
-            if (!said && (said = 1)) rt_log("vk: 1062p: +1 mipmap bias on the scene's samplers");
-        }
-    }
     si.mipLodBias = fmaxf(-lim, fminf(lim, bias));
     // AC_ANISO raises the level for filtered, mipmapped colour samplers that repeat on U and V: the surface textures,
     // which tile, so ground and walls seen at a shallow angle stay sharp into the distance. Depth-compare (shadow)

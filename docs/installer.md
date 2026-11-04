@@ -4,8 +4,9 @@ A public release that turns the player's own game files into a playable Astral C
 data and no code derived from the game: the installer builds the game on the player's machine. The installed folder
 holds only the game; the installer and its tools stay outside it.
 
-The port builds the base game (1.0.0). There is no update file to pick and no firmware folder to read: the game's own
-data carries everything the runtime needs.
+The port builds the 1.0.1 update: the player chooses the base game (1.0.0, XCI or NSP) and the 1.0.1 update NSP. The
+update supplies the new code and a delta RomFS section, which hactool merges with the base RomFS. There is no firmware
+folder to read: the game's own data carries everything.
 
 ## What the player does
 
@@ -13,10 +14,11 @@ data carries everything the runtime needs.
    `Astral Chain-Setup.exe`.
 2. Picks:
    - the base game (XCI or NSP, version 1.0.0);
+   - the update (NSP, version 1.0.1);
    - their `prod.keys`;
    - the game language and the install folder.
 3. Waits for the setup, one time. The window shows each step and its progress.
-4. Plays `astralchain.exe` from the install folder. The installer and the source NSP or XCI can be deleted.
+4. Plays `astralchain.exe` from the install folder. The installer and the source files can be deleted.
 
 The install folder (`main.c` `portable_paths()` reads this layout; it stays portable):
 
@@ -35,31 +37,33 @@ The install folder (`main.c` `portable_paths()` reads this layout; it stays port
 
 The player runs a newer installer on the same folder. It reads `astralchain-install.json`, keeps `romfs/`, `exefs/`,
 `profile/` and `astralchain.ini` after checking their hashes and rebuilds `astralchain.exe`. A newer release that
-changes nothing game-derived skips the rebuild.
+changes nothing game-derived skips the rebuild. An installation made before update support (1.0.0) needs the game files
+again: it is rebuilt from the 1.0.1 update.
 
 ## Setup steps
 
-1. **Check** before writing anything: the file opens with the keys, its code modules (`main`, `sdk`, `rtld`) match the
-   1.0.0 hashes the port was built from, enough space is free on the target disk (about 14 GiB for the install, 4 GiB
-   more for the generated C and the objects), the CPU is at least x86-64-v2 (SSE4.2; with AVX2/FMA the faster `v3`
-   build is used, otherwise the `v2` one), a Vulkan 1.3 GPU exists. Each failure is one clear message.
+1. **Check** before writing anything: both files open with the keys, the base game's code modules (`main`, `sdk`, `rtld`)
+   match the 1.0.0 hashes, the update's `main` matches 1.0.1, enough space is free on the target disk (about 25 GiB
+   while the update is merged, 14 GiB once it is cleaned up, 4 GiB more for the generated C and the objects), the CPU is
+   at least x86-64-v2 (SSE4.2; with AVX2/FMA the faster `v3` build is used, otherwise the `v2` one), a Vulkan 1.3 GPU
+   exists. Each failure is one clear message.
    `main.npdm` is not compared: it is the process's metadata, dumps of the same build carry different ones (repacked
    NSPs, different dumpers), and the game checks the fields it uses at start (`runtime/boot.c` `check_npdm`); a
    differing one is a warning.
    A version mismatch is not a dead end: the window offers **Continue anyway**, which runs the same setup with the
    check reported as a warning (`--accept-unknown-version` on the command line). The game may then not run or crash;
    the player decides.
-2. **Extract** ExeFS and RomFS into the install folder, verifying every IVFC level, and compare the hashes with
-   `tools/data/expected-v1.0.0.json`.
-3. **Lift** the ExeFS to C (`recomp/gen.py`, `recomp/patches-v0.txt`) into a temp folder next to the installer. The
+2. **Extract** the update's ExeFS into the install folder and merge its RomFS BKTR section with the base game's Program
+   NCA through hactool, verifying every IVFC level, and compare the result with `tools/data/expected-v1.0.1.json`.
+3. **Lift** the ExeFS to C (`recomp/gen.py`, `recomp/patches-v101.txt`) into a temp folder next to the installer. The
    code cheats of the mods' cheat files and the mods' ExeFS patch files become patch sets first
    (`tools/exefs_patches.py`, status in `build-cache/exefs.status`); a file the tool refuses costs those patches, not
    the install.
 4. **Compile** the generated C, `modules.c`, `romfs.c`, `patches.c` and `ov_zstd.c` (they bake the per-install layout,
    RomFS hashes and the game version's patch page) and link them with the prebuilt runtime library for the host's level
    (`libacrt.a` or `libacrt-v2.a`) into `astralchain.exe` (`build_game.py --runtime-lib`; about 3 min on 24 cores).
-5. **Clean up** the temp folder, except the generated C and the objects (about 1.3 GB), and write
-   `build-cache/rebuild.txt` in the install folder.
+5. **Clean up** the temp folder, except the generated C and the objects (about 1.3 GB), remove the copied Program NCAs,
+   and write `build-cache/rebuild.txt` in the install folder.
 
 A cancelled or failed setup resumes from the last finished step (`astralchain-install.json`).
 
@@ -83,11 +87,12 @@ from: a moved or deleted release folder means running a setup again.
 `installer/` (stdlib only; `installer/layout.py` maps the release folder and, in a repository, the dev toolchain):
 
 ```
-python -m installer --base FILE --keys FILE --lang CODE --dest DIR [--root DIR] [--temp DIR] [--verify]
+python -m installer --base FILE --update FILE --keys FILE --lang CODE --dest DIR [--root DIR] [--temp DIR] [--verify]
 ```
 
-- On a folder with `astralchain-install.json` only `--dest` is needed; the game files only when the extraction must run
-  again.
+- A first install needs the base game, the update NSP and the keys. On a folder with `astralchain-install.json` only
+  `--dest` is needed; the game files only when the extraction must run again (an installation made before update
+  support needs them).
 - stdout: one JSON event per line, types `start`, `plan`, `step` (started, done, skipped), `progress` (step, phase,
   done/total/unit), `space` (bytes needed and free on the install disk and the temp disk), `warning`, `error`, `end`
   (`installer/events.py`). Messages are ids with parameters; `installer/text/en.json` holds their English text. The

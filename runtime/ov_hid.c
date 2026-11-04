@@ -1,4 +1,4 @@
-// The hid service (IHidServer) for Astral Chain 1.0.0.
+// The hid service (IHidServer) for Astral Chain 1.0.1.
 //
 // The game calls nn::hid functions two ways: the ones main links directly are replaced by the HOST_OVERRIDE entries in
 // ov_input.c, but the SDK's own hid client (hipc2, SDK 6.4.0) talks to the "hid" service for things like

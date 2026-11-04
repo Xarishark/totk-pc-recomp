@@ -39,8 +39,8 @@ static const char *const known[] = {
     "COLOR_PRESET", "COLOR_SATURATION", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CRIT", "CRIT_OUT",
     "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLSS", "DUMP", "DUMP_AUTO", "DUMP_BUF", "DUMP_DIR", "DUMP_DRAWS",
     "DUMP_LOG", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES",
-    "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH", "FPS60", "FPS_LIMIT", "FREEZE_IDLE", "FREE_CORES",
-    "FULLSCREEN", "FXAA", "GAME_RES", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "HDR", "HDR_GAME_NITS",
+    "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH", "FPS", "FREEZE_IDLE", "FREE_CORES",
+    "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "HDR", "HDR_GAME_NITS",
     "HDR_PEAK_NITS", "HDR_UI_NITS", "HIGHFPS_FIX", "INPUT", "INPUT_RECORD", "INPUT_SCRIPT", "LANG", "LIB_PREBUILD",
     "LIB_PREBUILD_KEEP", "LIB_PREBUILD_THREADS", "LOCALE", "LOD_GUARD", "LSTICK_DEADZONE", "MEMORY", "MENU_LANG", "MENU_TEST",
     "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP", "MODS_DIR", "MODS_DISABLED", "MODS_ORDER", "MODS_REBUILD", "MOTION", "MOUSE_SENS", "MOVIE_HOST", "MOVIE_PACE",
@@ -48,7 +48,7 @@ static const char *const known[] = {
     "PRESENT_SHOT", "PREWARM_XLATE", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES",
     "PROFILE_MAIN", "PROFILE_RENDER", "PROMPTS", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REALTIME", "REC_END", "REEXEC",
     "RENDER_SCALE", "REPLAY_ASYNC",
-    "REPLAY_CHECK", "RES1062", "RES1080", "RESOLVE_CHECK", "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS", "ROMFS_PATCHES",
+    "REPLAY_CHECK", "RESOLVE_CHECK", "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS", "ROMFS_PATCHES",
     "ROMFS_PROOF_DIR", "ROMFS_VERIFY", "RSTICK_DEADZONE", "RUMBLE", "RUMBLE_CURVE", "RUMBLE_STRENGTH", "RUMBLE_TRIGGERS", "SHADER_CACHE",
     "SHADER_MEMO", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE", "SHARED_FONTS", "SHARPNESS", "SHOTS", "SHOTS_DIR",
     "SHOTS_FULL", "SKIP_FS", "SKIP_VS", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "SSAA", "STICK_DEADZONE", "STICK_SENS",
@@ -61,10 +61,10 @@ static const char *const known[] = {
 
 // The astralchain.ini section a key cfg_set may write goes to when the file lacks it (astralchain.ini.example's sections).
 static const struct { const char *key, *section; } sections[] = {
-    {"FPS_LIMIT", "frame rate"}, {"FPS60", "frame rate"},
+    {"FPS", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
-    {"GPU_INDEX", "display"}, {"GAME_RES", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"SSAA", "display"}, {"UPSCALER", "display"},
+    {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"SSAA", "display"}, {"UPSCALER", "display"},
     {"SHARPNESS", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"ANISO", "display"},
     {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
@@ -109,7 +109,7 @@ static const CfgMeta metas[] = {
     {"FULLSCREEN", "0", "0|1", LIVE}, {"WINDOW_SIZE", "1920x1080", NULL, LIVE},
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
     {"PERF_OVERLAY", "off", "off|fps|full", LIVE},
-    {"GAME_RES", "1080p", "1062p|1080p", RESTART}, {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
+    {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
     {"SSAA", "1", "1|1.333|1.5|2", RESTART},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART}, {"FXAA", "1", "0|1", LIVE},
@@ -128,7 +128,7 @@ static const CfgMeta metas[] = {
     {"SHADOW_RANGE", "100", "50..400", RESTART}, {"CONTACT_SHADOWS", "0", "0..100", RESTART},
     {"PCSS", "0", "0..200", RESTART},
     // Game
-    {"FPS_LIMIT", "60", "30|40|45|60|90|120|144|display", LIVE}, {"FPS60", "1", "0|1", LIVE},
+    {"FPS", "60", "30|60", LIVE},
     {"REALTIME", "1", "0|1", RESTART}, {"CLOTH_REALTIME", "1", "0|1", RESTART},
     {"MODS_REBUILD", "auto", "auto|off", RESTART},
     {"HIGHFPS_FIX", "1", "0|1", RESTART},
@@ -268,7 +268,7 @@ int cfg_load(const char *path) {
 // Starting points to replace with measured ones (docs/tester-guide.md, Steam Deck).
 static const struct { const char *key, *value; } DECK[] = {
     {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"OUTPUT_RES", "1280x800"}, {"RENDER_SCALE", "game"},
-    {"VK_PRESENT", "fifo"}, {"FPS_LIMIT", "40"},
+    {"VK_PRESENT", "fifo"}, {"FPS", "60"},
 };
 static int profile = -1;   // 0 none, 1 Steam Deck
 

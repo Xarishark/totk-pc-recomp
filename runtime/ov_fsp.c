@@ -1,4 +1,4 @@
-// The filesystem proxy service ("fsp-srv") for Astral Chain 1.0.0.
+// The filesystem proxy service ("fsp-srv") for Astral Chain 1.0.1.
 //
 // The port serves the file systems themselves in runtime/fs_host.c and overrides the nn::fs entry points it can reach.
 // The SDK still opens fsp-srv for one side path: its access-log switch (GetGlobalAccessLogMode). That switch must answer
