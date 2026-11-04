@@ -646,7 +646,9 @@ NVN_API(nvnWindowSetCrop) {
 #define VSYNC_HZ 60ull
 static uint64_t present_period(const win_t *o) {
     if (frame_step_realtime()) return frame_step_cap_ns();
-    return (o->interval > 0 ? (uint64_t)o->interval : 1ull) * 1000000000ull / VSYNC_HZ;
+    uint64_t ticks = o->interval > 0 ? (uint64_t)o->interval : 1ull;
+    if (frame_step_cutscene() && ticks < 2) ticks = 2;   // the 60 fps patch drops the game's own wait (frame_rate.c)
+    return ticks * 1000000000ull / VSYNC_HZ;
 }
 
 // MacNativeGames nvn_pace.h: the present slot is the previous slot plus one period. Early: wait for the slot. Late by

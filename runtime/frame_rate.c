@@ -3,9 +3,8 @@
 // accumulator and clears the frame call's wait argument; this file switches the set while the game runs, caps the
 // host's present rate at the same 60 or 30, and keeps the world clock for scripted input.
 //
-// The 60 fps patch leaves the game's cutscenes at 30: its cutscene speed variable (main+0xCCA6764, 1/30 during a
-// cutscene) selects 2 in the frame-rate object instead of 1, as the community cutscene fix does. Without that, the
-// cutscenes play twice as fast as their animation data.
+// The 60 fps patch leaves the game's cutscenes at 30 (cutscene_rate below): without that they play twice as fast as
+// their animation data.
 //
 // What remains:
 //   - the frame limit (AC_FPS60): 60 fps by default, 30 fps when the patch is off. The pacer (nvn_api_obj.c) holds
@@ -70,25 +69,37 @@ uint64_t frame_step_cap_ns(void) {
 // The frame rate the limit gives, for the performance overlay: 60 or 30; 0 before the first frame read the setting.
 double frame_step_limit_hz(void) { return fps_hz; }
 
-// The community cutscene fix for the 60 fps patch: the game's frame-rate object holds 1 (60 fps) in gameplay and 2
-// (30 fps) in a cutscene. The game's cutscene speed variable is 1/30 in a cutscene and 1/60 in gameplay; write the
-// selector each frame when the patch is on, as the cheat engine's code does.
+// The community cutscene fix for the 60 fps patch: the game's cutscene speed variable (main+0xCCA6764) is 1/30 in a
+// cutscene and 1/60 in gameplay, and the game's frame-rate object takes 2 (30 fps) in a cutscene and 1 (60 fps) in
+// gameplay at +0xF14 of the object the pointer chain below reaches. The selector is written each frame, as the cheat
+// engine's code does. The patch also clears the frame call's second-vsync wait, so the game keeps presenting at
+// interval 1 while it steps 1/30 s a frame: the present pacer (nvn_api_obj.c present_period) holds those frames to 30
+// per second while frame_step_cutscene says so, or the cutscene plays at twice its speed.
+static volatile int in_cutscene;
+
+int frame_step_cutscene(void) { return in_cutscene; }
+
 static void cutscene_rate(void) {
-    if (!fps60_on) return;
+    if (!fps60_on) {
+        in_cutscene = 0;
+        return;
+    }
     uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
+    uint32_t speed = *(uint32_t volatile *)(base + 0xCCA6764ull);
+    uint32_t want = speed == 0x3D088889u ? 2u : speed < 0x3D088889u ? 1u : 0u;   // other values: a fractional frame
+    if (!want) return;
+    if (in_cutscene != (want == 2)) {
+        in_cutscene = want == 2;
+        rt_log("frame rate: %s (speed 0x%08x, world %.2f s): presents held to %d per second", in_cutscene ? "cutscene" : "gameplay", speed, (double)frame_step_world_us() / 1e6,
+               in_cutscene ? 30 : 60);
+    }
     void *volatile *slot = (void *volatile *)(base + 0xCCB7B08ull);
     void *obj = *slot;
     if (!obj) return;
     obj = *(void *volatile *)((uintptr_t)obj + 0x70);
     if (!obj) return;
-    uint32_t speed = *(uint32_t volatile *)(base + 0xCCA6764ull);
-    uint32_t want = speed == 0x3D088889u ? 2u : speed < 0x3D088889u ? 1u : 0u;
-    if (!want) return;
     volatile uint32_t *selector = (volatile uint32_t *)((uintptr_t)obj + 0xF14);
-    if (*selector != want) {
-        *selector = want;
-        rt_log("frame rate: cutscene selector %u (speed 0x%08x)", want, speed);
-    }
+    if (*selector != want) *selector = want;
 }
 
 // ---- AC_TRACE=perf speed lines
