@@ -78,15 +78,94 @@ site res1080 main 40f1b4 52806556 52808716   # mov w22, #810 -> #1080
 site res1080 main 40f1d0 7119001f 711e001f   # cmp w0, #1600 -> #1920
 site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
 
-# 60 fps: the community static 60 fps patch for 1.0.1 (MrComputerRevo's IPS). The IPS offsets count the 0x100-byte
-# NSO header, so each lands at module offset -0x100 here. It halves the frame-time constants of the game's frame
-# accumulator (1.0 -> 0.5 and 2.0 -> 1.0) and clears the argument that makes the frame call wait a second vsync.
-# On by default; the menu's AC_FPS=30 (the ini's fps = 30) runs the original instructions, i.e. the game's shipping
-# 30 fps.
+# Dynamic frame rate for the 60 fps mode (the menu's AC_FPS: 30 = shipping 30 fps, 60 = 60 fps with the fix).
+# This replaces the community static 60 fps patch (MrComputerRevo's IPS, whose offsets count the 0x100-byte NSO header)
+# with the Dynamic mod v1.1.1's fixes for its two 60 fps bugs: the frame accumulator's low clamp drops to 1/16 (the
+# high clamp stays the original 2.0) so the floating step tracks real time; every input/action frame counter is scaled
+# by the whole-tick count (runtime/frame_rate.c) so its window lasts wall-clock time instead of whole 60 fps frames;
+# and the camera's per-frame smoothing blend becomes 1 - powf(1 - a, clamp(step, 0, 4)) so it converges at the same
+# rate whatever the frame rate. The frame call's second-vsync wait is still cleared; the present pacer (nvn_api_obj.c)
+# holds 60 fps. AC_FPS=30 runs the original instructions (the game's shipping 30 fps).
 set  fps60 FPS60 1
-site fps60 main 3e39d0 320003e0 52800001   # orr w0, wzr, #1 -> mov w1, #0 (frame call's second argument)
-site fps60 main 91dc94 1e2e1001 1e2c1001   # fmov s1, #1.0 -> #0.5 (frame-time clamp, low)
-site fps60 main 91dca0 1e2e1001 1e2c1001   # fmov s1, #1.0 -> #0.5 (frame-time clamp, remainder)
-site fps60 main 91dcac 32091be8 52a7e008   # 1.0f -> 0.5f (stored frame-time scale)
-site fps60 main 91dccc 1e201001 1e2e1001   # fmov s1, #2.0 -> #1.0 (frame-time clamp, high)
-site fps60 main 91dcd8 320203e8 32091be8   # 2.0f -> 1.0f (stored frame-time clamp)
+site fps60 main 3e39d0 320003e0 52800001   # orr w0, wzr, #1 -> mov w1, #0 (frame call's vsync-wait argument)
+# frame accumulator low clamp 1.0 -> 1/16 (the high clamp is already the original 2.0)
+site fps60 main 91dc94 1e2e1001 52a7b008 1e270101   # fmov s1,#1.0 -> mov w8,#0x3d800000; fmov s1,w8
+site fps60 main 91dca0 1e2e1001 52a7b008 1e270101   # fmov s1,#1.0 -> mov w8,#0x3d800000; fmov s1,w8
+site fps60 main 91dcac 32091be8 52a7b008           # mov w8,#1.0f -> #1/16 (stored low clamp)
+# camera smoothing: the per-frame blend a becomes 1 - powf(1 - a, clamp(step, 0, 4))
+site fps60 main 3a2d40 1e2a5808 @fn:rt_fps_cam_s0
+site fps60 main 3a2d80 1e2a5828 @fn:rt_fps_cam_s1
+site fps60 main 3a2dc0 1e29cd48 @fn:rt_fps_cam_fcsel
+# step -> integer frame-count readers (fcvtzs/fcvtzu): read the whole-tick count instead of floor(step)
+site fps60 main 48be14 1e380008 @fn:rt_fps_ticks_w8   # fcvtzs w8,s0 -> w8 = whole ticks
+site fps60 main 57e7dc bd40d300 @fn:rt_fps_ticks_w8   # ldr s0,[x24,#0xd0] -> w8 = whole ticks
+site fps60 main 57e7e0 1e390008 34000188              # fcvtzu w8,s0 -> cbz w8, 0x57e810
+# input/action frame counters, scaled by the whole-tick count (subs wN,wN,#1 -> the hs helpers)
+site fps60 main 308a9c 71000508 @fnz:rt_fps_hs_w8   # combo cue
+site fps60 main 0e7f64 71000508 @fnz:rt_fps_hs_w8   # 15-count
+site fps60 main 0f7ce8 71000508 @fnz:rt_fps_hs_w8   # chain bind
+site fps60 main 0f8720 71000508 @fnz:rt_fps_hs_w8   # S3 15-count
+site fps60 main 0d5e28 71000508 @fnz:rt_fps_hs_w8   # S3 exact-zero
+site fps60 main 2828ac 71000508 @fnz:rt_fps_hs_w8   # short latch
+site fps60 main 283100 71000508 @fnz:rt_fps_hs_w8   # buffer
+site fps60 main 28311c 71000508 @fnz:rt_fps_hs_w8   # tap buffer (double-tap)
+site fps60 main 28759c 71000508 @fnz:rt_fps_hs_w8   # buffer
+site fps60 main 2875ac 71000508 @fnz:rt_fps_hs_w8   # buffer
+site fps60 main 2875bc 71000508 @fnz:rt_fps_hs_w8   # buffer
+site fps60 main 2875cc 71000508 @fnz:rt_fps_hs_w8   # buffer
+site fps60 main 2875dc 71000508 @fnz:rt_fps_hs_w8   # buffer
+site fps60 main 285464 71000508 @fnz:rt_fps_hs_w8   # queue window
+site fps60 main 283360 71000508 @fnz:rt_fps_hs_w8   # exact-zero
+site fps60 main 284ad4 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 286e38 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 286f98 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 287044 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 284af0 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 284bb8 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 284bf4 71000508 @fnz:rt_fps_hs_w8   # window
+site fps60 main 284b00 71000508 @fnz:rt_fps_hs_w8   # r5 window
+site fps60 main 288f40 71000529 @fnz:rt_fps_hs_w9   # lockout bank
+site fps60 main 288f5c 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 288f78 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 288f94 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 288fb0 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 288fcc 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 288fe8 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 289004 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 289020 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 28903c 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 289244 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 289260 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 28927c 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 289298 71000529 @fnz:rt_fps_hs_w9
+site fps60 main 2856f8 71000529 @fnz:rt_fps_hs_w9   # press window
+site fps60 main 283294 71000529 @fnz:rt_fps_hs_w9   # window
+site fps60 main 287738 71000529 @fnz:rt_fps_hs_w9   # r5 window
+site fps60 main 28783c 71000529 @fnz:rt_fps_hs_w9   # r5 window
+site fps60 main 283a94 7100054a @fnz:rt_fps_hs_w10  # lockout (subs w10,w10,#1)
+site fps60 main 287694 71000549 @fnz:rt_fps_hs_w10w9  # second-tap window, path A
+site fps60 main 287724 71000549 @fnz:rt_fps_hs_w10w9  # second-tap window, path B
+# r2 bank of buffer counters (sub w8,w8,#1, no flags)
+site fps60 main 283044 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283054 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283064 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283074 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283084 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283094 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2830a4 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2830b4 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2830c4 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2830d4 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2830e4 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2830f4 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283138 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283148 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283158 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283168 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283178 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283188 51000508 @fn:rt_fps_sub_w8
+site fps60 main 283198 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2831a8 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2831b8 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2831c8 51000508 @fn:rt_fps_sub_w8
+site fps60 main 2831dc 51000508 @fn:rt_fps_sub_w8

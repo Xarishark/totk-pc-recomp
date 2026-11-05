@@ -1,13 +1,15 @@
 // Frame rate: the game's 60 fps patch (recomp/patches-v101.txt, set fps60) is on by default, and the menu's frame
-// rate row switches it off for the game's shipping 30 fps. The set halves the frame-time constants of the game's frame
-// accumulator and clears the frame call's wait argument; this file switches the set while the game runs, caps the
-// host's present rate at the same 60 or 30, and keeps the world clock for scripted input.
+// rate row switches it off for the game's shipping 30 fps. The set turns the game's frame accumulator into a real-time
+// step (low clamp 1/16) and clears the frame call's wait argument; this file switches the set while the game runs,
+// computes the whole-tick count and the floating step each present, caps the host's present rate at 60 or 30, and
+// keeps the world clock for scripted input. The whole ticks and the step are what make the input/action timers and
+// the camera smoothing frame-rate independent (the Dynamic mod v1.1.1 fixes for the 60 fps patch's two bugs).
 //
 // The 60 fps patch leaves the game's cutscenes at 30 (cutscene_rate below): without that they play twice as fast as
 // their animation data.
 //
 // What remains:
-//   - the frame limit (AC_FPS60): 60 fps by default, 30 fps when the patch is off. The pacer (nvn_api_obj.c) holds
+//   - the frame limit (AC_FPS): 60 fps by default, 30 fps when the patch is off. The pacer (nvn_api_obj.c) holds
 //     frames to that rate where the game presents faster than it.
 //   - the world clock (frame_step_world_us): wall time from the first present. Recorded and scripted input
 //     (input.c) runs on it, so a replay presses at the same game time at any frame rate.
@@ -32,6 +34,12 @@
 static double step_now;   // the step the game used this frame (whole vsyncs: interval / 60)
 static uint64_t last_ns;
 
+// ---- dynamic frame rate: whole 30 fps ticks (for the input/action counters) and the floating step (for the camera).
+// Computed from the real frame time at each present; the guest counter sites read them through the helpers below.
+static _Atomic uint32_t g_fps_ticks;      // whole ticks for the guest counters
+static _Atomic uint32_t g_fps_step_bits;  // the floating step (30 fps units), for the camera
+static double g_fps_rem;                  // fractional whole-tick remainder (present thread only)
+
 static int fps60_on = -1, fps_hz;
 static unsigned fps_seen;
 static int fps_read;
@@ -43,6 +51,85 @@ void frame_step_init(void) {
 }
 
 int frame_step_realtime(void) { return 0; }
+
+// ---- dynamic frame-rate guest helpers (called by @fn/@fnz patch sites in the lifted game code)
+
+uint32_t rt_fps_ticks(void) { return atomic_load_explicit(&g_fps_ticks, memory_order_relaxed); }
+
+float rt_fps_step(void) {
+    uint32_t b = atomic_load_explicit(&g_fps_step_bits, memory_order_relaxed);
+    float f; memcpy(&f, &b, 4); return f;
+}
+
+// The fcvtzs/fcvtzu step->int reader sites: x8 = the whole-tick count.
+void rt_fps_ticks_w8(Cpu *c) { c->x[8] = rt_fps_ticks(); }
+
+// The scaled decrement that replaces `subs wN, wN, #1` (and `subs w9, w10, #1`): decrement by the whole-tick count,
+// clamped at 0, with NZCV matching what the 30 fps original produced. Flags: N = the counter was already 0, Z = it
+// reaches 0 this frame (counter <= ticks), C = it was not 0, V = 0. The stored value underflows when the counter is
+// already 0, exactly as `subs wN,wN,#1` does, so a following `b.lt`/`b.ge` sees the same "expired" condition.
+static uint64_t fps_hs(uint32_t w, uint32_t ticks, uint32_t *out) {
+    if (w == 0) {
+        *out = (uint32_t)(w - ticks);
+        return MKFLAGS(1, 0, 0, 0);
+    }
+    if (ticks == 0) {
+        *out = w;
+        return MKFLAGS(0, 0, 1, 0);
+    }
+    uint32_t m = w < ticks ? w : ticks;
+    *out = w - m;
+    return MKFLAGS(0, w <= ticks, 1, 0);
+}
+
+uint64_t rt_fps_hs_w8(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[8], rt_fps_ticks(), &out);
+    c->x[8] = out; return f;
+}
+uint64_t rt_fps_hs_w9(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[9], rt_fps_ticks(), &out);
+    c->x[9] = out; return f;
+}
+uint64_t rt_fps_hs_w10(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[10], rt_fps_ticks(), &out);
+    c->x[10] = out; return f;
+}
+uint64_t rt_fps_hs_w10w9(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[10], rt_fps_ticks(), &out);
+    c->x[9] = out; return f;
+}
+
+// `sub w8, w8, #1` (no flags), the r2 bank of tap/buffer counters: max(w8 - ticks, 0).
+void rt_fps_sub_w8(Cpu *c) {
+    uint32_t w = (uint32_t)c->x[8], t = rt_fps_ticks(), r = w - t;
+    c->x[8] = (w > t) ? r : 0;
+}
+
+// Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
+// a >= 1, NaN and step == 1.0 all pass through unchanged.
+static float fps_blend(float a) {
+    float step = rt_fps_step();
+    if (step == 1.0f) return a;
+    if (!(a > 0.0f) || !(a < 1.0f)) return a;
+    float s = step < 0.0f ? 0.0f : (step > 4.0f ? 4.0f : step);
+    return 1.0f - powf(1.0f - a, s);
+}
+
+void rt_fps_cam_s0(Cpu *c) {
+    float m = VSF32(0), s10 = VSF32(10);
+    FP_SETS(8, fps_blend(m < s10 ? m : s10));
+}
+void rt_fps_cam_s1(Cpu *c) {
+    float m = VSF32(1), s10 = VSF32(10);
+    FP_SETS(8, fps_blend(m < s10 ? m : s10));
+}
+void rt_fps_cam_fcsel(Cpu *c) {
+    float s10 = VSF32(10);
+    FP_SETS(9, fps_blend(VSF32(9)));   // the smoothed s9, for the +0x100/+0x108 blend
+    float t = *(float volatile *)(c->x[19] + 0x214ull);   // re-test [cam+0x214] > 0
+    FP_SETS(8, t > 0.0f ? s10 : VSF32(9));
+}
+
 
 // The frame rate (menu, AC_FPS60): 60 fps runs the game's 60 fps patch, 30 fps switches it off. Read live: the patch
 // set is switched in frame_limit_live, so the generated C picks the patched or the original instructions from the next
@@ -152,6 +239,17 @@ void frame_step_present(uint64_t display_ns, int interval) {
     double dt = last_ns ? (double)(display_ns - last_ns) * 1e-9 : 0;
     if (interval > 0) step_now = interval / 60.0;
     last_ns = display_ns;
+    // Dynamic frame rate: whole 30 fps ticks from the real frame time, for the input/action counters and the camera.
+    double step = dt * 30.0;
+    if (step > 2.0) step = 2.0;
+    else if (step < 1.0 / 16.0) step = 1.0 / 16.0;
+    g_fps_rem += step;
+    uint32_t ticks = (uint32_t)g_fps_rem;
+    g_fps_rem -= (double)ticks;
+    atomic_store_explicit(&g_fps_ticks, ticks, memory_order_relaxed);
+    float fs = (float)step;
+    uint32_t bits; memcpy(&bits, &fs, 4);
+    atomic_store_explicit(&g_fps_step_bits, bits, memory_order_relaxed);
     // The game clock of untimed script lines: what the game stepped this frame, whole vsyncs.
     double game = step_now;
     atomic_store_explicit(&game_us, atomic_load_explicit(&game_us, memory_order_relaxed) + (uint64_t)(game * 1e6 + 0.5),

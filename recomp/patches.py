@@ -9,9 +9,12 @@ Lifted code cannot be byte-patched when the game runs, so a patch is applied whe
   spin <module> <head> <back-edge> [<back-edge> ...]
 
 <address> is a module offset (hex), <original> the instruction word the module has there (checked; a mismatch stops
-the generator), each <replacement> an instruction word (hex) or `@page:x<n>`, which is `adrp x<n>, <patch page>`
-encoded for the site's address. The patch page is the first 4 KiB page after main's image (layout.py leaves the rest
-of the 2 MiB-aligned module slot free); the runtime commits it and owns its contents. Words in use, by byte offset:
+the generator), each <replacement> an instruction word (hex), `@page:x<n>`, which is `adrp x<n>, <patch page>`
+encoded for the site's address, or `@fn:<name>` / `@fnz:<name>`, a direct call to a host helper `void <name>(Cpu *)`.
+`@fnz` assigns the helper's returned packed NZCV to c->nzcv (`c->nzcv = <name>(c);`), so the site's flags come from
+the helper; `@fn` discards the return (`<name>(c);`) and leaves the flags. The patch page is the first 4 KiB page
+after main's image (layout.py leaves the rest of the 2 MiB-aligned module slot free); the runtime commits it and owns
+its contents. Words in use, by byte offset:
 +0..15 the frame-rate step (runtime/frame_rate.c), +16..55 the output, swapchain and scene sizes
 (runtime/resolution.c res_init), +56..59 the camera's aspect ratio (runtime/resolution.c res_init, set aspect), +60..63
 the field-of-view factor (runtime/resolution.c res_fov_live, set fov), +92..95 the sun shadow map size
@@ -66,8 +69,8 @@ class Table:
         out = {}
         for off, alts in self.sites.get(name, {}).items():
             a = base + off
-            out[a] = [(k, [adrp(a, self.page, w[1]) if isinstance(w, tuple) else w for w in repl])
-                      for k, repl, _ in alts]
+            out[a] = [(k, [adrp(a, self.page, w[1]) if isinstance(w, tuple) and w[0] == 'page' else w
+                           for w in repl]) for k, repl, _ in alts]
         return out
 
 
@@ -95,6 +98,10 @@ def load(path, mods):
             for w in f[5:]:
                 if w.startswith('@page:x'):
                     repl.append(('page', int(w[7:])))
+                elif w.startswith('@fnz:'):
+                    repl.append(('fnz', w[5:]))
+                elif w.startswith('@fn:'):
+                    repl.append(('fn', w[4:]))
                 else:
                     repl.append(int(w, 16))
             alts = sites.setdefault(f[2], {}).setdefault(off, [])

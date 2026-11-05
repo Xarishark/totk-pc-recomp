@@ -39,6 +39,20 @@ void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) __attribute__((noreturn));
 void rt_udf(Cpu *c, uint64_t pc) __attribute__((noreturn));
 uint64_t rt_ticks(void);
 
+// ---- dynamic frame-rate patch helpers (runtime/frame_rate.c), called by @fn/@fnz patch sites
+uint32_t rt_fps_ticks(void);        // whole 30 fps ticks this frame (integer part of the accumulated step)
+float rt_fps_step(void);            // the floating step this frame in 30 fps units, for the camera
+void rt_fps_ticks_w8(Cpu *c);       // x8 = whole ticks (the fcvtzs/fcvtzu step->int reader sites)
+uint64_t rt_fps_hs_w8(Cpu *c);      // subs w8,w8,#1 scaled by whole ticks; returns packed NZCV, updates x8
+uint64_t rt_fps_hs_w9(Cpu *c);      // subs w9,w9,#1 scaled; returns packed NZCV, updates x9
+uint64_t rt_fps_hs_w10(Cpu *c);     // subs w10,w10,#1 scaled; returns packed NZCV, updates x10
+uint64_t rt_fps_hs_w10w9(Cpu *c);   // subs w9,w10,#1 scaled (r5 second-tap); returns NZCV, updates x9
+void rt_fps_sub_w8(Cpu *c);         // sub w8,w8,#1 scaled (no flags), r2 bank of buffer counters
+void rt_fps_cam_s0(Cpu *c);         // camera: s8 = 1-powf(1-min(s0,s10), step)
+void rt_fps_cam_s1(Cpu *c);         // camera: s8 = 1-powf(1-min(s1,s10), step)
+void rt_fps_cam_fcsel(Cpu *c);      // camera: entry3 fcsel with the smoothed s9
+
+
 #if defined(__aarch64__)
 static inline uint64_t rt_get_fpcr(void) { uint64_t v; __asm__ volatile("mrs %0, fpcr" : "=r"(v)); return v; }
 static inline uint64_t rt_get_fpsr(void) { uint64_t v; __asm__ volatile("mrs %0, fpsr" : "=r"(v)); return v; }

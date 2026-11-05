@@ -45,7 +45,7 @@ import patches  # noqa: E402
 import regs  # noqa: E402
 from check_content import GENERATED_MARKER  # noqa: E402
 from layout import base_of, layout, romfs_size, write as write_layout  # noqa: E402
-from lifter import hx  # noqa: E402
+from lifter import Insn, hx  # noqa: E402
 from module import Module  # noqa: E402
 
 TERMINATORS = ('b', 'br', 'ret', 'trap')
@@ -261,16 +261,27 @@ class Emitter:
 
     def replacements(self, a):
         """The lifted words of each alternative of the patched site a, in set order. Only the last word of an
-        alternative may branch (bl, b, b.cond / cbz / tbz, ret)."""
+        alternative may branch (bl, b, b.cond / cbz / tbz, ret); a @fn/@fnz host call never branches."""
         out = []
         for _, words in self.patched[a]:
-            lifted = [self.mod.lifter.lift(w, a) for w in words]
+            lifted = [self.lift_word(w, a) for w in words]
             for j, r in enumerate(lifted):
                 last = j == len(lifted) - 1
-                if r.kind != 'op' and not (last and r.kind in ('bl', 'b', 'bcond', 'ret')):
-                    raise patches.PatchError(f'{a:#x}: replacement word {words[j]:08x} is a {r.kind}')
+                if r.kind not in ('op', 'fn') and not (last and r.kind in ('bl', 'b', 'bcond', 'ret')):
+                    raise patches.PatchError(f'{a:#x}: replacement word {words[j]!r} is a {r.kind}')
             out.append(lifted)
         return out
+
+    def lift_word(self, w, a):
+        """One replacement word lifted: an instruction word through the lifter, a @fn/@fnz host call as inline C."""
+        if isinstance(w, tuple):
+            kind, name = w
+            if kind == 'fn':
+                return Insn('fn', code=f'{name}(c);')
+            if kind == 'fnz':
+                return Insn('fn', code=f'c->nzcv = {name}(c);')
+            raise patches.PatchError(f'{a:#x}: unexpected replacement token {kind!r}')
+        return self.mod.lifter.lift(w, a)
 
     def flow(self, insns, entry, end, tables):
         """Successors of each instruction inside the function [entry, end). Index len(insns) stands for falling
@@ -280,7 +291,7 @@ class Emitter:
 
         def of(ins, i):
             k = ins.kind
-            if k in ('op', 'bl', 'blr'):
+            if k in ('op', 'fn', 'bl', 'blr'):
                 return [i + 1]
             if k == 'b':
                 return idx(ins.target)
@@ -305,7 +316,7 @@ class Emitter:
     def flag_plan(self, insns, entry, end, tables, succ):
         """recomp/flags.py plan for the function: each instruction's flag use over the flow succ (flow())."""
         n = len(insns)
-        calls, effects, exits = set(), [], {n}
+        calls, effects, exits, packs = set(), [], {n}, set()
         for i, ins in enumerate(insns):
             k, a = ins.kind, entry + 4 * i
             if k in ('bl', 'blr'):
@@ -315,7 +326,10 @@ class Emitter:
             elif k == 'br':
                 exits.add(i)   # through rt_dispatch, also a table's default
             if a in self.patched:
-                effects.append(self.patched_effect(ins, a))
+                reads, kind, pack = self.patched_effect(ins, a)
+                effects.append((reads, kind))
+                if pack:
+                    packs.add(i)
                 for words in self.replacements(a):
                     r = words[-1]
                     if r.kind == 'bl':
@@ -325,25 +339,37 @@ class Emitter:
             else:
                 effects.append(flags.effect(ins.cond if k == 'bcond' else ins.code or ''))
         effects.append((False, None))
-        return flags.plan(effects, succ, calls, exits)
+        p = flags.plan(effects, succ, calls, exits)
+        for i in packs:
+            p.pack[i] = True
+        return p
 
     def patched_effect(self, ins, a):
         """Flag effect of a patched site: every alternative (the original and each replacement) must write the same
-        flags, in at most one word each; the site reads flags when any alternative does (a b.cond reads them)."""
+        flags, in at most one word each; the site reads flags when any alternative does (a b.cond reads them). A host
+        call (`@fnz`) writes packed flags (kind 'nz'); when an alternative's kind differs (the original is a subs and
+        the replacement a packed-flag helper), the site is packed: it returns 'nz' and the caller marks the site so
+        every non-'nz' alternative also writes F.nz."""
         alts = []
         for words in [[ins]] + self.replacements(a):
-            fx = [flags.effect(w.code or '') if w.kind == 'op' else flags.effect(w.cond) for w in words
-                  if w.kind in ('op', 'bcond')]
+            fx = [flags.effect(w.code or '') if w.kind in ('op', 'fn') else flags.effect(w.cond) for w in words
+                  if w.kind in ('op', 'fn', 'bcond')]
             fx = [e for e in fx if e[0] or e[1]]
             if len(fx) > 1:
                 raise patches.PatchError(f'{a:#x}: several flag-using words in one alternative')
             alts.append(fx[0] if fx else (False, None))
-        if any(e[1] != alts[0][1] for e in alts):
-            raise patches.PatchError(f'{a:#x}: the alternatives write different flags ({[e[1] for e in alts]})')
+        kinds = [e[1] for e in alts]
+        distinct = {k for k in kinds if k is not None}
+        if len(distinct) > 1:
+            kind, pack = 'nz', True
+        else:
+            kind, pack = (distinct.pop() if distinct else None), False
+            if kind is not None and any(k is None for k in kinds):
+                raise patches.PatchError(f'{a:#x}: some alternatives write flags, some do not ({kinds})')
         reads = any(e[0] for e in alts)
-        if (alts[0][1] or reads) and (ins.kind == 'bl' or any(w[-1].kind == 'bl' for w in self.replacements(a))):
+        if (kind or reads) and (ins.kind == 'bl' or any(w[-1].kind == 'bl' for w in self.replacements(a))):
             raise patches.PatchError(f'{a:#x}: a patched call that uses flags')
-        return reads, alts[0][1]
+        return reads, kind, pack
 
     def function(self, entry, end):
         """(lines of C, referenced function starts) for the guest function [entry, end)."""
@@ -418,6 +444,11 @@ class Emitter:
             """C of one lifted word of a patched site."""
             if r.kind == 'op':
                 return op(i, r.code)
+            if r.kind == 'fn':
+                # A host helper: spill locals, call, reload what the call may change. The helper writes flags
+                # itself (a @fnz returns packed NZCV, which fx above rewrites onto F.nz), so it is not a
+                # flag-clobbering guest call.
+                return f'{spill}{fx(i, r.code)}{reload_call}'
             if r.kind == 'bl':
                 return call(r.target, a)
             if r.kind == 'b':
