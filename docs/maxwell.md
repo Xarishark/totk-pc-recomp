@@ -115,6 +115,7 @@ Source shorthands:
 | 5.10 | **Transform feedback**, rasterizer discard. | `VK_EXT_transform_feedback`. | Ours: rasterizer discard without XFB = no draw (`nvn_api_cmd.c`). | OGD 0x0744 |
 | 5.11 | **Depth bounds, sample mask, conservative raster**. | Optional features. | Ours: ignored, logged (`nvn_ext.c`). | OGD 0x0fa4 |
 | 5.12 | **Blend factors on targets without alpha** (RGBX emulated as RGBA). | Destination alpha reads the stored value. | Ryujinx replaces DST_ALPHA factors on no-alpha targets (`FilterBlendFactor`, RYU-SU). | RYU-SU |
+| 5.13 | **Program binding is per stage**: `BindProgram(program, stageBits)` binds only the stages in the bits, and a NULL program unbinds only those stages; the others keep their shaders. Astral Chain binds its vertex and fragment programs separately and unbinds the fragment stage with a NULL bind for depth-only draws (shadow map). | One pipeline per draw. | NXN Dread depth prepass: a NULL bind treated as "no program" dropped every prepass draw. Ours: a NULL bind made the last bound program NULL, so every draw up to the next bind was dropped (17 to 59 draws a frame in the HQ). Whether the unbind came last depended on the game's redundant-bind filtering, so character shadows flickered from frame to frame. Fixed in `vk_exec_draw.c` (`OP_BIND_PROGRAM`, `stage_prog`); dropped draws are now counted by reason (flight `draws_drop_*`, `AC_TRACE=gfx`, dump `draw dropped:` lines). | NXN |
 
 ## 6. Known BotW / Astral Chain issues in other projects
 

@@ -26,10 +26,13 @@
 // (the terrain decals draw one pass each into the G-buffer and would use up both caps).
 // AC_DUMP_AUTO=<vs>[:<fs>]: arms the next frame automatically when a draw with these shader hashes is recorded, so one
 // playthrough captures an effect whose frame is not known; F12 does the same on demand.
+// AC_DUMP_N=<n> (with F12 or AC_DUMP): dump that many consecutive frames, each into AC_DUMP_DIR/f<frame>/
+// (1 = AC_DUMP_DIR itself, the default). Consecutive presents are opposite phases of a 2-frame flicker.
 // AC_DUMP_DRAWS=<seq>: in the dumped frame, the render pass with that sequence number is split after every draw and its
 // depth target (its first colour target when it has none) is copied as pass_<seq>_d<draw>_...: the draw that puts a
 // shape into the scene is found in one session. Every draw of the dumped frame also logs a "draw N:" line with its
-// shaders' hashes, vertex count, instances, first/base vertex, index buffer and vertex streams.
+// shaders' hashes, vertex count, instances, first/base vertex, index buffer and vertex streams, and a draw the replay
+// drops logs "draw dropped: <why>" in its place (vk_dump_dropped), so a pass short of draws shows which and why.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -52,6 +55,8 @@
 
 int vk_dump_armed;
 static uint64_t dump_frame, log_from;   // log_from: AC_DUMP_LOG, first frame logged to passes.txt without images
+static uint64_t dump_n = 1, dump_idx;   // AC_DUMP_N: consecutive frames per arm (F12), each into AC_DUMP_DIR/f<frame>/ (1: AC_DUMP_DIR itself)
+static char basedir[400];               // AC_DUMP_DIR; dir is the current frame's subdir when dump_n > 1
 static char dir[400];
 static FILE *passes_f, *images_f;
 static int seq, finished, copied;      // copied: passes and dispatches of the dump frame whose images were copied
@@ -753,6 +758,16 @@ out:
     if (arm) dump_arm("auto");
 }
 
+// A draw of a logged frame the replay drops (vk_exec_draw.c drop_draw): a line in the place its "draw N:" line would
+// take, with the reason and the last bound program, so the pass's draw count can be squared with the game's.
+void vk_dump_dropped(VkExec *ex, const char *why) {
+    plat_mutex_lock(&rec_lock);
+    if (active() && passes_f)
+        fprintf(passes_f, "  draw dropped: %s (after draw %d, prog %llu)\n", why, pass_draws,
+                (unsigned long long)(ex->prog ? ex->prog->serial : 0));
+    plat_mutex_unlock(&rec_lock);
+}
+
 // After the draw command of every draw of a logged frame: one line per draw, and with AC_DUMP_DRAWS the pass is ended
 // here and its first colour and depth targets are copied, the next draw reopening the pass (loadOp LOAD keeps its
 // contents).
@@ -996,7 +1011,11 @@ static void dump_config(void) {
         w[1] = *q == 'x' ? (uint32_t)strtoul(q + 1, &q, 10) : 0;
     }
     const char *d = cfg_get("AC_DUMP_DIR");
-    snprintf(dir, sizeof dir, "%s", d && *d ? d : "dump");
+    snprintf(basedir, sizeof basedir, "%s", d && *d ? d : "dump");
+    const char *dn = cfg_get("AC_DUMP_N");
+    dump_n = dn && *dn ? strtoull(dn, NULL, 10) : 1;
+    if (dump_n < 1) dump_n = 1;
+    if (dump_n > 16) dump_n = 16;
     const char *au = cfg_get("AC_DUMP_AUTO");
     if (au && *au) {
         char *q;
@@ -1024,8 +1043,12 @@ static void dump_config(void) {
 }
 
 // Opens the logs for a frame. Only called when no dump is being written (vk_dump_init, vk_dump_request).
+// With AC_DUMP_N > 1 each frame of the run goes to its own AC_DUMP_DIR/f<frame>/ subdir.
 static void dump_open(void) {
+    if (dump_n > 1) snprintf(dir, sizeof dir, "%s/f%llu", basedir, (unsigned long long)dump_frame);
+    else snprintf(dir, sizeof dir, "%s", basedir);
     make_dirs(dir);
+    nluts = nluts_done = 0;   // 3D textures are copied once per frame
     if (passes_f) fclose(passes_f), passes_f = NULL;
     if (images_f) fclose(images_f), images_f = NULL;
     if (bufs_f) fclose(bufs_f), bufs_f = NULL;
@@ -1067,10 +1090,12 @@ static void dump_arm(const char *why) {
     dump_frame = frame_now() + 1;
     log_from = 0;
     finished = 0, copied = 0, seq = 0, last_targets = 0, pass_skip = NULL;
+    dump_idx = 0;
     dump_open();
     vk_dump_armed = 1;
     plat_mutex_unlock(&rec_lock);
-    rt_log("vk_dump: %s: frame %llu goes to %s", why, (unsigned long long)dump_frame, dir);
+    rt_log("vk_dump: %s: %llu frame(s) from %llu go to %s", why, (unsigned long long)dump_n,
+           (unsigned long long)dump_frame, basedir);
 }
 
 void vk_dump_request(void) { dump_arm("F12"); }
@@ -1089,6 +1114,16 @@ void vk_dump_present(uint64_t frame) {
     plat_mutex_lock(&rec_lock);
     fclose(passes_f);
     passes_f = NULL;
+    if (++dump_idx < dump_n) {
+        // The next consecutive frame goes to its own subdir (vk_sync_finish above wrote this frame's copies).
+        dump_frame++;
+        finished = 0, copied = 0, seq = 0, last_targets = 0, pass_skip = NULL;
+        dump_open();
+        plat_mutex_unlock(&rec_lock);
+        rt_log("vk_dump: frame %llu done; frame %llu goes to %s", (unsigned long long)frame,
+               (unsigned long long)dump_frame, dir);
+        return;
+    }
     vk_dump_armed = 0;
     plat_mutex_unlock(&rec_lock);
     rt_log("vk_dump: frame %llu: %d passes and dispatches, about %llu MB of PNGs in %s", (unsigned long long)frame, seq,

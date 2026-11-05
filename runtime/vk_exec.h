@@ -79,8 +79,10 @@ typedef struct VkExec {
     VkPipeState pipe;
 
     // ---- vk_exec_draw.c slots (draws, binds, dispatch): left empty by vk_exec.c
-    const prog_t *prog;                  // OP_BIND_PROGRAM: the last bound program
+    const prog_t *prog;                  // OP_BIND_PROGRAM: the last bound program, or the one left bound for a
+                                         // stage after a NULL bind unbound the others; NULL: no stage bound
     const prog_t *prog_stage[6];         // the program bound for each NVN shader stage
+    uint32_t prog_unbound;               // stage bits a BindProgram(NULL, stages) unbound: no fallback to prog
     int32_t prog_stages;
     NVNbufferRange vbuf[16];             // OP_BIND_VBUF
     p_bind_buf ubo[6][18], ssbo[6][16];  // OP_BIND_UBO / OP_BIND_SSBO per stage and index
@@ -143,11 +145,16 @@ int vk_exec_targets_recent(VkExec *ex, int any);
 void vk_exec_targets_describe(VkExec *ex, char *buf, size_t cap);
 
 // AC_TRACE=gfx: replay counters of the current frame, logged and reset at each present (vk_exec_frame_log).
+// Draws the replay drops (vk_exec_draw.c prepare_draw and the draw ops), by reason; the difference between draws_seen
+// and draws is their sum plus the draws skipped for a pending pipeline or shader (PERF_CNT_PIPE_SKIP, _SHADER_SKIP).
+enum { VK_DROP_NOPROG, VK_DROP_DISABLED, VK_DROP_SCISSOR, VK_DROP_EMPTY, VK_DROP_OTHER, VK_DROP_N };
 typedef struct {
     uint64_t passes, draws_seen, draws, clears, copies, dispatches, submits;
     uint64_t fb_draws, fb_barriers, fb_restarts, fb_layouts;   // feedback loops: draws sampling a written target of
                                                                // their pass, in-pass barriers, pass restarts, layout
                                                                // transitions
+    uint64_t dropped[VK_DROP_N];         // VK_DROP_*: no program bound, render disabled, empty scissor, zero count,
+                                         // other (no vertex stage, untranslatable shader, AC_SKIP_*, FXAA off)
 } VkExecFrame;
 extern VkExecFrame vk_exec_frame;
 void vk_exec_frame_written(const tex_t *t);                    // vk_texture_gpu_written: t rendered or copied into
@@ -161,6 +168,7 @@ extern int vk_dump_armed;
 void vk_dump_init(void);                 // reads the environment; vk_exec_record's first call
 void vk_dump_pass_end(VkExec *ex);       // after vkCmdEndRendering
 void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeInfo *info);   // after a draw's binds
+void vk_dump_dropped(VkExec *ex, const char *why);   // a draw the replay drops (vk_exec_draw.c drop_draw)
 void vk_dump_after_draw(VkExec *ex, const char *kind, int64_t count, int64_t instances, int64_t first,
                         int64_t base_vertex, uint64_t ibuf);   // after the draw command (may end the pass)
 void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPipeInfo *info, const p_dispatch *d);

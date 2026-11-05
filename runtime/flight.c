@@ -24,14 +24,18 @@
 #define FLIGHT_SPIKE_GAP_NS 10000000000ull
 
 // Record columns after frame, time and interval: blocked time per PERF_* kind (us), then the counts.
-enum { C_SUBMITS, C_PASSES, C_DRAWS, C_DRAWS_SEEN, C_CLEARS, C_COPIES, C_DISPATCHES, C_XLATED, C_PERF0, C_N = C_PERF0 + PERF_CNT_N };
+enum { C_SUBMITS, C_PASSES, C_DRAWS, C_DRAWS_SEEN, C_CLEARS, C_COPIES, C_DISPATCHES, C_XLATED, C_DROP0,
+       C_PERF0 = C_DROP0 + VK_DROP_N, C_N = C_PERF0 + PERF_CNT_N };
 static const char *const blocked_names[PERF_N] = {"pace_ms", "fence_ms", "drain_ms", "pipe_ms", "xlate_ms", "tex_ms", "astc_ms"};
 static const char *const count_names[C_N] = {
     "submits", "passes", "draws", "draws_seen", "clears", "copies", "dispatches", "shaders_xlated",
+    // VK_DROP_* order (vk_exec.h): draws dropped by the replay, by reason
+    "draws_drop_noprog", "draws_drop_disabled", "draws_drop_scissor", "draws_drop_empty", "draws_drop_other",
     // PERF_CNT_* order (host.h)
     "pipe_bg_used", "draws_skip_pipe", "tex_up", "tex_reup", "draws_skip_shader", "pipe_waited", "oneshot_waited",
     "pipe_built", "tex_new", "tex_alias", "wb_done", "wb_skip"};
 _Static_assert(PERF_CNT_N == 12, "count_names follows the PERF_CNT_* list");
+_Static_assert(VK_DROP_N == 5, "count_names follows the VK_DROP_* list");
 
 typedef struct {
     uint64_t frame, t_ns;
@@ -336,6 +340,7 @@ void flight_frame(uint64_t frame, uint64_t now_ns, uint64_t interval_ns, const u
     r->n[C_CLEARS] = (uint32_t)(x->clears - (reset ? 0 : prev_exec.clears));
     r->n[C_COPIES] = (uint32_t)(x->copies - (reset ? 0 : prev_exec.copies));
     r->n[C_DISPATCHES] = (uint32_t)(x->dispatches - (reset ? 0 : prev_exec.dispatches));
+    for (int k = 0; k < VK_DROP_N; k++) r->n[C_DROP0 + k] = (uint32_t)(x->dropped[k] - (reset ? 0 : prev_exec.dropped[k]));
     prev_exec = *x;
     uint64_t keys, xlated;
     gfx_shader_counts(&keys, &xlated);

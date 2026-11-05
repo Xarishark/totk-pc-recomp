@@ -715,8 +715,19 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
 }
 
 // The program bound for a stage, falling back to the last bound program for back ends that bind both stages at once.
+// A stage a BindProgram(NULL, stages) unbound has none (OP_BIND_PROGRAM below).
 static const prog_t *stage_prog(const VkExec *ex, int st) {
-    return st >= 0 && st < 6 && ex->prog_stage[st] ? ex->prog_stage[st] : ex->prog;
+    if (st < 0 || st >= 6) return ex->prog;
+    if (ex->prog_unbound & (1u << st)) return NULL;
+    return ex->prog_stage[st] ? ex->prog_stage[st] : ex->prog;
+}
+
+// A draw the replay drops: counted by reason for the flight recorder and AC_TRACE=gfx, and logged in a dump's
+// passes.txt, so a pass whose draw count falls short of the game's shows where and why. Returns 0 for the callers.
+static int drop_draw(VkExec *ex, int why, const char *what) {
+    vk_exec_frame.dropped[why]++;
+    if (vk_dump_armed) vk_dump_dropped(ex, what);
+    return 0;
 }
 
 // *present: the program has this stage. Returns NULL when it has not or the translation failed. pending (graphics
@@ -2158,7 +2169,7 @@ static int skip_shader(const GfxShader *vs, const GfxShader *fs) {
 
 // Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped.
 static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
-    if (ex->render_disabled) return 0;
+    if (ex->render_disabled) return drop_draw(ex, VK_DROP_DISABLED, "rendering disabled");
     cb_res(ex);
     dummies_init();
     if (ex->pass_noatt) {   // no attachment: the pass covers this draw's viewport or scissor, reopened when it needs more
@@ -2170,14 +2181,17 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (!ex->in_pass) ex->dirty |= VK_EXEC_DIRTY_VIEWPORT | VK_EXEC_DIRTY_SCISSOR;
     vk_exec_pass_begin(ex);
     VkRect2D sc = vk_exec_scissor(ex);
-    if (!sc.extent.width || !sc.extent.height) return 0;
-    if (!ex->prog) return warn_once(W_PROGRAM, "a draw without a bound program is skipped"), 0;
+    if (!sc.extent.width || !sc.extent.height) return drop_draw(ex, VK_DROP_SCISSOR, "empty scissor");
+    if (!ex->prog) {
+        warn_once(W_PROGRAM, "a draw without a bound program is skipped");
+        return drop_draw(ex, VK_DROP_NOPROG, "no program bound");
+    }
     static int skip_prog = -2;
     if (skip_prog == -2) {
         const char *e = cfg_get("AC_SKIP_PROG");
         skip_prog = e && *e ? atoi(e) : 0;
     }
-    if (skip_prog > 0 && ex->prog->serial == (uint64_t)skip_prog) return 0;
+    if (skip_prog > 0 && ex->prog->serial == (uint64_t)skip_prog) return drop_draw(ex, VK_DROP_OTHER, "AC_SKIP_PROG");
     int has_vs, has_fs, vs_wait = 0, fs_wait = 0, memo = shader_memo_on();
     const GfxShader *vs, *fs;
     uint32_t gen = memo ? vk_texture_slots_gen() : 0;   // before shader_for, whose lookups may bump it
@@ -2196,8 +2210,11 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
         if (memo && vs && !vs_wait && !fs_wait && (!has_fs || fs))
             memo_key(ex, gen, &SM.k), SM.vs = vs, SM.fs = fs, SM.has_fs = has_fs, SM.valid = 1;
     }
-    if (!has_vs) return warn_once(W_NO_VS, "a draw with a program that has no vertex stage is skipped"), 0;
-    if (skip_shader(vs, fs)) return 0;
+    if (!has_vs) {
+        warn_once(W_NO_VS, "a draw with a program that has no vertex stage is skipped");
+        return drop_draw(ex, VK_DROP_OTHER, "the program has no vertex stage");
+    }
+    if (skip_shader(vs, fs)) return drop_draw(ex, VK_DROP_OTHER, "AC_SKIP_VS / AC_SKIP_FS");
     // A draw into a target the previous frame did not render (or into none) waits for a pending shader or pipeline:
     // one-shot draws (volumes and LUTs generated once, later only sampled) would leave their target empty for the
     // session. A draw into per-frame targets is skipped until they are ready and comes back next frame.
@@ -2208,8 +2225,8 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
         if (vs_wait) vs = shader_for(ex, NVN_STAGE_VS, &has_vs, NULL, 1);
         if (fs_wait) fs = shader_for(ex, NVN_STAGE_FS, &has_fs, NULL, 1);
     }
-    if (!vs || (has_fs && !fs)) return 0;
-    if (vk_dlaa_skip_draw(ex, fs)) return 0;   // the game's FXAA off, or its scaling replaced by DLSS (vk_dlaa.c)
+    if (!vs || (has_fs && !fs)) return drop_draw(ex, VK_DROP_OTHER, "a shader failed to translate");
+    if (vk_dlaa_skip_draw(ex, fs)) return drop_draw(ex, VK_DROP_OTHER, "FXAA off or replaced");   // vk_dlaa.c
     uint32_t fbl = feedback_prepare(ex, fs);
     VkPipeState s = ex->pipe;
     // AC_FORCE_BLEND=<prog>: debug switch, the enemy-death effect (prog 268) is opaque at 1x and 2x; force
@@ -2320,7 +2337,8 @@ static void bind_index(VkExec *ex, const void *data, uint64_t bytes, VkIndexType
 
 static void op_draw(VkExec *ex, const p_draw *d) {
     c0_binst = (uint32_t)d->base_instance;
-    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, 0)) return;
+    if (d->count <= 0) { drop_draw(ex, VK_DROP_EMPTY, "zero vertex count"); return; }
+    if (!prepare_draw(ex, d->prim, d->count, 0)) return;
     vk_exec_frame.draws++;
     uint32_t inst = d->instances > 0 ? (uint32_t)d->instances : 1, first = (uint32_t)d->first, n = (uint32_t)d->count;
     if (d->prim == NVN_DRAW_PRIMITIVE_QUADS && n >= 4) {   // quads become two triangles each
@@ -2373,7 +2391,8 @@ static void op_draw_idx(VkExec *ex, const p_draw_idx *d) {
     static const uint32_t isize[3] = {1, 2, 4};
     if (d->itype < 0 || d->itype > 2) return warn_once(W_INDEX, "index type %d is unknown: draw skipped", d->itype);
     int restart = restart_for(ex, d->prim, d->itype);
-    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, restart)) return;
+    if (d->count <= 0) { drop_draw(ex, VK_DROP_EMPTY, "zero index count"); return; }
+    if (!prepare_draw(ex, d->prim, d->count, restart)) return;
     vk_exec_frame.draws++;
     uint64_t bytes = (uint64_t)d->count * isize[d->itype];
     VkMemSpan sp;
@@ -2528,14 +2547,27 @@ static void bind_handles(uint64_t *dst, int cap, const p_bind_handles *b) {
 void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     switch (op) {
     case OP_BIND_PROGRAM: {
+        // NVN binds per stage: the stages in the mask take this program's shaders, the others keep theirs, and a NULL
+        // program unbinds just the stages in the mask (nxnative nvn_mtl.m, Metroid Dread's depth prepass:
+        // BindProgram(p, vertex | fragment) then BindProgram(NULL, fragment)). Astral Chain binds a vertex program
+        // and a fragment program separately, each with its stage bit, and unbinds stages the same way for its
+        // depth-only draws; the last program alone therefore has no vertex stage. Keep the program of every stage
+        // the mask names, and after a NULL bind keep prog on a program still bound: a NULL prog dropped every draw
+        // up to the next bind (17 to 59 a frame in the HQ, depending on the order of the game's binds), and the
+        // character shadows flickered from frame to frame.
         const p_bind_program *b = payload;
-        ex->prog = b->prog, ex->prog_stages = b->stages;
-        // Astral Chain binds a vertex program and a fragment program separately, each with its stage bit; the
-        // last program alone therefore has no vertex stage. Keep the program of every stage the mask names.
+        ex->prog_stages = b->stages;
         uint32_t mask = (uint32_t)b->stages;
         if (!mask || mask == NVN_SHADER_STAGE_BITS_LARGE) mask = 0x3f;
         for (int i = 0; i < 6; i++)
             if (mask & (1u << i)) ex->prog_stage[i] = b->prog;
+        if (b->prog) ex->prog = b->prog, ex->prog_unbound &= ~mask;
+        else {
+            ex->prog_unbound |= mask;
+            ex->prog = NULL;
+            for (int i = 0; i < 6; i++)   // the vertex stage first: a draw's shaders come from it
+                if (ex->prog_stage[i] && !(ex->prog_unbound & (1u << i))) { ex->prog = ex->prog_stage[i]; break; }
+        }
         bind_gen++;
         break;
     }
