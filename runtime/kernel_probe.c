@@ -478,10 +478,11 @@ static void test_fibers(Cpu *c) {
     __uint128_t vsave[8];
     set_regs(c, 0x5555, save, vsave);
     uint64_t sp = c->sp, tp = c->tpidr;
+    uint64_t base_cur = rt_call(c, a_fib_cur, 0);   // the thread's token (kern_fiber_current: token, not NULL)
     uint64_t t0 = kern_now_ns();
     rt_call(c, a_fib_switch, 1, fa);
     double ms = ms_since(t0);
-    int base_ok = same_regs(c, save, vsave) && c->sp == sp && c->tpidr == tp && rt_call(c, a_fib_cur, 0) == 0;
+    int base_ok = same_regs(c, save, vsave) && c->sp == sp && c->tpidr == tp && rt_call(c, a_fib_cur, 0) == base_cur;
     rt_call(c, a_fib_fin, 1, fa);
     rt_call(c, a_fib_fin, 1, fb);
     int ok = g_switches == FIBER_SWITCHES && g_runs[1] == FIBER_SWITCHES / 2 && g_runs[2] == FIBER_SWITCHES / 2 &&

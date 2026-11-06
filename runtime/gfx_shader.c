@@ -1,7 +1,7 @@
 // Shader service client: turns an NVN program (control section, code, c1 constants and the
-// translator's answers) into SPIR-V plus reflection through `totk_xlate.exe --serve` children, started lazily with
+// translator's answers) into SPIR-V plus reflection through `ac_xlate --serve` children, started lazily with
 // pipes and kept for the life of the process (a pool: AC_XLATE_PROCS at run time, more for the boot prewarm).
-// Results are cached in memory and on disk (shader-cache/<key>.spv and <key>.res.json next to totk.exe), so a shader
+// Results are cached in memory and on disk (shader-cache/<key>.spv and <key>.res.json next to astralchain), so a shader
 // is translated once per machine and translator.
 //
 // Keys. The code hash is sha256 over stage (u32), the 0x880-byte control section, code_size (u64), the code, the c1
@@ -13,7 +13,7 @@
 // key is sha256 over "TKSK", KEY_VERSION, the translator identity and the input id. A code hash without a known mask is
 // translated under a provisional key ("TKSP", full answers); its files are renamed to the cache key and the mask stored.
 //
-// Translator identity: build/xlate/totk_xlate.id, sha256 hex that tools/build_xlate.py writes over the sources it
+// Translator identity: build/xlate/ac_xlate.id, sha256 hex that tools/build_xlate.py writes over the sources it
 // builds from (Program.cs, the csproj, the patches, the vendor tree); without it the sha256 of the exe. AC_XLATE_ID
 // (64 hex digits) overrides it. A translator change therefore changes every cache key without a hand-made KEY_VERSION
 // bump; KEY_VERSION is for changes on this side (key layout, how the output is used).
@@ -263,10 +263,10 @@ static void xlate_identity(void) {
         strcat(p, ".id");
         uint64_t size = 0;
         char *f = (char *)read_file(p, &size);
-        how = "totk_xlate.id";
+        how = "ac_xlate.id";
         if (!f || !hex32(f, xlate_id)) {
             uint8_t *exe = read_file(xlate_exe, &size);
-            how = exe ? "sha256 of the exe; tools/build_xlate.py writes totk_xlate.id" : "none: no translator";
+            how = exe ? "sha256 of the exe; tools/build_xlate.py writes ac_xlate.id" : "none: no translator";
             if (exe) rt_sha256(exe, (size_t)size, xlate_id);
             free(exe);
         }
@@ -276,8 +276,8 @@ static void xlate_identity(void) {
            xlate_id[3], xlate_id[4], xlate_id[5], xlate_id[6], xlate_id[7], how);
 }
 
-// The repository root is the nearest parent of totk.exe that holds build/xlate/totk_xlate.exe. The shader cache lives
-// next to totk.exe, so every build dir has its own (as the pipeline cache, vk_pipeline.c cache_path_init).
+// The repository root is the nearest parent of astralchain that holds build/xlate/ac_xlate. The shader cache lives
+// next to astralchain, so every build dir has its own (as the pipeline cache, vk_pipeline.c cache_path_init).
 static void use_preload_start(void);
 
 static void init_paths(void *param) {

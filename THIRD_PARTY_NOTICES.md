@@ -86,20 +86,22 @@ These tools run on the developer's or player's machine during the build. They ar
 ## Distributed in the Linux release (AppImage)
 
 `tools/make_release_linux.py` assembles these into the folder of `docs/installer.md` ("Linux release") and packs it as
-`TotK-Setup-x86_64.AppImage`. Versions and sha256 of every download are pinned in that script; licence texts are in the
+`Astral-Chain-Setup-x86_64.AppImage`. Versions and sha256 of every download are pinned in that script; licence texts are in the
 folder's `licenses/` and in each component's own folder.
 
 | Component | Source | License | Where in the release |
 |---|---|---|---|
 | CPython 3.14.10, python-build-standalone 20261026 `install_only` build, with `tkinter` and the libraries it bundles (OpenSSL, libffi, SQLite, zlib, Tcl/Tk and others; their licences ship in the folder) | https://github.com/astral-sh/python-build-standalone/releases/tag/20261026 | PSF-2.0; bundled libraries under their own licences | `python/` |
 | numpy 2.5.4 (with the libraries its manylinux wheel bundles), lz4 4.4.5, cryptography 50.0.2, cffi 2.1.1, pycparser 3.11 | PyPI binary wheels, pins in `tools/requirements-installer.txt` | as in the installer release row above | `python/lib/python3.14/site-packages/` |
-| LLVM 23.1.4 official Linux X64 release: `clang`, `lld`, `llvm-ar`, `llvm-ranlib`, `llvm-objcopy`, `llvm-strip` and the clang resource headers; `llvm-LICENSE.txt` from the `llvmorg-23.1.4` source tag | https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.4 | Apache-2.0 with LLVM exception | `llvm/` |
+| LLVM 21.1.8 official Linux X64 release: `clang`, `lld`, `llvm-ar`, `llvm-ranlib`, `llvm-objcopy`, `llvm-strip` and the clang resource headers; `llvm-LICENSE.txt` from the `llvmorg-21.1.8` source tag | https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8 | Apache-2.0 with LLVM exception | `llvm/` |
+| libxml2 2.9.10 shared (the SDK's `libxml2.so.2`, carried beside the LLVM binaries because `lld` links it and recent distributions no longer ship it; reached through `AppRun`'s `LD_LIBRARY_PATH`) | Steam Runtime sniper SDK snapshot above | MIT | `llvm/lib/` |
+| ICU 67.1 shared (the SDK's `libicuuc.so.67`, `libicui18n.so.67` and `libicudata.so.67`, carried the same way because the SDK's libxml2 needs them) | Steam Runtime sniper SDK snapshot above, https://github.com/unicode-org/icu | ICU License | `llvm/lib/` |
 | Steam Runtime 3 "sniper" SDK sysroot 3.0.20261021.266025 (Debian 11 based), only the headers, libraries and objects a game build reads: glibc 2.31 (headers, `crt*.o`, `libc_nonshared.a`, link libraries), GCC 10 `libstdc++.a` and `libgcc`, SDL 3.4.18, libopus, libvpx 1.9 (static), the Vulkan loader's link library; their Debian `copyright` files go into `licenses/` | https://repo.steampowered.com/steamrt-images-sniper/snapshots/3.0.20261021.266025/ | glibc LGPL-2.1+; libstdc++ and libgcc GPL-3.0 with the GCC Runtime Library Exception; SDL zlib; libopus BSD-3-Clause; libvpx BSD-3-Clause with the WebM patent grant (`libvpx-PATENTS.txt` from the v1.17.0 source tag); Vulkan loader Apache-2.0 | `llvm/sysroot/`, `bin/libSDL3.so.0` (the sysroot's, copied next to the game by the setup), `licenses/` |
 | Vulkan-Headers 1.4.363 (source tag) | https://github.com/KhronosGroup/Vulkan-Headers/tree/v1.4.363 | Apache-2.0 OR MIT | `runtime/deps/include/` |
 | Vulkan Memory Allocator 3.4.0, header (the licence text is its header comment) | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/tree/v3.4.0 | MIT | `runtime/deps/include/vma/` |
 | Zstandard 1.5.7, built from the release tarball into a static `libzstd.a` with the folder's clang and sysroot | https://github.com/facebook/zstd/releases/tag/v1.5.7 | BSD-3-Clause | `runtime/deps/` |
 | Ninja 1.13.2 (`ninja-linux.zip`) | https://github.com/ninja-build/ninja/releases/tag/v1.13.2 | Apache-2.0 | `bin/ninja` |
 | hactool (as in the installer release row above), built by `tools/build_hactool.py --cc` with the folder's clang and sysroot; includes its bundled mbedtls | https://github.com/SciresM/hactool | ISC; mbedtls Apache-2.0 | `bin/hactool` |
-| `totk_xlate` (NativeAOT linux-x64 build of `tools/xlate/`, linked with the folder's clang, lld and sysroot) | built by `tools/build_xlate.py --llvm --sysroot` | MIT | `bin/totk_xlate` |
+| `ac_xlate` (NativeAOT linux-x64 build of `tools/xlate/`, linked with the folder's clang, lld and sysroot) | built by `tools/build_xlate.py --llvm --sysroot` | MIT | `bin/ac_xlate` |
 | AppImage type-2 runtime (static; includes libfuse and squashfuse), the AppImage's first part; appimagetool packs the folder and is not distributed | https://github.com/AppImage/type2-runtime | MIT; libfuse LGPL-2.1; squashfuse BSD-2-Clause | the AppImage header |
 | MacNativeGames shader variant list | as in the installer release row above | MIT | `data/shader_list.tsv` |

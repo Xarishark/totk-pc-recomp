@@ -80,7 +80,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # them. MAIN_ROOT is where they land, so resolved paths still print and compare relative to a root.
 MAIN_ROOT = (ROOT / 'build').resolve().parent
 UCRT = Path(r'C:\msys64\ucrt64\bin')
-EXE = 'astralchain.exe' if WIN else 'totk'
+EXE = 'astralchain.exe' if WIN else 'astralchain'
 
 
 def on_path(name):
