@@ -193,3 +193,6 @@ site fps60 main 4f4070 bd4e1d01 bd4e1d01 @fn:rt_fps_ramp_s1   # +0x7c ramp: 1/60
 site fps60 main 32cac8 71000529 @fnz:rt_fps_hs_w9   # +0x7e88
 site fps60 main 32cdc0 71000529 @fnz:rt_fps_hs_w9   # +0x7e94
 site fps60 main 32d0b8 71000529 @fnz:rt_fps_hs_w9   # +0x7e80
+# tap/hold and lockout counts, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 286c2c 11000529 @fn:rt_fps_up_min1_w9  # +0xc50 tap/hold count: on release 1..9 is a tap, 10 or more a hold
+site fps60 main 2846f0 1100052a @fn:rt_fps_up_w9w10    # +0x46b62c lockout count: ends at 15

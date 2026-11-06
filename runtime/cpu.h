@@ -52,6 +52,8 @@ void rt_fps_up_w9(Cpu *c);          // add w9,w9,#1 scaled (no flags), pad auto-
 void rt_fps_up_w8(Cpu *c);          // add w8,w8,#1 scaled (no flags), hitstop freeze phase count
 void rt_fps_floor1_w9(Cpu *c);      // sub w9,w9,#1 scaled, at least 1 (no flags), hitstop freeze phase
 void rt_fps_ramp_s1(Cpu *c);        // s1 = s1 * whole ticks, hitstop ramp
+void rt_fps_up_min1_w9(Cpu *c);     // add w9,w9,#1 scaled, leaving 0 on the first frame (no flags), tap/hold count
+void rt_fps_up_w9w10(Cpu *c);       // add w10,w9,#1 scaled (no flags), lockout count
 void rt_fps_cam_s0(Cpu *c);         // camera: s8 = 1-powf(1-min(s0,s10), step)
 void rt_fps_cam_s1(Cpu *c);         // camera: s8 = 1-powf(1-min(s1,s10), step)
 void rt_fps_cam_fcsel(Cpu *c);      // camera: entry3 fcsel with the smoothed s9

@@ -120,6 +120,15 @@ void rt_fps_floor1_w9(Cpu *c) {
 void rt_fps_up_w8(Cpu *c) { c->x[8] = (uint32_t)((uint32_t)c->x[8] + rt_fps_ticks()); }
 void rt_fps_ramp_s1(Cpu *c) { FP_SETS(1, VSF32(1) * (float)rt_fps_ticks()); }
 
+// The tap/hold count, `add w9,w9,#1` while a button is held: on release 1 to 9 is a tap and 10 or more a hold, and 0 is
+// neither, so the first held frame always counts even without a tick. The lockout count, `add w10,w9,#1`, only tests its
+// old value against 15. Neither writes flags, as the instructions they replace do not.
+void rt_fps_up_min1_w9(Cpu *c) {
+    uint32_t w = (uint32_t)c->x[9], t = rt_fps_ticks();
+    c->x[9] = (uint32_t)(w + (w == 0 && t == 0 ? 1 : t));
+}
+void rt_fps_up_w9w10(Cpu *c) { c->x[10] = (uint32_t)((uint32_t)c->x[9] + rt_fps_ticks()); }
+
 // Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
 // a >= 1, NaN and step == 1.0 all pass through unchanged.
 static float fps_blend(float a) {
