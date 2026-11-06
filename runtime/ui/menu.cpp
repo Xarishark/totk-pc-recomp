@@ -30,7 +30,6 @@ static int g_font_bad;
 #pragma clang diagnostic ignored "-Wunused-function"
 #include "imstb_truetype.h"
 #pragma clang diagnostic pop
-#include "ui/amiibo_page.h"
 #include "ui/binds_page.h"
 #include "ui/option_rows.h"
 
@@ -376,7 +375,7 @@ extern "C" void menu_vk_release(void) {
 // TOTK_MENU_TEST_SET=<frame>:<key>=<value>[,<key>=<value>...][;<frame>:...]: cfg_set of each key (TOTK_ prefix
 // optional) at that presented frame; changes live settings with no input, menu open or not. totk.ini is written only by
 // the pseudo-key SAVE=1 (cfg_save, as a row change does; a failed write shows the menu's save note).
-enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_AMIIBO, TAB_MENU, TAB_MODS, TAB_CHEATS, TAB_COUNT };
+enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_MENU, TAB_MODS, TAB_CHEATS, TAB_COUNT };
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16 };
 struct TestSet { uint64_t frame; char key[64], value[64]; };
 static struct {
@@ -717,30 +716,9 @@ static void row_walk_key(void) {
                     -1, n);
 }
 
-// The note under the prompts. The settings name a folder of prompts (input_prompts_folder: the prompts and the pad
-// layout, as a layout that puts A on the right button needs the face buttons named the other way round), but the game
-// reads its fonts and UI archive once at start (romfs.c overlay_init). While the folder in use differs: "files
-// missing" when the setup did not write the one asked for, why it was left out at start (damaged, a game resolution
-// that is not 16:9, a RomFS mod with the same files, TOTK_ROMFS_PATCHES), else "prompts change after restart", and only then
-// *restart is set: a restart would bring the prompts asked for. NULL when they match.
-static const char *prompts_note(bool *restart) {
-    *restart = false;
-    const char *layout = cfg_value("AC_PAD_LAYOUT"), *used = romfs_prompts();
-    const char *want = input_prompts_folder(input_prompts_pick(cfg_get("AC_PROMPTS"), layout), layout);
-    if (want == used || (want && used && !strcmp(want, used))) return nullptr;
-    if (want && !romfs_prompts_ready(want)) return menu_text(UI_MENU_PROMPTS_MISSING);
-    switch (romfs_prompts_off(want)) {
-    case ROMFS_PROMPTS_FAILED: return menu_text(UI_MENU_PROMPTS_FAILED);
-    case ROMFS_PROMPTS_SHAPE: return menu_text(UI_MENU_PROMPTS_OFF_SHAPE);
-    case ROMFS_PROMPTS_MODS: return menu_text(UI_MENU_PROMPTS_OFF_MODS);
-    case ROMFS_PROMPTS_PATCHES: return menu_text(UI_MENU_PROMPTS_OFF_PATCHES);
-    default: *restart = true; return menu_text(UI_MENU_PROMPTS_RESTART);
-    }
-}
-
-// The confirmation of "Restart now", over the menu; Cancel has the cursor first. Restart writes totk.ini, then closes
+// The confirmation of "Restart now", over the menu; Cancel has the cursor first. Restart writes astralchain.ini, then closes
 // the game as Quit does and starts it again (gfx_window_request_restart). It waits while the game writes a save, and
-// the game stays when totk.ini cannot be written, as the new prompts would not come back. From the Cheats tab
+// the game stays when astralchain.ini cannot be written, as the new settings would not come back. From the Cheats tab
 // (restart_rebuild) Restart also lets the next start rebuild for cheats whose last rebuild failed (cheats_rebuild_allow).
 static bool restart_rebuild;
 static void restart_confirm(void) {
@@ -782,11 +760,6 @@ static void tab_controls(float scale) {
     opt_begin("##controls", scale);
     static const UiTextId layout[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX};
     opt_choice("AC_PAD_LAYOUT", UI_MENU_PAD_LAYOUT, layout, 3, UI_MENU_PAD_LAYOUT_DESC, pad_layout_note());
-    static const UiTextId prompts[] = {UI_MENU_PROMPTS_NINTENDO, UI_MENU_PROMPTS_XBOX};
-    bool restart;
-    const char *note = prompts_note(&restart);
-    opt_choice("AC_PROMPTS", UI_MENU_PROMPTS, prompts, 2, UI_MENU_PROMPTS_DESC, note);
-    bool ask = restart && opt_button("##restart", UI_MENU_RESTART, UI_MENU_RESTART_DESC);
     opt_toggle("AC_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
     opt_slider("AC_RUMBLE_STRENGTH", UI_MENU_RUMBLE_STRENGTH, 0, 300, UI_MENU_RUMBLE_STRENGTH_DESC, 10, "%.0f %%");
     opt_slider("AC_RUMBLE_CURVE", UI_MENU_RUMBLE_CURVE, 0.2f, 1.5f, UI_MENU_RUMBLE_CURVE_DESC, 0.05f, "%.2f");
@@ -809,7 +782,6 @@ static void tab_controls(float scale) {
     binds_rows(scale);
     opt_end();
     binds_after_page();
-    if (ask) ImGui::OpenPopup("##restart_confirm");   // at the level BeginPopupModal looks it up
     restart_confirm();
 }
 
@@ -822,7 +794,7 @@ static void tab_menu(float scale) {
 }
 
 static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN,   UI_MENU_TAB_GAME,   UI_MENU_TAB_SOUND,
-                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_MENU,
+                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_MENU,
                                               UI_MENU_TAB_MODS,     UI_MENU_TAB_CHEATS};
 static int g_tab;               // the tab shown
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
@@ -948,7 +920,6 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
             case TAB_MODS: tab_mods(scale); break;
             case TAB_SOUND: tab_sound(scale); break;
             case TAB_CONTROLS: tab_controls(scale); break;
-            case TAB_AMIIBO: tab_amiibo(scale); break;
             case TAB_MENU: tab_menu(scale); break;
             case TAB_CHEATS:
                 if (tab_cheats(scale)) {

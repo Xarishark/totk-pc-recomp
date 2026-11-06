@@ -30,7 +30,6 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - In-game settings menu (F1) and performance overlay (F10)
 - Setup and in-game menu in English, Russian, Brazilian Portuguese and Simplified Chinese
 - Keyboard, mouse and gamepad, with remapping, rumble and gyro
-- Xbox button prompts, with either button layout
 - Mods and data cheats from the emulator formats
 - Shaders prepared at install instead of during play
 

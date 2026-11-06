@@ -766,7 +766,7 @@ static void camera_overlay(void) {
 
 // The button prompts' folders (input_prompts_folder) and whether each had a manifest next to romfs-index.bin at start;
 // the one the settings asked for at start, the one overlay_init loaded (NULL: the game's own prompts) and why the first
-// did not load (ROMFS_PROMPTS_*). The menu compares them with the settings in effect (ui/menu.cpp prompts_note).
+// did not load (ROMFS_PROMPTS_*).
 static struct { const char *name; int ready; } prompts_folders[2];
 static const char *prompts_wanted, *prompts_loaded;
 static int prompts_off;

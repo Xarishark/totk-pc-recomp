@@ -19,7 +19,7 @@ void opt_begin(const char *id, float scale);
 void opt_end(void);
 // The height the next pages leave free under their panes (the menu's bottom row).
 void opt_reserve_bottom(float h);
-// The height opt_reserve_bottom keeps free, for a tab that lays out its own panes (ui/amiibo_page.cpp).
+// The height opt_reserve_bottom keeps free, for a tab that lays out its own panes.
 float opt_bottom(void);
 // The next page's first row takes the controller's cursor (opening the menu, switching tabs).
 void opt_focus_first(void);
