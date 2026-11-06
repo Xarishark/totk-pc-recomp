@@ -196,3 +196,14 @@ site fps60 main 32d0b8 71000529 @fnz:rt_fps_hs_w9   # +0x7e80
 # tap/hold and lockout counts, from AstralChain-Dynamic-FPS v1.1.1
 site fps60 main 286c2c 11000529 @fn:rt_fps_up_min1_w9  # +0xc50 tap/hold count: on release 1..9 is a tap, 10 or more a hold
 site fps60 main 2846f0 1100052a @fn:rt_fps_up_w9w10    # +0x46b62c lockout count: ends at 15
+# rumble channel counts, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 9abc68 71000509 @fnz:rt_fps_rumble_w8w9
+site fps60 main 9abc7c 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abcc0 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abd34 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abcdc 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abd50 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abdd0 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abd6c 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abdec 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abe8c 7100052a @fnz:rt_fps_rumble_w9w10

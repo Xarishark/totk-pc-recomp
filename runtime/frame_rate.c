@@ -129,6 +129,19 @@ void rt_fps_up_min1_w9(Cpu *c) {
 }
 void rt_fps_up_w9w10(Cpu *c) { c->x[10] = (uint32_t)((uint32_t)c->x[9] + rt_fps_ticks()); }
 
+// The rumble counters (`subs w9,w8,#1` and `subs w10,w9,#1`): as fps_hs, but a counter at 1 always reaches 0, so a tick
+// of 0 cannot keep a channel at its last count on the frame that would stop it. A frame without a tick repeats the same
+// strength, which the game blends from the old count.
+static uint64_t fps_rumble(uint32_t w, uint32_t *out) { return fps_hs(w, w == 1 ? 1 : rt_fps_ticks(), out); }
+uint64_t rt_fps_rumble_w8w9(Cpu *c) {
+    uint32_t out; uint64_t f = fps_rumble((uint32_t)c->x[8], &out);
+    c->x[9] = out; return f;
+}
+uint64_t rt_fps_rumble_w9w10(Cpu *c) {
+    uint32_t out; uint64_t f = fps_rumble((uint32_t)c->x[9], &out);
+    c->x[10] = out; return f;
+}
+
 // Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
 // a >= 1, NaN and step == 1.0 all pass through unchanged.
 static float fps_blend(float a) {
