@@ -142,6 +142,19 @@ uint64_t rt_fps_rumble_w9w10(Cpu *c) {
     c->x[10] = out; return f;
 }
 
+// The per-object clock scale's counters in x16 (the player's deferred hitstop arms them through main+0x91D6A0). The delay
+// is the usual scaled decrement. The duration (`subs w16,w16,#1; str w16; b.gt`) is a plain subtraction of the ticks with
+// its real flags: the game ends it at or below 0.
+uint64_t rt_fps_hs_w16(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[16], rt_fps_ticks(), &out);
+    c->x[16] = out; return f;
+}
+uint64_t rt_fps_duration_w16(Cpu *c) {
+    uint32_t w = (uint32_t)c->x[16], t = rt_fps_ticks(), r = w - t;
+    c->x[16] = r;
+    return MKFLAGS(r >> 31, r == 0, w >= t, ((w ^ t) & (w ^ r)) >> 31);
+}
+
 // Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
 // a >= 1, NaN and step == 1.0 all pass through unchanged.
 static float fps_blend(float a) {

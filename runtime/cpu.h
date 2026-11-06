@@ -56,6 +56,8 @@ void rt_fps_up_min1_w9(Cpu *c);     // add w9,w9,#1 scaled, leaving 0 on the fir
 void rt_fps_up_w9w10(Cpu *c);       // add w10,w9,#1 scaled (no flags), lockout count
 uint64_t rt_fps_rumble_w8w9(Cpu *c);  // subs w9,w8,#1 scaled for a rumble count; returns NZCV, updates x9
 uint64_t rt_fps_rumble_w9w10(Cpu *c); // subs w10,w9,#1 scaled for a rumble count; returns NZCV, updates x10
+uint64_t rt_fps_hs_w16(Cpu *c);       // subs w16,w16,#1 scaled; returns NZCV, updates x16
+uint64_t rt_fps_duration_w16(Cpu *c); // w16 minus the ticks with its real flags; returns NZCV, updates x16
 void rt_fps_cam_s0(Cpu *c);         // camera: s8 = 1-powf(1-min(s0,s10), step)
 void rt_fps_cam_s1(Cpu *c);         // camera: s8 = 1-powf(1-min(s1,s10), step)
 void rt_fps_cam_fcsel(Cpu *c);      // camera: entry3 fcsel with the smoothed s9
