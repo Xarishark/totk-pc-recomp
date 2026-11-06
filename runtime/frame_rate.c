@@ -65,13 +65,13 @@ float rt_fps_step(void) {
 void rt_fps_ticks_w8(Cpu *c) { c->x[8] = rt_fps_ticks(); }
 
 // The scaled decrement that replaces `subs wN, wN, #1` (and `subs w9, w10, #1`): decrement by the whole-tick count,
-// clamped at 0, with NZCV matching what the 30 fps original produced. Flags: N = the counter was already 0, Z = it
-// reaches 0 this frame (counter <= ticks), C = it was not 0, V = 0. The stored value underflows when the counter is
-// already 0, exactly as `subs wN,wN,#1` does, so a following `b.lt`/`b.ge` sees the same "expired" condition.
+// clamped at 0, with NZCV matching what the 30 fps original produced. Flags: N = the counter was already 0 or below, Z =
+// it reaches 0 this frame (counter <= ticks), C = it was not 0, V = 0. The stored value underflows when the counter is
+// already 0 or below, as `subs wN,wN,#1` does, so a following `b.lt`/`b.ge` sees the same "expired" condition.
 static uint64_t fps_hs(uint32_t w, uint32_t ticks, uint32_t *out) {
-    if (w == 0) {
+    if ((int32_t)w <= 0) {
         *out = (uint32_t)(w - ticks);
-        return MKFLAGS(1, 0, 0, 0);
+        return MKFLAGS(1, 0, w != 0, 0);
     }
     if (ticks == 0) {
         *out = w;
