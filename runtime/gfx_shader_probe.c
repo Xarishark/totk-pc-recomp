@@ -49,22 +49,22 @@ static const char *str_field(const char *from, const char *to, const char *name,
 
 static int hexval(char c) { return c <= '9' ? c - '0' : (c | 32) - 'a' + 10; }
 
-// The shader census the probes translate (tools/shader_census.py --version <ver>): build/<ver>/shaders in the nearest
-// parent of totk.exe that has one with a jobs.json, the running game version's first, then the others' (any census
-// serves a probe). 1 with that folder in dir.
+// The shader census the probes translate (tools/shader_census.py --version v101): build/v<build>/shaders in the
+// nearest parent of the game exe that has one with a jobs.json. 1 with that folder in dir.
 int probe_census_dir(char *dir, size_t n) {
-    const char *const versions[3] = {RT_V110 ? "v110" : RT_V143 ? "v143" : "v121",
-                                     RT_V110 ? "v121" : RT_V143 ? "v121" : "v143",
-                                     RT_V110 ? "v143" : RT_V143 ? "v110" : "v110"};
-    for (int v = 0; v < 3; v++) {
+    // The running game build first, then the other Astral Chain build (docs/building.md): v100 (1.0.0), v101 (1.0.1).
+    int builds[2] = {rt_game_version, rt_game_version == 100 ? 101 : 100};
+    for (int v = 0; v < 2; v++) {
+        char ver[16];
+        snprintf(ver, sizeof ver, "v%d", builds[v]);
         char exe[PLAT_PATH_MAX * 2];
         int len = plat_exe_path(exe, sizeof exe);
         if (!len || len >= sizeof exe) return 0;
         for (char *cut = plat_last_sep(exe); cut; cut = plat_last_sep(exe)) {
             *cut = 0;
             char p[PLAT_PATH_MAX * 2 + 40];
-            snprintf(p, sizeof p, "%s/build/%s/shaders/jobs.json", exe, versions[v]);
-            if (plat_file_exists(p)) return snprintf(dir, n, "%s/build/%s/shaders", exe, versions[v]) < (int)n;
+            snprintf(p, sizeof p, "%s/build/%s/shaders/jobs.json", exe, ver);
+            if (plat_file_exists(p)) return snprintf(dir, n, "%s/build/%s/shaders", exe, ver) < (int)n;
         }
     }
     return 0;
