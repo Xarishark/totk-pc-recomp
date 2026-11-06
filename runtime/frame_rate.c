@@ -110,6 +110,16 @@ void rt_fps_sub_w8(Cpu *c) {
 // unless the interval is 0.
 void rt_fps_up_w9(Cpu *c) { c->x[9] = (uint32_t)((uint32_t)c->x[9] + rt_fps_ticks()); }
 
+// The hitstop manager's freeze phase: `sub w9,w9,#1` runs only at 2 or more and stays at 1 or above, and `add w8,w8,#1`
+// counts its length. Neither writes flags, as the instructions they replace do not. Its ramp adds a constant a frame:
+// `ldr s1,<constant>` is followed by the same constant times the ticks.
+void rt_fps_floor1_w9(Cpu *c) {
+    int32_t r = (int32_t)(uint32_t)c->x[9] - (int32_t)rt_fps_ticks();
+    c->x[9] = (uint32_t)(r < 1 ? 1 : r);
+}
+void rt_fps_up_w8(Cpu *c) { c->x[8] = (uint32_t)((uint32_t)c->x[8] + rt_fps_ticks()); }
+void rt_fps_ramp_s1(Cpu *c) { FP_SETS(1, VSF32(1) * (float)rt_fps_ticks()); }
+
 // Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
 // a >= 1, NaN and step == 1.0 all pass through unchanged.
 static float fps_blend(float a) {
