@@ -98,7 +98,7 @@ def dat_objects(data):
 
 
 def inventory(romfs, exefs=None):
-    """Every unique shader, keyed by the runtime code hash: {code_hash: dict(stage, control, code, length, c1)}."""
+    """Every unique shader, keyed by the runtime code hash: {code_hash: dict(stage, control, code, length, c1, src)}."""
     index = json.loads((Path(romfs) / 'index.json').read_text(encoding='utf-8'))
     if index.get('status') != 'pass':
         raise ValueError('RomFS has not passed integrity verification')
@@ -119,7 +119,7 @@ def inventory(romfs, exefs=None):
                 h = code_hash(STAGE[magic], control, length, code, c1)
                 if h not in shaders:
                     shaders[h] = dict(stage=STAGE_IDS[STAGE[magic]], control=control, code=code,
-                                      length=length, c1=c1)
+                                      length=length, c1=c1, src=name)
     return shaders
 
 
@@ -129,7 +129,7 @@ def census_key(s):
 
 
 def write_shaders(shaders, out):
-    """Write code files and jobs.json; returns {census key: dict(job, source)}."""
+    """Write code files and jobs.json; returns {census key: dict(job, source, origin)}."""
     (out / 'code').mkdir(parents=True, exist_ok=True)
     jobs = {}
     for h, s in sorted(shaders.items(), key=lambda kv: census_key(kv[1])):
@@ -142,7 +142,8 @@ def write_shaders(shaders, out):
         job = dict(key=key, stage=s['stage'], code=str(path), c1=s['c1'].hex(), debug=False)
         if s['stage'] == 'cs':
             job['local'] = list(struct.unpack_from('<III', s['control'], 0x748))
-        jobs[key] = dict(job=job, source=key)
+        jobs[key] = dict(job=job, source=s['src'],
+                           origin={'vs': 'vso', 'ps': 'pso', 'cs': 'cso'}[s['stage']])
     (out / 'jobs.json').write_text(json.dumps(jobs, indent=0), encoding='utf-8')
     return jobs
 
