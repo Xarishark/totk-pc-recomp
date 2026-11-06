@@ -169,3 +169,5 @@ site fps60 main 2831a8 51000508 @fn:rt_fps_sub_w8
 site fps60 main 2831b8 51000508 @fn:rt_fps_sub_w8
 site fps60 main 2831c8 51000508 @fn:rt_fps_sub_w8
 site fps60 main 2831dc 51000508 @fn:rt_fps_sub_w8
+# pad auto-repeat count, from AstralChain-Dynamic-FPS v1.1.1 (add w9,w9,#1, no flags)
+site fps60 main 9abf40 11000529 @fn:rt_fps_up_w9

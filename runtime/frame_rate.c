@@ -105,6 +105,11 @@ void rt_fps_sub_w8(Cpu *c) {
     c->x[8] = (w > t) ? r : 0;
 }
 
+// `add w9, w9, #1` (no flags), the pad auto-repeat count: w9 + ticks. A repeat takes the interval off the count, which
+// leaves it at or above the delay, and nothing fires at or below the delay. So a frame without a tick cannot fire twice,
+// unless the interval is 0.
+void rt_fps_up_w9(Cpu *c) { c->x[9] = (uint32_t)((uint32_t)c->x[9] + rt_fps_ticks()); }
+
 // Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
 // a >= 1, NaN and step == 1.0 all pass through unchanged.
 static float fps_blend(float a) {

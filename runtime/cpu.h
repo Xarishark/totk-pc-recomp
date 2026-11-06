@@ -48,6 +48,7 @@ uint64_t rt_fps_hs_w9(Cpu *c);      // subs w9,w9,#1 scaled; returns packed NZCV
 uint64_t rt_fps_hs_w10(Cpu *c);     // subs w10,w10,#1 scaled; returns packed NZCV, updates x10
 uint64_t rt_fps_hs_w10w9(Cpu *c);   // subs w9,w10,#1 scaled (r5 second-tap); returns NZCV, updates x9
 void rt_fps_sub_w8(Cpu *c);         // sub w8,w8,#1 scaled (no flags), r2 bank of buffer counters
+void rt_fps_up_w9(Cpu *c);          // add w9,w9,#1 scaled (no flags), pad auto-repeat count
 void rt_fps_cam_s0(Cpu *c);         // camera: s8 = 1-powf(1-min(s0,s10), step)
 void rt_fps_cam_s1(Cpu *c);         // camera: s8 = 1-powf(1-min(s1,s10), step)
 void rt_fps_cam_fcsel(Cpu *c);      // camera: entry3 fcsel with the smoothed s9
