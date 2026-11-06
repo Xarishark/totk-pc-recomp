@@ -88,6 +88,13 @@ site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0
 # holds 60 fps. AC_FPS=30 runs the original instructions (the game's shipping 30 fps).
 set  fps60 FPS60 1
 site fps60 main 3e39d0 320003e0 52800001   # orr w0, wzr, #1 -> mov w1, #0 (frame call's vsync-wait argument)
+# cutscene frames (the flag bit 42fe60 sets makes the frame timer store its fixed 1.0): step by the whole vsyncs the
+# frame took instead (runtime/frame_rate.c rt_fps_cutscene_s8), so a cutscene renders at 60 fps at its authored speed
+site fps60 main 91dc48 bd00d268 @fn:rt_fps_cutscene_s8 bd00d268   # str s8,[x19,#0xd0] -> s8 = vsyncs / 2; the same store
+site fps60 main 8c2550 1e283821 @fn:rt_fps_cut_hold_s1            # fsub s1,s1,s8 -> cut length - rate * step
+site fps60 main 6a23c0 7100051f @fnz:rt_fps_cue_cmp_w8            # cmp w8,#1 -> run the cue scheduler on whole ticks only
+# dialogue text reveal: adds a fixed amount per frame, and a talk line ends once its text and its voice are both done
+site fps60 main 61600c bd40ae62 bd40ae62 @fn:rt_fps_text_rate_s2   # ldr s2,[x19,#0xac]; then s2 = that rate * frame step
 # frame accumulator low clamp 1.0 -> 1/16 (the high clamp is already the original 2.0)
 site fps60 main 91dc94 1e2e1001 52a7b008 1e270101   # fmov s1,#1.0 -> mov w8,#0x3d800000; fmov s1,w8
 site fps60 main 91dca0 1e2e1001 52a7b008 1e270101   # fmov s1,#1.0 -> mov w8,#0x3d800000; fmov s1,w8

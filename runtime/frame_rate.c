@@ -5,8 +5,10 @@
 // keeps the world clock for scripted input. The whole ticks and the step are what make the input/action timers and
 // the camera smoothing frame-rate independent (the Dynamic mod v1.1.1 fixes for the 60 fps patch's two bugs).
 //
-// The 60 fps patch leaves the game's cutscenes at 30 (cutscene_rate below): without that they play twice as fast as
-// their animation data.
+// Cutscenes render at 60 fps too. The game steps them by a fixed 1.0 (1/30 s) a frame, so the patch replaces that value
+// with the whole vsyncs the frame took (rt_fps_cutscene_s8 below), which keeps the scene's clock at its authored speed.
+// A talk line also waits for its text reveal, which counts frames (rt_fps_text_rate_s2 below). With that scaled, the
+// measured scene runs 122.86 s at 60 fps against 124.30 s at 30 fps. The rest of that difference is not explained.
 //
 // What remains:
 //   - the frame limit (AC_FPS): 60 fps by default, 30 fps when the patch is off. The pacer (nvn_api_obj.c) holds
@@ -39,6 +41,8 @@ static uint64_t last_ns;
 static _Atomic uint32_t g_fps_ticks;      // whole ticks for the guest counters
 static _Atomic uint32_t g_fps_step_bits;  // the floating step (30 fps units), for the camera
 static double g_fps_rem;                  // fractional whole-tick remainder (present thread only)
+static _Atomic uint32_t g_cut_vsyncs;     // whole 60 Hz vsyncs of the last frame, for the cutscene step
+static double g_cut_rem;                  // what rounding to whole vsyncs left over (present thread only)
 
 static int fps60_on = -1, fps_hz;
 static unsigned fps_seen;
@@ -103,6 +107,58 @@ uint64_t rt_fps_hs_w10w9(Cpu *c) {
 void rt_fps_sub_w8(Cpu *c) {
     uint32_t w = (uint32_t)c->x[8], t = rt_fps_ticks(), r = w - t;
     c->x[8] = (w > t) ? r : 0;
+}
+
+// The cutscene step in 30 fps units: 0.5 per whole vsync.
+static float cutscene_step(void) {
+    uint32_t vsyncs = atomic_load_explicit(&g_cut_vsyncs, memory_order_relaxed);
+    return (float)(vsyncs ? vsyncs : 1u) * 0.5f;
+}
+
+// The frame timer's fixed path (main+0x91DC48), taken while the game's cutscene flag is set: the shipping game stores
+// the 1.0 its main loop passes in s8. s8 is the timer's own callee-saved register, so nothing outside it sees this.
+// Whole vsyncs rather than the measured frame time, so the cut clock below lands on its hold exactly at 60 fps.
+void rt_fps_cutscene_s8(Cpu *c) { FP_SETS(8, cutscene_step()); }
+
+// The hold of the cut clock (main+0x8C2410). The clock adds rate * step to the time in the current cut, where rate is
+// 1.0 or 2.0 by the data's authored frame rate. Past cut length - rate it holds the time there for a frame and then
+// starts the next cut at 0, which at step 1.0 shows every frame of the cut once. At step 0.5 the same hold would end
+// each cut one frame early, 1/60 s per cut, and the picture would pull ahead of the voices. So the hold is cut length -
+// rate * step: the same at step 1.0, and the last increment before the cut's end at any whole-vsync step. Outside a
+// cutscene the step floats and the game's own hold stays. s1 = the cut length, s8 = rate, as the replaced fsub has them.
+void rt_fps_cut_hold_s1(Cpu *c) {
+    uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
+    uint32_t volatile *flags = *(uint32_t volatile *volatile *)(base + 0xDB8398ull);
+    float rate = VSF32(8);
+    FP_SETS(1, VSF32(1) - (flags && (*flags >> 30 & 1) ? rate * cutscene_step() : rate));
+}
+
+// The dialogue text reveal adds a fixed amount per frame to its character accumulator. A talk line ends 0.5 s after both
+// its text and its voice are done, so at 60 fps a line whose text outlasts its voice ended early. The step is the game's
+// own, the value its scaled timers read from the frame timer, in 30 fps units. s2 = the rate, as the replaced load has it.
+void rt_fps_text_rate_s2(Cpu *c) {
+    uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
+    uintptr_t timer = *(uintptr_t volatile *)(base + 0xDB89A0ull);
+    FP_SETS(2, VSF32(2) * *(float volatile *)(timer + 0xD0));
+}
+
+// The staff roll's cue scheduler (main+0x6A3EC0) adds 1 to a frame counter per call and fires a cue when the counter
+// equals its frame, so 60 calls per second would bring the cues twice as fast. The test before the call, cmp w8,#1, now
+// also needs a whole 30 fps tick this frame, which keeps the counter at 30 per second and never holds it on a frame whose
+// cue already fired.
+uint64_t rt_fps_cue_cmp_w8(Cpu *c) {
+    return MKFLAGS(0, (uint32_t)c->x[8] == 1u && rt_fps_ticks() > 0, 1, 0);
+}
+
+// Whole vsyncs for this frame: at least one so the clock always moves, at most 4 (the timer's high clamp, step 2.0;
+// a slower frame slows the cutscene, as it does gameplay). The remainder carries so late frames stay on the wall clock.
+static void cutscene_vsyncs(double dt) {
+    double vs = dt * 60.0 + g_cut_rem;
+    int n = (int)floor(vs + 0.5);
+    if (n < 1) n = 1;
+    if (n > 4) n = 4;
+    g_cut_rem = dt >= STEP_RESET_S || vs - n > 1.0 ? 0.0 : vs - n;
+    atomic_store_explicit(&g_cut_vsyncs, (uint32_t)n, memory_order_relaxed);
 }
 
 // `add w9, w9, #1` (no flags), the pad auto-repeat count: w9 + ticks. A repeat takes the interval off the count, which
@@ -206,37 +262,27 @@ uint64_t frame_step_cap_ns(void) {
 // The frame rate the limit gives, for the performance overlay: 60 or 30; 0 before the first frame read the setting.
 double frame_step_limit_hz(void) { return fps_hz; }
 
-// The community cutscene fix for the 60 fps patch: the game's cutscene speed variable (main+0xCCA6764) is 1/30 in a
-// cutscene and 1/60 in gameplay, and the game's frame-rate object takes 2 (30 fps) in a cutscene and 1 (60 fps) in
-// gameplay at +0xF14 of the object the pointer chain below reaches. The selector is written each frame, as the cheat
-// engine's code does. The patch also clears the frame call's second-vsync wait, so the game keeps presenting at
-// interval 1 while it steps 1/30 s a frame: the present pacer (nvn_api_obj.c present_period) holds those frames to 30
-// per second while frame_step_cutscene says so, or the cutscene plays at twice its speed.
-static volatile int in_cutscene;
-
-int frame_step_cutscene(void) { return in_cutscene; }
+// The swap interval of the game's window, at +0xF14 of the object the pointer chain below reaches: 1 for as long as the
+// 60 fps patch is on, cutscenes included, written each frame. The game's cutscene flag is bit 30 of the word the pointer
+// at main+0xDB8398 names (main+0x42FE60 sets it, main+0x42FEA0 clears it); the log marks where cutscenes start and end.
+static int in_cutscene;
 
 static void cutscene_rate(void) {
-    if (!fps60_on) {
-        in_cutscene = 0;
-        return;
-    }
     uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
-    uint32_t speed = *(uint32_t volatile *)(base + 0xCCA6764ull);
-    uint32_t want = speed == 0x3D088889u ? 2u : speed < 0x3D088889u ? 1u : 0u;   // other values: a fractional frame
-    if (!want) return;
-    if (in_cutscene != (want == 2)) {
-        in_cutscene = want == 2;
-        rt_log("frame rate: %s (speed 0x%08x, world %.2f s): presents held to %d per second", in_cutscene ? "cutscene" : "gameplay", speed, (double)frame_step_world_us() / 1e6,
-               in_cutscene ? 30 : 60);
+    uint32_t volatile *flags = *(uint32_t volatile *volatile *)(base + 0xDB8398ull);
+    int now = flags && (*flags >> 30 & 1);
+    if (in_cutscene != now) {
+        in_cutscene = now;
+        rt_log("frame rate: %s (world %.2f s)", now ? "cutscene" : "gameplay", (double)frame_step_world_us() / 1e6);
     }
+    if (!fps60_on) return;
     void *volatile *slot = (void *volatile *)(base + 0xCCB7B08ull);
     void *obj = *slot;
     if (!obj) return;
     obj = *(void *volatile *)((uintptr_t)obj + 0x70);
     if (!obj) return;
     volatile uint32_t *selector = (volatile uint32_t *)((uintptr_t)obj + 0xF14);
-    if (*selector != want) *selector = want;
+    if (*selector != 1u) *selector = 1u;
 }
 
 // ---- AC_TRACE=perf speed lines
@@ -289,6 +335,7 @@ void frame_step_present(uint64_t display_ns, int interval) {
     double dt = last_ns ? (double)(display_ns - last_ns) * 1e-9 : 0;
     if (interval > 0) step_now = interval / 60.0;
     last_ns = display_ns;
+    cutscene_vsyncs(dt);
     // Dynamic frame rate: whole 30 fps ticks from the real frame time, for the input/action counters and the camera.
     double step = dt * 30.0;
     if (step > 2.0) step = 2.0;

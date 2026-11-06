@@ -267,7 +267,6 @@ void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene
                                                            // until res_init switched the sets on)
 int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 (the test res_init and romfs.c share)
 int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
-int frame_step_cutscene(void);                             // 1 while a cutscene runs under the 60 fps patch (frame_rate.c)
 void res_wanted(unsigned out[2]);                          // the output size AC_OUTPUT_RES asks for
 void res_game_size(unsigned out[2]);                       // the size the game renders in: 1920x1080 with the res1080
                                                            // set, 1888x1062 with res1062, else res_sizes' output

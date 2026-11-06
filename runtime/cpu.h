@@ -48,6 +48,10 @@ uint64_t rt_fps_hs_w9(Cpu *c);      // subs w9,w9,#1 scaled; returns packed NZCV
 uint64_t rt_fps_hs_w10(Cpu *c);     // subs w10,w10,#1 scaled; returns packed NZCV, updates x10
 uint64_t rt_fps_hs_w10w9(Cpu *c);   // subs w9,w10,#1 scaled (r5 second-tap); returns NZCV, updates x9
 void rt_fps_sub_w8(Cpu *c);         // sub w8,w8,#1 scaled (no flags), r2 bank of buffer counters
+void rt_fps_cutscene_s8(Cpu *c);    // frame timer's fixed path: s8 = the cutscene step, whole vsyncs / 2
+void rt_fps_cut_hold_s1(Cpu *c);    // cut clock's hold: s1 = cut length - rate * step in a cutscene
+uint64_t rt_fps_cue_cmp_w8(Cpu *c); // cue scheduler's cmp w8,#1: equal only on a whole 30 fps tick; returns NZCV
+void rt_fps_text_rate_s2(Cpu *c);   // dialogue text reveal: s2 = characters per frame * the game's frame step
 void rt_fps_up_w9(Cpu *c);          // add w9,w9,#1 scaled (no flags), pad auto-repeat count
 void rt_fps_up_w8(Cpu *c);          // add w8,w8,#1 scaled (no flags), hitstop freeze phase count
 void rt_fps_floor1_w9(Cpu *c);      // sub w9,w9,#1 scaled, at least 1 (no flags), hitstop freeze phase
