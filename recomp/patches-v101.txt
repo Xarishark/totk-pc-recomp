@@ -210,3 +210,6 @@ site fps60 main 9abe8c 7100052a @fnz:rt_fps_rumble_w9w10
 # per-object clock scale's delay and duration (armed at 91d6a0), from AstralChain-Dynamic-FPS v1.1.1
 site fps60 main 91de50 71000610 @fnz:rt_fps_hs_w16        # +0x34 delay
 site fps60 main 91dee8 71000610 @fnz:rt_fps_duration_w16  # +0x30 duration
+# sibling paths of two input counters above, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 0d5dd4 71000508 @fnz:rt_fps_hs_w8   # +0x2024, sibling of 0d5e28
+site fps60 main 2876d4 71000508 @fnz:rt_fps_hs_w8   # +0x14d4, sibling of 28759c
