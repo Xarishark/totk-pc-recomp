@@ -169,3 +169,47 @@ site fps60 main 2831a8 51000508 @fn:rt_fps_sub_w8
 site fps60 main 2831b8 51000508 @fn:rt_fps_sub_w8
 site fps60 main 2831c8 51000508 @fn:rt_fps_sub_w8
 site fps60 main 2831dc 51000508 @fn:rt_fps_sub_w8
+# pad auto-repeat count, from AstralChain-Dynamic-FPS v1.1.1 (add w9,w9,#1, no flags)
+site fps60 main 9abf40 11000529 @fn:rt_fps_up_w9
+# hitstop manager's frame counters, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 4f3d30 71000508 @fnz:rt_fps_hs_w8   # +0x38 delay
+site fps60 main 4f3d5c 71000508 @fnz:rt_fps_hs_w8   # +0x34 scale duration
+site fps60 main 4f3d98 71000508 @fnz:rt_fps_hs_w8   # +0x48 scale duration
+site fps60 main 4f3e64 71000508 @fnz:rt_fps_hs_w8   # +0x48, after +0x34 expires
+site fps60 main 4f3db0 71000508 @fnz:rt_fps_hs_w8   # +0x74 scale duration
+site fps60 main 4f3e78 71000508 @fnz:rt_fps_hs_w8   # +0x74, after +0x48 expires
+site fps60 main 4f3e4c 71000508 @fnz:rt_fps_hs_w8   # +0xa8 request suppression
+site fps60 main 4f3f04 71000508 @fnz:rt_fps_hs_w8   # +0xa8, other path
+site fps60 main 4f3f14 71000508 @fnz:rt_fps_hs_w8   # +0xa4 scale duration
+site fps60 main 4f3f3c 71000508 @fnz:rt_fps_hs_w8   # +0x54 scale duration
+site fps60 main 4f3f88 71000508 @fnz:rt_fps_hs_w8   # +0x54, after +0xa4 expires
+site fps60 main 4f3f54 71000508 @fnz:rt_fps_hs_w8   # +0x80 hold request delay
+site fps60 main 4f3fb0 71000508 @fnz:rt_fps_hs_w8   # +0x8c cue delay
+site fps60 main 4f41b0 71000508 @fnz:rt_fps_hs_w8   # +0xb4 window
+site fps60 main 4f4010 51000529 @fn:rt_fps_floor1_w9   # +0x8c, stays at 1 or above
+site fps60 main 4f4018 11000508 @fn:rt_fps_up_w8       # +0x84 freeze phase count
+site fps60 main 4f4070 bd4e1d01 bd4e1d01 @fn:rt_fps_ramp_s1   # +0x7c ramp: 1/60 a frame, times the ticks
+# player's deferred hitstop, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 32cac8 71000529 @fnz:rt_fps_hs_w9   # +0x7e88
+site fps60 main 32cdc0 71000529 @fnz:rt_fps_hs_w9   # +0x7e94
+site fps60 main 32d0b8 71000529 @fnz:rt_fps_hs_w9   # +0x7e80
+# tap/hold and lockout counts, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 286c2c 11000529 @fn:rt_fps_up_min1_w9  # +0xc50 tap/hold count: on release 1..9 is a tap, 10 or more a hold
+site fps60 main 2846f0 1100052a @fn:rt_fps_up_w9w10    # +0x46b62c lockout count: ends at 15
+# rumble channel counts, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 9abc68 71000509 @fnz:rt_fps_rumble_w8w9
+site fps60 main 9abc7c 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abcc0 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abd34 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abcdc 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abd50 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abdd0 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abd6c 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abdec 7100052a @fnz:rt_fps_rumble_w9w10
+site fps60 main 9abe8c 7100052a @fnz:rt_fps_rumble_w9w10
+# per-object clock scale's delay and duration (armed at 91d6a0), from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 91de50 71000610 @fnz:rt_fps_hs_w16        # +0x34 delay
+site fps60 main 91dee8 71000610 @fnz:rt_fps_duration_w16  # +0x30 duration
+# sibling paths of two input counters above, from AstralChain-Dynamic-FPS v1.1.1
+site fps60 main 0d5dd4 71000508 @fnz:rt_fps_hs_w8   # +0x2024, sibling of 0d5e28
+site fps60 main 2876d4 71000508 @fnz:rt_fps_hs_w8   # +0x14d4, sibling of 28759c

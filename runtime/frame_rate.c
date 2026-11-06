@@ -65,13 +65,13 @@ float rt_fps_step(void) {
 void rt_fps_ticks_w8(Cpu *c) { c->x[8] = rt_fps_ticks(); }
 
 // The scaled decrement that replaces `subs wN, wN, #1` (and `subs w9, w10, #1`): decrement by the whole-tick count,
-// clamped at 0, with NZCV matching what the 30 fps original produced. Flags: N = the counter was already 0, Z = it
-// reaches 0 this frame (counter <= ticks), C = it was not 0, V = 0. The stored value underflows when the counter is
-// already 0, exactly as `subs wN,wN,#1` does, so a following `b.lt`/`b.ge` sees the same "expired" condition.
+// clamped at 0, with NZCV matching what the 30 fps original produced. Flags: N = the counter was already 0 or below, Z =
+// it reaches 0 this frame (counter <= ticks), C = it was not 0, V = 0. The stored value underflows when the counter is
+// already 0 or below, as `subs wN,wN,#1` does, so a following `b.lt`/`b.ge` sees the same "expired" condition.
 static uint64_t fps_hs(uint32_t w, uint32_t ticks, uint32_t *out) {
-    if (w == 0) {
+    if ((int32_t)w <= 0) {
         *out = (uint32_t)(w - ticks);
-        return MKFLAGS(1, 0, 0, 0);
+        return MKFLAGS(1, 0, w != 0, 0);
     }
     if (ticks == 0) {
         *out = w;
@@ -103,6 +103,56 @@ uint64_t rt_fps_hs_w10w9(Cpu *c) {
 void rt_fps_sub_w8(Cpu *c) {
     uint32_t w = (uint32_t)c->x[8], t = rt_fps_ticks(), r = w - t;
     c->x[8] = (w > t) ? r : 0;
+}
+
+// `add w9, w9, #1` (no flags), the pad auto-repeat count: w9 + ticks. A repeat takes the interval off the count, which
+// leaves it at or above the delay, and nothing fires at or below the delay. So a frame without a tick cannot fire twice,
+// unless the interval is 0.
+void rt_fps_up_w9(Cpu *c) { c->x[9] = (uint32_t)((uint32_t)c->x[9] + rt_fps_ticks()); }
+
+// The hitstop manager's freeze phase: `sub w9,w9,#1` runs only at 2 or more and stays at 1 or above, and `add w8,w8,#1`
+// counts its length. Neither writes flags, as the instructions they replace do not. Its ramp adds a constant a frame:
+// `ldr s1,<constant>` is followed by the same constant times the ticks.
+void rt_fps_floor1_w9(Cpu *c) {
+    int32_t r = (int32_t)(uint32_t)c->x[9] - (int32_t)rt_fps_ticks();
+    c->x[9] = (uint32_t)(r < 1 ? 1 : r);
+}
+void rt_fps_up_w8(Cpu *c) { c->x[8] = (uint32_t)((uint32_t)c->x[8] + rt_fps_ticks()); }
+void rt_fps_ramp_s1(Cpu *c) { FP_SETS(1, VSF32(1) * (float)rt_fps_ticks()); }
+
+// The tap/hold count, `add w9,w9,#1` while a button is held: on release 1 to 9 is a tap and 10 or more a hold, and 0 is
+// neither, so the first held frame always counts even without a tick. The lockout count, `add w10,w9,#1`, only tests its
+// old value against 15. Neither writes flags, as the instructions they replace do not.
+void rt_fps_up_min1_w9(Cpu *c) {
+    uint32_t w = (uint32_t)c->x[9], t = rt_fps_ticks();
+    c->x[9] = (uint32_t)(w + (w == 0 && t == 0 ? 1 : t));
+}
+void rt_fps_up_w9w10(Cpu *c) { c->x[10] = (uint32_t)((uint32_t)c->x[9] + rt_fps_ticks()); }
+
+// The rumble counters (`subs w9,w8,#1` and `subs w10,w9,#1`): as fps_hs, but a counter at 1 always reaches 0, so a tick
+// of 0 cannot keep a channel at its last count on the frame that would stop it. A frame without a tick repeats the same
+// strength, which the game blends from the old count.
+static uint64_t fps_rumble(uint32_t w, uint32_t *out) { return fps_hs(w, w == 1 ? 1 : rt_fps_ticks(), out); }
+uint64_t rt_fps_rumble_w8w9(Cpu *c) {
+    uint32_t out; uint64_t f = fps_rumble((uint32_t)c->x[8], &out);
+    c->x[9] = out; return f;
+}
+uint64_t rt_fps_rumble_w9w10(Cpu *c) {
+    uint32_t out; uint64_t f = fps_rumble((uint32_t)c->x[9], &out);
+    c->x[10] = out; return f;
+}
+
+// The per-object clock scale's counters in x16 (the player's deferred hitstop arms them through main+0x91D6A0). The delay
+// is the usual scaled decrement. The duration (`subs w16,w16,#1; str w16; b.gt`) is a plain subtraction of the ticks with
+// its real flags: the game ends it at or below 0.
+uint64_t rt_fps_hs_w16(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[16], rt_fps_ticks(), &out);
+    c->x[16] = out; return f;
+}
+uint64_t rt_fps_duration_w16(Cpu *c) {
+    uint32_t w = (uint32_t)c->x[16], t = rt_fps_ticks(), r = w - t;
+    c->x[16] = r;
+    return MKFLAGS(r >> 31, r == 0, w >= t, ((w ^ t) & (w ^ r)) >> 31);
 }
 
 // Camera smoothing: s8 = 1 - powf(1 - a, clamp(step, 0, 4)), the per-frame blend a rescaled to per-unit-time. a <= 0,
