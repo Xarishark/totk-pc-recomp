@@ -34,6 +34,7 @@
 #include "cfg.h"
 #include "fs.h"
 #include "host.h"
+#include "input.h"
 #include "input_map.h"
 #include "layout.h"
 #include "mods.h"
@@ -237,7 +238,7 @@ static uint32_t overlay_slot(uint64_t i) {
 }
 
 // ---- overlays
-// Loads and checks one overlay folder. A failed check stops the game, except with optional set (the Xbox prompts
+// Loads and checks one overlay folder. A failed check stops the game, except with optional set (a prompts
 // folder): the folder is dropped, the reason logged, and 0 returned. Returns 1 when the folder is loaded or has no
 // manifest. prio: the Overlay field (0 for the port's own folders, 1 for the AC_ROMFS_MODS manifest).
 static int overlay_load(const char *dir, int optional, int prio) {
@@ -808,13 +809,13 @@ static void overlay_init(void) {
     // A game resolution that is not 16:9 takes romfs-patches-<w>x<h> instead when it is there: the same overlay with
     // the UI laid out for that shape (make_romfs_patches.py --aspect), when the game version has the camera aspect patch
     // the layout goes with (res_wants_wide_overlay).
-    // With prompts = xbox, the Xbox prompts' folder for the pad layout in its place (input_prompts_folder): the same
-    // patches with Xbox button icons (make_romfs_patches.py --prompts). The game reads the archives once at boot, so
-    // the prompts stay until restart even though the layout itself changes live. Each folder replaces romfs-patches as
-    // a whole and the setup builds no folder of another shape with Xbox prompts, so a game resolution that is not 16:9
-    // keeps the Switch prompts. So does a RomFS mod (the AC_ROMFS_MODS manifest or a player mod) that replaces one of
-    // the prompts' fonts: romfs-patches loads in their place, so the mod's file is not served beside prompts files made
-    // for the game's own. A mod's resource size table is no clash: restbl_overlay merges it with the prompts' one.
+    // With prompts = xbox or playstation, that mod's folder in its place (input_prompts_folder): the button
+    // mod's files (tools/make_prompts_folders.py), drawn at the Switch positions. The game reads the archives
+    // once at boot, so the prompts stay until restart even though the layout itself changes live. Each folder replaces
+    // romfs-patches as a whole, so a game resolution that is not 16:9 keeps the Switch prompts. So does a RomFS mod
+    // (the AC_ROMFS_MODS manifest or a player mod) that replaces one of the prompts' files: romfs-patches loads in
+    // their place, so the mod's file is not served beside prompts files made for the game's own. A mod's resource
+    // size table is no clash: restbl_overlay merges it with the prompts' one.
     char def[2100], path[2100];
     const char *patches = cfg_get("AC_ROMFS_PATCHES"), *mods = cfg_get("AC_ROMFS_MODS");
     int wide = 0;
@@ -830,15 +831,22 @@ static void overlay_init(void) {
                    "(tools/make_romfs_patches.py --aspect %ux%u)", out[0], out[1], out[0], out[1]);
         }
     }
-    static const char *const layouts[2] = {"nintendo", "xbox"};   // one of each folder
+    static const int ids[2] = {PROMPTS_XBOX, PROMPTS_PLAYSTATION};   // one folder per mod
     for (int i = 0; i < 2; i++) {
-        prompts_folders[i].name = input_prompts_folder(PROMPTS_XBOX, layouts[i]);
+        prompts_folders[i].name = input_prompts_folder(ids[i], NULL);
         prompts_folders[i].ready =
             snprintf(path, sizeof path, "%s/%s/manifest.tsv", index_dir, prompts_folders[i].name) < (int)sizeof path &&
             plat_file_exists(path);
     }
     const char *layout = cfg_value("AC_PAD_LAYOUT");
-    prompts_wanted = input_prompts_folder(input_prompts_pick(cfg_get("AC_PROMPTS"), layout), layout);
+    int pick = input_prompts_pick(cfg_get("AC_PROMPTS"), layout);
+    const char *auto_name = NULL;   // the auto-detected prompts, for the logs below
+    if (pick == PROMPTS_AUTO) {
+        pick = input_prompts_auto();
+        auto_name = pick == PROMPTS_XBOX ? "Xbox" : pick == PROMPTS_PLAYSTATION ? "PlayStation" : NULL;
+        if (auto_name) rt_log("RomFS overlay: auto prompts: %s controller, %s button prompts", auto_name, auto_name);
+    }
+    prompts_wanted = input_prompts_folder(pick, layout);
     prompts_off = !prompts_wanted                         ? ROMFS_PROMPTS_OK
                   : wide                                  ? ROMFS_PROMPTS_SHAPE
                   : patches                               ? ROMFS_PROMPTS_PATCHES
@@ -850,13 +858,14 @@ static void overlay_init(void) {
         snprintf(path, sizeof path, "%s/%s", index_dir, prompts_wanted);   // fits: its manifest path did
         if (overlay_load(path, 1, 0)) {
             prompts_loaded = prompts_wanted;
-            rt_log("RomFS overlay: Xbox button prompts (%s)", path);
+            rt_log("RomFS overlay: %s button prompts (%s)",
+                   !strcmp(prompts_wanted, input_prompts_folder(PROMPTS_XBOX, NULL)) ? "Xbox" : "PlayStation", path);
         } else {
             prompts_off = ROMFS_PROMPTS_FAILED;
             rt_log("RomFS overlay: %s failed its check (run the setup again); romfs-patches loads instead", path);
         }
     } else if (prompts_wanted) {
-        rt_log("RomFS overlay: prompts = xbox, but %s; Switch prompts stay",
+        rt_log("RomFS overlay: prompts = %s, but %s; Switch prompts stay", auto_name ? auto_name : cfg_value("AC_PROMPTS"),
                prompts_off == ROMFS_PROMPTS_SHAPE     ? "the game resolution takes its own UI layout"
                : prompts_off == ROMFS_PROMPTS_PATCHES ? "AC_ROMFS_PATCHES is set"
                                                       : "their folder has no manifest.tsv (run the setup again)");

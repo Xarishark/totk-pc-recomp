@@ -14,7 +14,7 @@ application for Windows, built on the pipeline of [TotK Recomp](https://github.c
 
 ## Status
 
-The game is playable from the title screen through the story, including its audio and its save data.
+The game is playable from the title screen through the story, including its audio and its save data. The only known issue is the assault attack at 60FPS has bad input timers at 60FPS (long known unresolved issue in Emulation), compiled code is being analyzed to be patched. At 30FPS, the timer is accurate so players can temporarly switch to 30FPS during act 4 to pass the tutorial.
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -30,12 +30,12 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - In-game settings menu (F1) and performance overlay (F10)
 - Setup and in-game menu in English, Russian, Brazilian Portuguese and Simplified Chinese
 - Keyboard, mouse and gamepad, with remapping, rumble and gyro
+- Xbox and PlayStation button prompts (button mods drawn at the Switch positions; PlayStation mod from https://gamebanana.com/mods/604666)
 - Mods and data cheats from the emulator formats
 - Shaders prepared at install instead of during play
 
 ## Planned
 
-- A Linux release
 - Optimizations for 4gb VRAM GPU and Steam Deck
 
 ## Installing

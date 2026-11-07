@@ -185,10 +185,31 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_PAD_LAYOUT] = "Button layout",
     [UI_MENU_PAD_LAYOUT_DESC] = "Which button is A. Nintendo: the right one, as on a Switch. Xbox: the bottom one, as "
                                 "labelled on an Xbox controller (cross on a PlayStation controller). Automatic picks "
-                                "Nintendo for controllers with Nintendo labels and Xbox for the others.",
+                                "Nintendo for controllers with Nintendo labels and Xbox for the others. Which "
+                                "controller the game's prompts show is set under Button prompts.",
     [UI_MENU_PAD_LAYOUT_AUTO] = "Automatic", [UI_MENU_PAD_LAYOUT_NINTENDO] = "Nintendo (A right)",
     [UI_MENU_PAD_LAYOUT_XBOX] = "Xbox (A bottom)",
     [UI_MENU_PAD_LAYOUT_IN_USE] = "in use: %s",
+    [UI_MENU_PROMPTS] = "Button prompts",
+    [UI_MENU_PROMPTS_DESC] = "Which controller's buttons the game's prompts show. Automatic follows the controller "
+                             "in use (the Xbox or PlayStation mod when built, else Nintendo). Nintendo: the game's "
+                             "own. Xbox and PlayStation: button mods that replace the Switch icons at the Switch "
+                             "positions (with Nintendo (A right) the right button shows B on Xbox). The game reads "
+                             "its prompts at start, so they change after a restart.",
+    [UI_MENU_PROMPTS_DESC_LAYOUT] = "Which controller's buttons the game's prompts show. Automatic follows the "
+                             "controller in use (the Xbox or PlayStation mod when built, else Nintendo). Nintendo: "
+                             "the game's own. Xbox and PlayStation: button mods that replace the Switch icons at the "
+                             "Switch positions. They are drawn for the Switch positions: with Xbox (A bottom) the "
+                             "glyphs name the wrong buttons. The game reads its prompts at start, so they change "
+                             "after a restart.",
+    [UI_MENU_PROMPTS_AUTO] = "Automatic", [UI_MENU_PROMPTS_NINTENDO] = "Nintendo", [UI_MENU_PROMPTS_XBOX] = "Xbox",
+    [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
+    [UI_MENU_PROMPTS_MISSING] = "prompt files missing: run the setup again",
+    [UI_MENU_PROMPTS_FAILED] = "prompt files damaged: run the setup again",
+    [UI_MENU_PROMPTS_RESTART] = "prompts change after restart",
+    [UI_MENU_PROMPTS_OFF_SHAPE] = "off at a game resolution not 16:9",
+    [UI_MENU_PROMPTS_OFF_MODS] = "off: a RomFS mod replaces their files",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "off while AC_ROMFS_PATCHES is set",
     [UI_MENU_RESTART] = "Restart now",
     [UI_MENU_RESTART_DESC] = "Closes the game and starts it again with the new prompts. Progress since your last save "
                              "is lost.",
@@ -549,10 +570,31 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PAD_LAYOUT] = "Раскладка кнопок",
     [UI_MENU_PAD_LAYOUT_DESC] = "Какая кнопка работает как A. Nintendo: правая, как на Switch. Xbox: нижняя, как "
                                 "подписано на контроллере Xbox (крест на контроллере PlayStation). Автоматически: "
-                                "Nintendo для контроллеров с подписями Nintendo, Xbox для остальных.",
+                                "Nintendo для контроллеров с подписями Nintendo, Xbox для остальных. Кнопки какого "
+                                "контроллера показывают подсказки игры, задаётся в строке «Подсказки кнопок».",
     [UI_MENU_PAD_LAYOUT_AUTO] = "Автоматически", [UI_MENU_PAD_LAYOUT_NINTENDO] = "Nintendo (A справа)",
     [UI_MENU_PAD_LAYOUT_XBOX] = "Xbox (A снизу)",
     [UI_MENU_PAD_LAYOUT_IN_USE] = "сейчас: %s",
+    [UI_MENU_PROMPTS] = "Подсказки кнопок",
+    [UI_MENU_PROMPTS_DESC] = "Кнопки какого контроллера показывают подсказки игры. Автоматически — по подключённому "
+                             "контроллеру (мод Xbox или PlayStation, если собран, иначе Nintendo). Nintendo: как в "
+                             "самой игре. Xbox и PlayStation: моды, заменяющие значки Switch на позициях Switch "
+                             "(в Nintendo (A справа) правая кнопка показывает B на Xbox). Игра читает "
+                             "подсказки при запуске, так что они меняются после перезапуска.",
+    [UI_MENU_PROMPTS_DESC_LAYOUT] = "Кнопки какого контроллера показывают подсказки игры. Автоматически — по "
+                             "подключённому контроллеру (мод Xbox или PlayStation, если собран, иначе Nintendo). "
+                             "Nintendo: как в самой игре. Xbox и PlayStation: моды, заменяющие значки Switch на "
+                             "позициях Switch. Они нарисованы для позиций Switch: с Xbox (A снизу) значки называют "
+                             "не те кнопки. Игра читает подсказки при запуске, так что они меняются после "
+                             "перезапуска.",
+    [UI_MENU_PROMPTS_AUTO] = "Автоматически", [UI_MENU_PROMPTS_NINTENDO] = "Nintendo", [UI_MENU_PROMPTS_XBOX] = "Xbox",
+    [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
+    [UI_MENU_PROMPTS_MISSING] = "нет файлов подсказок: запустите установку снова",
+    [UI_MENU_PROMPTS_FAILED] = "файлы подсказок повреждены: запустите установку снова",
+    [UI_MENU_PROMPTS_RESTART] = "подсказки сменятся после перезапуска",
+    [UI_MENU_PROMPTS_OFF_SHAPE] = "выкл. при разрешении игры не 16:9",
+    [UI_MENU_PROMPTS_OFF_MODS] = "выкл.: мод RomFS заменяет их файлы",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "выкл., пока задан AC_ROMFS_PATCHES",
     [UI_MENU_RESTART] = "Перезапустить сейчас",
     [UI_MENU_RESTART_DESC] = "Закрывает игру и запускает её снова с новыми подсказками. Прогресс после последнего "
                              "сохранения будет потерян.",
@@ -855,14 +897,31 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PAD_LAYOUT] = "Layout dos botões",
     [UI_MENU_PAD_LAYOUT_DESC] = "Qual botão é o A. Nintendo: o da direita, como no Switch. Xbox: o de baixo, como "
                                 "indicado no controle de Xbox (cruz no controle de PlayStation). Automático escolhe "
-                                "Nintendo para controles com os rótulos da Nintendo e Xbox para os demais. Ícones de "
-                                "Xbox: o A é o da direita, como no Nintendo, e o jogo mostra os rótulos do Xbox (B no "
-                                "lugar de A, A no lugar de B, Y no lugar de X, X no lugar de Y); os ícones mudam após "
-                                "reiniciar. As letras fazem parte dos arquivos do jogo, então um botão remapeado em "
-                                "Controles continua com a letra antiga na tela.",
+                                "Nintendo para controles com os rótulos da Nintendo e Xbox para os demais. Os botões "
+                                "que os ícones do jogo mostram estão em Ícones de botões.",
     [UI_MENU_PAD_LAYOUT_AUTO] = "Automático", [UI_MENU_PAD_LAYOUT_NINTENDO] = "Nintendo (A à direita)",
     [UI_MENU_PAD_LAYOUT_XBOX] = "Xbox (A embaixo)",
     [UI_MENU_PAD_LAYOUT_IN_USE] = "em uso: %s",
+    [UI_MENU_PROMPTS] = "Ícones de botões",
+    [UI_MENU_PROMPTS_DESC] = "Os botões de qual controle os ícones do jogo mostram. Automático segue o controle em "
+                             "uso (o mod de Xbox ou PlayStation quando instalado, senão Nintendo). Nintendo: os do "
+                             "próprio jogo. Xbox e PlayStation: mods que trocam os ícones do Switch "
+                             "nas posições do Switch (com Nintendo (A à direita) o botão da direita mostra B no "
+                             "Xbox). O jogo lê os ícones ao iniciar, então eles mudam depois de reiniciar.",
+    [UI_MENU_PROMPTS_DESC_LAYOUT] = "Os botões de qual controle os ícones do jogo mostram. Automático segue o "
+                             "controle em uso (o mod de Xbox ou PlayStation quando instalado, senão Nintendo). "
+                             "Nintendo: os do próprio jogo. Xbox e PlayStation: mods que trocam os ícones do Switch "
+                             "nas posições do Switch. Eles são desenhados para as posições do Switch: com Xbox (A "
+                             "embaixo) os ícones nomeiam os botões errados. O jogo lê os ícones ao iniciar, então "
+                             "eles mudam depois de reiniciar.",
+    [UI_MENU_PROMPTS_AUTO] = "Automático", [UI_MENU_PROMPTS_NINTENDO] = "Nintendo", [UI_MENU_PROMPTS_XBOX] = "Xbox",
+    [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
+    [UI_MENU_PROMPTS_MISSING] = "faltam os arquivos dos ícones: execute a instalação de novo",
+    [UI_MENU_PROMPTS_FAILED] = "arquivos dos ícones danificados: execute a instalação de novo",
+    [UI_MENU_PROMPTS_RESTART] = "os ícones mudam após reiniciar",
+    [UI_MENU_PROMPTS_OFF_SHAPE] = "desligados numa resolução de jogo que não é 16:9",
+    [UI_MENU_PROMPTS_OFF_MODS] = "desligados: um mod de RomFS substitui os arquivos deles",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "desligados enquanto AC_ROMFS_PATCHES está definido",
     [UI_MENU_LSTICK_DEADZONE] = "Zona morta do analógico esquerdo",
     [UI_MENU_RSTICK_DEADZONE] = "Zona morta do analógico direito",
     [UI_MENU_STICK_DEADZONE_DESC] = "Quanto um analógico do controle precisa se mover antes que o jogo perceba. Aumente "
@@ -1291,14 +1350,30 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_PAD_LAYOUT_DESC] = "哪个按键是 A。Nintendo：右侧按键，与 Switch 相同。Xbox：下方按键，"
                                 "与 Xbox 手柄上的标注一致（PlayStation 手柄上为叉键）。自动："
                                 "带 Nintendo 标注的手柄使用 Nintendo 布局，其他手柄使用 Xbox 布局。"
-                                "Xbox 按键提示：A 仍是右侧键，但游戏显示 Xbox 标注（A 显示为 B、"
-                                "B 显示为 A、X 显示为 Y、Y 显示为 X），重启后生效。"
-                                "这些字母来自游戏文件，因此在“操作”中重映射过的按键，"
-                                "屏幕上仍显示原来的字母。",
+                                "游戏图标显示哪个手柄见“按键提示”。",
     [UI_MENU_PAD_LAYOUT_AUTO] = "自动",
     [UI_MENU_PAD_LAYOUT_NINTENDO] = "Nintendo（A 在右）",
     [UI_MENU_PAD_LAYOUT_XBOX] = "Xbox（A 在下）",
     [UI_MENU_PAD_LAYOUT_IN_USE] = "使用中：%s",
+    [UI_MENU_PROMPTS] = "按键提示",
+    [UI_MENU_PROMPTS_DESC] = "游戏的按键提示显示哪种手柄的按键。自动跟随所用手柄（已构建时用 Xbox 或 PlayStation "
+                             "模组，否则用 Nintendo）。Nintendo：游戏原有的提示。Xbox 和 PlayStation：模组，按 "
+                             "Switch 位置替换 Switch 图标（使用 Nintendo（A 在右）时右侧按键在 Xbox 上显示 B）。"
+                             "游戏在启动时读取按键提示，因此重启后才会改变。",
+    [UI_MENU_PROMPTS_DESC_LAYOUT] = "游戏的按键提示显示哪种手柄的按键。自动跟随所用手柄（已构建时用 Xbox 或 "
+                             "PlayStation 模组，否则用 Nintendo）。Nintendo：游戏原有的提示。Xbox 和 PlayStation："
+                             "模组，按 Switch 位置替换 Switch 图标。它们按 Switch 位置绘制：使用 Xbox（A 在下）"
+                             "时图标会标错按键。游戏在启动时读取按键提示，因此重启后才会改变。",
+    [UI_MENU_PROMPTS_AUTO] = "自动",
+    [UI_MENU_PROMPTS_NINTENDO] = "Nintendo",
+    [UI_MENU_PROMPTS_XBOX] = "Xbox",
+    [UI_MENU_PROMPTS_PLAYSTATION] = "PlayStation",
+    [UI_MENU_PROMPTS_MISSING] = "缺少按键提示文件：请重新运行安装程序",
+    [UI_MENU_PROMPTS_FAILED] = "按键提示文件已损坏：请重新运行安装程序",
+    [UI_MENU_PROMPTS_RESTART] = "按键提示重启后生效",
+    [UI_MENU_PROMPTS_OFF_SHAPE] = "游戏分辨率不是 16:9 时关闭",
+    [UI_MENU_PROMPTS_OFF_MODS] = "已关闭：RomFS 模组替换了它们的文件",
+    [UI_MENU_PROMPTS_OFF_PATCHES] = "设置了 AC_ROMFS_PATCHES 时关闭",
     [UI_MENU_LSTICK_DEADZONE] = "左摇杆死区", [UI_MENU_RSTICK_DEADZONE] = "右摇杆死区",
     [UI_MENU_STICK_DEADZONE_DESC] = "手柄摇杆要推动多远游戏才会响应。如果角色或视角会自己移动，"
                                     "请调高此值：松开摇杆，查看“当前摇杆”，把死区设得比它高几个百分点。",

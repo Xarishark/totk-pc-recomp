@@ -104,9 +104,12 @@ From the repository root, in PowerShell. Every step that depends on the game ver
    ```
    `--patches` builds in the frame-rate, resolution and other patch sets, switchable at run time. The link copies
    `SDL3.dll`, `libiconv-2.dll` and `libopus-0.dll` next to the exe.
-   For Xbox button prompts, run `make_romfs_patches.py` twice more, with `--prompts xbox` and `--prompts xbox-label`:
-   they write `build\<ver>\romfs-patches-xbox` and `romfs-patches-xbox-label` ([controls.md](controls.md), "Xbox
-   button prompts"), which `build_game.py` copies next to `astralchain.exe` like `romfs-patches`.
+   For Xbox and PlayStation button prompts (the Controls tab's *Button prompts* row), build the button mods' overlays
+   from the emulator mods with `tools\make_prompts_folders.py` (defaults read `controller-ui\`):
+   they write the two `romfs-patches-*` folders, which `build_game.py` copies next to `astralchain.exe` like
+   `romfs-patches`. The default `prompts = auto` loads the mod of the controller in use at the first run (no
+   restart needed); the Controls tab shows and changes it. The mods draw the Switch positions, so the Xbox layout
+   mismatches their glyphs (the menu warns).
 
 6. Prepare the shaders (once per build folder and translator). It reads the variants players met from
    `generated\shader-answers.bin` (recorded in play; `tools\prepare_shaders.py --recordings` turns a recording into it)
@@ -192,9 +195,9 @@ Before a commit:
   `git config core.hooksPath .githooks` runs it before each local commit.
 - `build\v101\astralchain.exe --selftest`: layout, dispatch table and host-function registry, without game files.
 
-A change to the button prompts (`tools/make_romfs_patches.py --prompts`, `tools/button_icons.py`) passes
-`.venv\Scripts\python tests\romfs_prompts_test.py`, which runs the tool on a RomFS it makes itself (no game
-files); a change to the settings passes `astralchain.exe --probe-cfg`.
+A change to the button prompts (`tools/make_prompts_folders.py`, `runtime/romfs.c` overlay_init) passes
+`astralchain.exe --probe-cfg`, which checks the prompts pick and folders (input_map.c); a change to the settings
+passes it too.
 
 The lifter (`recomp/`) and the CPU headers (`runtime/cpu.h`, `runtime/simd.h`) are checked against Unicorn. Every lifter
 change passes these, all run with `.venv`:

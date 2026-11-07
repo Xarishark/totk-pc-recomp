@@ -27,6 +27,18 @@ BLOCKED_SUFFIXES = {
 # ExeFS modules carry no extension.
 BLOCKED_NAMES = {"main", "sdk", "rtld", "subsdk0", "subsdk1", "main.npdm"}
 
+# Community controller-UI mods (controller-ui/): hand-made button-icon replacements
+# for the ui_core files, which only exist inside the game's ui.pkz archive, not as
+# RomFS files of their own. They are full game UI archives with edited glyphs, so they
+# trip the suffix and size guards below; they are vendored anyway by explicit
+# maintainer decision. The key and generated-code scans still apply to them.
+VENDORED_PREFIXES = ("controller-ui/",)
+
+
+def is_vendored(path: Path) -> bool:
+    return any(path.as_posix().startswith(p) for p in VENDORED_PREFIXES)
+
+
 # Written by the code generator into every file it emits.
 GENERATED_MARKER = "AC_RECOMP_" + "GENERATED_FROM_GAME_CODE"
 
@@ -51,7 +63,8 @@ def problems_for(path: Path, allow_large: bool = False) -> list[str]:
     """allow_large: files over MAX_BYTES (toolchain binaries in a release folder) are checked for the generated marker
     only, not refused."""
     found = []
-    if path.suffix.lower() in BLOCKED_SUFFIXES:
+    vendored = is_vendored(path)
+    if not vendored and path.suffix.lower() in BLOCKED_SUFFIXES:
         found.append(f"blocked file type {path.suffix}")
     if path.name.lower() in BLOCKED_NAMES:
         found.append("name of a Switch executable module")
@@ -62,7 +75,7 @@ def problems_for(path: Path, allow_large: bool = False) -> list[str]:
         if GENERATED_MARKER.encode() in path.read_bytes():
             found.append("generated from game code")
         return found
-    if size > MAX_BYTES:
+    if size > MAX_BYTES and not vendored:
         found.append(f"{size // 1024} KiB, over the {MAX_BYTES // 1024} KiB limit")
         return found
     data = path.read_bytes()

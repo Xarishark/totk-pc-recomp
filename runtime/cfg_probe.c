@@ -298,27 +298,44 @@ int probe_cfg(void) {
               input_pad_layout_pick("Xbox_Prompts", 1) == PAD_LAYOUT_NINTENDO,
           "pad layout: 0.1.9's xbox_prompts keeps the Nintendo positions (only the prompts change, romfs.c overlay_init)");
     // Button prompts (input_map.c)
-    CHECK(input_prompts_pick(NULL, "auto") == PROMPTS_NINTENDO && input_prompts_pick("", "xbox") == PROMPTS_NINTENDO &&
-              input_prompts_pick("Xbox", "nintendo") == PROMPTS_XBOX && input_prompts_pick("nintendo", "xbox") == PROMPTS_NINTENDO,
-          "prompts: the game's own unless set to Xbox");
+    CHECK(input_prompts_pick(NULL, "auto") == PROMPTS_AUTO && input_prompts_pick("", "xbox") == PROMPTS_AUTO &&
+              input_prompts_pick("auto", "nintendo") == PROMPTS_AUTO &&
+              input_prompts_pick("Xbox", "nintendo") == PROMPTS_XBOX &&
+              input_prompts_pick("PlayStation", "nintendo") == PROMPTS_PLAYSTATION &&
+              input_prompts_pick("nintendo", "xbox") == PROMPTS_NINTENDO,
+          "prompts: auto while unset, the game's own only when set to Nintendo");
+    CHECK(input_prompts_pick(NULL, "xbox_prompts") == PROMPTS_XBOX && input_prompts_pick("nintendo", "xbox_prompts") == PROMPTS_NINTENDO,
+          "prompts: 0.1.9's pad_layout = xbox_prompts means Xbox while prompts is unset");
+    CHECK(input_prompts_auto_for_kind(PAD_KIND_XBOX) == PROMPTS_XBOX &&
+              input_prompts_auto_for_kind(PAD_KIND_PLAYSTATION) == PROMPTS_PLAYSTATION &&
+              input_prompts_auto_for_kind(PAD_KIND_NONE) == PROMPTS_NINTENDO,
+          "prompts: auto follows the gamepad kind, Nintendo without one");
+    CHECK(!input_prompts_folder(PROMPTS_NINTENDO, "nintendo") && !input_prompts_folder(PROMPTS_NINTENDO, "xbox") &&
+              !input_prompts_folder(PROMPTS_AUTO, NULL),
+          "prompts: the game's own and unresolved auto need no folder");
     CHECK(input_prompts_pick(NULL, "xbox_prompts") == PROMPTS_XBOX && input_prompts_pick("nintendo", "xbox_prompts") == PROMPTS_NINTENDO,
           "prompts: 0.1.9's pad_layout = xbox_prompts means Xbox while prompts is unset");
     CHECK(!input_prompts_folder(PROMPTS_NINTENDO, "nintendo") && !input_prompts_folder(PROMPTS_NINTENDO, "xbox"),
           "prompts: the game's own need no folder");
     CHECK(EQ(input_prompts_folder(PROMPTS_XBOX, "nintendo"), "romfs-patches-xbox") &&
-              EQ(input_prompts_folder(PROMPTS_XBOX, "xbox_prompts"), "romfs-patches-xbox") &&
-              EQ(input_prompts_folder(PROMPTS_XBOX, "xbox"), "romfs-patches-xbox-label") &&
-              EQ(input_prompts_folder(PROMPTS_XBOX, "auto"), "romfs-patches-xbox-label") &&
-              EQ(input_prompts_folder(PROMPTS_XBOX, NULL), "romfs-patches-xbox-label"),
-          "prompts: the face buttons by position for the Nintendo layout, by label for xbox and auto");
-    // romfs-patches-xbox shows A as B (tests/romfs_prompts_test.py checks the folders' contents). It is right exactly
-    // where the layout puts A on the east button, which an Xbox pad labels B.
+              EQ(input_prompts_folder(PROMPTS_XBOX, "xbox"), "romfs-patches-xbox") &&
+              EQ(input_prompts_folder(PROMPTS_XBOX, "auto"), "romfs-patches-xbox") &&
+              EQ(input_prompts_folder(PROMPTS_XBOX, NULL), "romfs-patches-xbox"),
+          "prompts: one Xbox folder whatever the layout (the mod draws the Switch positions)");
+    CHECK(EQ(input_prompts_folder(PROMPTS_PLAYSTATION, "nintendo"), "romfs-patches-playstation") &&
+              EQ(input_prompts_folder(PROMPTS_PLAYSTATION, "xbox"), "romfs-patches-playstation") &&
+              EQ(input_prompts_folder(PROMPTS_PLAYSTATION, NULL), "romfs-patches-playstation"),
+          "prompts: one PlayStation folder whatever the layout (the mod draws the Switch positions)");
+    // The button mods draw the face buttons at the Switch positions: romfs-patches-xbox shows A as B
+    // (tools/make_prompts_folders.py copies the mods' files). It matches exactly where the layout puts A on the
+    // east button, which an Xbox pad labels B; elsewhere the menu warns.
     input_map_reset();
     static const char *const layouts[] = {"nintendo", "xbox", "auto", "xbox_prompts"};
     for (int i = 0; i < 4; i++) {
+        int nintendo = input_pad_layout_pick(layouts[i], 0) == PAD_LAYOUT_NINTENDO;
         int a_east = input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_EAST] = 1}, input_pad_layout_pick(layouts[i], 0)) == 1ull << B_A;
-        CHECK(a_east == EQ(input_prompts_folder(PROMPTS_XBOX, layouts[i]), "romfs-patches-xbox"),
-              "prompts: the folder names A as B exactly when the layout puts A on the button labelled B");
+        CHECK(a_east == nintendo,
+              "prompts: only the Nintendo layout puts A on the button the mods draw it on");
     }
     uint8_t pd[PAD_COUNT] = {0};
     pd[PAD_SOUTH] = pd[PAD_NORTH] = 1;
