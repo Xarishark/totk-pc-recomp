@@ -1853,7 +1853,8 @@ static struct {
 // enters each Pipe as building under the key a draw would compute, queues it to the low queue and builds the queue on
 // every core. Records are deduplicated by a hash of their bytes; they are collected under P.lock by the worker that
 // built the pipeline and appended by the present thread (vk_pipeline_autosave) or at exit (vk_pipeline_save). A file
-// with another magic, version or record size is ignored and rewritten. Bump KEYS_VERSION when VkPipeState or the
+// with another magic, version or record size is ignored and rewritten, except the pre-rename TOTKPKEY header, which
+// is read and rewritten with our header (below). Bump KEYS_VERSION when VkPipeState or the
 // record changes meaning without changing size.
 #define KEYS_VERSION 3                 // 3: shaders named by input id (gfx_shader.c)
 typedef struct { char magic[8]; uint32_t version, rec_size; } KeysHeader;
@@ -1948,7 +1949,7 @@ static void keys_flush(void) {
         FILE *f = fopen(K.path, K.header_ok ? "ab" : "wb");
         int ok = f != NULL;
         if (ok && !K.header_ok) {
-            KeysHeader h = {{'T', 'O', 'T', 'K', 'P', 'K', 'E', 'Y'}, KEYS_VERSION, sizeof(KeyRec)};
+            KeysHeader h = {{'A', 'C', 'P', 'C', 'A', 'C', 'H', 'E'}, KEYS_VERSION, sizeof(KeyRec)};
             ok = fwrite(&h, sizeof h, 1, f) == 1;
         }
         if (ok) ok = fwrite(r, sizeof *r, n, f) == n;
@@ -1975,20 +1976,23 @@ static void keys_open(void) {
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (len >= (long)sizeof h && fread(&h, sizeof h, 1, f) == 1 && !memcmp(h.magic, "ACPCACHE", 8) &&
-        h.version == KEYS_VERSION && h.rec_size == sizeof(KeyRec)) {
+    if (len >= (long)sizeof h && fread(&h, sizeof h, 1, f) == 1 &&
+        (!memcmp(h.magic, "ACPCACHE", 8) || !memcmp(h.magic, "TOTKPKEY", 8)) && h.version == KEYS_VERSION &&
+        h.rec_size == sizeof(KeyRec)) {
+        int legacy = memcmp(h.magic, "ACPCACHE", 8) != 0;   // TOTKPKEY: written before the rename, migrated below
         K.header_ok = 1;
         size_t n = ((size_t)len - sizeof h) / sizeof(KeyRec);
         if (n && (K.file = malloc(n * sizeof(KeyRec))) && fread(K.file, sizeof(KeyRec), n, f) == n) K.file_n = n;
         else free(K.file), K.file = NULL;
         for (size_t i = 0; i < K.file_n; i++) seen_add(rec_hash((const KeyRec *)K.file + i));
-        if (len != (long)(sizeof h + n * sizeof(KeyRec)))   // a torn append: rewrite the file from what was read
-            K.header_ok = 0;
+        if (legacy || len != (long)(sizeof h + n * sizeof(KeyRec))) K.header_ok = 0;
+        // a legacy header or a torn append: rewrite the file from what was read (the next flush writes our header and
+        // the records kept below)
     } else {
         rt_log("vk_pipeline: %s has another format or version; it is rewritten", K.path);
     }
     fclose(f);
-    if (!K.header_ok && K.file_n) {   // keep the whole records of a torn file
+    if (!K.header_ok && K.file_n) {   // keep the whole records of a torn or legacy-header file
         KeyRec *t = malloc(K.file_n * sizeof *t);
         if (t) memcpy(t, K.file, K.file_n * sizeof *t), K.pend = t, K.pend_n = K.pend_cap = (uint32_t)K.file_n;
     }
@@ -2559,8 +2563,9 @@ static Layout *compute_layout(const GfxShader *cs, Bindings *B, const char **why
 //   sections and shader loads at normal priority, so a preempted thread never holds the lock the replay needs):
 //   compute pipelines of every recorded and prepared compute shader, kept (vk_pipeline_compute builds compute
 //   synchronously on the replay thread; 163 prepared), and the libraries of the first AC_LIB_PREBUILD_KEEP variants
-//   play recorded (priority 0), kept in libs[] with their shaders. KEEP defaults to 0: a kept library costs 140-460 KB
-//   of process memory (10,000 kept took 9 GB in run 1) to save a rebuild the driver cache makes 0.1 ms.
+//   play recorded (priority 0), kept in libs[] with their shaders. KEEP defaults to 512 (0 on Steam Deck):
+//   a kept library costs 140-460 KB of process memory (10,000 kept took 9 GB in run 1) to save a rebuild the driver
+//   cache makes 0.1 ms on a warm cache, several ms on a cold one.
 // Library state: the vertex output union known now (vs_union_peek; the prewarm fills it from pipeline-keys.bin, the
 // preparation has none), the clamp, polygon mode and depth mode most recorded pipelines use (defaults without a key
 // file: clamp 0, fill, -w..w), single-sampled, no dual source; the state dynamic on this GPU is 0 in every key.
@@ -2949,14 +2954,14 @@ static void lb_state(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
 
 // Boot: compute shaders of the warm list (recorded and prepared), then the first KEEP recorded graphics variants.
 static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
-    const char *e = cfg_value("AC_LIB_PREBUILD"), *ke = cfg_get("AC_LIB_PREBUILD_KEEP");
+    const char *e = cfg_value("AC_LIB_PREBUILD"), *ke = cfg_value("AC_LIB_PREBUILD_KEEP");
     const char *te = cfg_get("AC_LIB_PREBUILD_THREADS");   // no fixed default: a quarter of the CPUs when unset
     if (!A.on || !cfg_bool("AC_LIB_PREBUILD")) return;
     char dir[PLAT_PATH_MAX * 2];
     if (cache_dir(dir, sizeof dir)) skip_init(dir);
     GfxWarmEnt *all = NULL;
     size_t total = gfx_shader_warm_list(&all), n = 0, n_cs = 0;
-    LB.keep_n = ke && *ke ? atoi(ke) : 0;
+    LB.keep_n = atoi(ke);
     LB.e = malloc((total + 1) * sizeof *LB.e);
     for (size_t i = 0; LB.e && i < total; i++)
         if (all[i].stage == GFX_STAGE_CS) LB.e[n++] = all[i];

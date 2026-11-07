@@ -41,6 +41,9 @@
 # the CPU threads).
 # lib_prebuild = 1
 # lib_prebuild_threads = 4
+# Recorded graphics variants whose stage libraries are kept from the boot prebuild (0 to 4096; default: 512, 0 on
+# Steam Deck): each kept library costs process memory but never rebuilds, even with a cold driver cache.
+# lib_prebuild_keep = 512
 # Build known pipelines ahead of time.
 # pipe_prebuild = 1
 # Threads that translate known shaders at start (1 to 64; default: half the CPU threads, at most 16).
