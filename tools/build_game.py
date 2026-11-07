@@ -211,7 +211,11 @@ def read_layout(gen):
 def chunk_files(gen, mod):
     """The C files of one module: the chunks listed in <mod>/manifest.json, then <mod>_table.c."""
     d = gen / mod
-    data = json.loads((d / 'manifest.json').read_text())
+    try:
+        data = json.loads((d / 'manifest.json').read_text())
+    except ValueError:
+        sys.exit(f'{d / "manifest.json"}: invalid JSON (a previous run left it empty or truncated); delete it or '
+                 f'{d} and run the lift again')
     entries = data if isinstance(data, list) else data.get('chunks', data.get('files'))
     if entries is None:
         sys.exit(f'{d / "manifest.json"}: no "chunks" or "files" list')

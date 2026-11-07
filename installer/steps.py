@@ -696,7 +696,19 @@ class Lift(Step):
     def current(self, ctx, record):
         gen = ctx.cache / 'gen'
         stamp = gen / STAMP
-        return (gen / 'layout.json').is_file() and stamp.is_file() and stamp.read_text().strip() == ctx.keys['lift']
+        if not ((gen / 'layout.json').is_file() and stamp.is_file() and stamp.read_text().strip() == ctx.keys['lift']):
+            return False
+        # A previous run can leave zeroed or truncated manifests behind (killed process, disk hiccup): the compile
+        # would die on them, so treat them as not current and lift again.
+        for mod in ('main', 'sdk'):
+            try:
+                entries = json.loads((gen / mod / 'manifest.json').read_text())
+                entries = entries if isinstance(entries, list) else entries.get('chunks', entries.get('files'))
+                if not entries:
+                    return False
+            except (OSError, ValueError):
+                return False
+        return True
 
     def run(self, ctx):
         # gen/ of the last run stays in the install folder: gen.py rewrites only the chunks whose C changed (and removes
@@ -738,6 +750,16 @@ class Lift(Step):
             code, log = run_tool(ctx, 'lift', layout.recomp / 'gen.py', args + ['--patches', plain], parse)
         if code:
             raise InstallError('lift.failed', code=code, log=str(log))
+        # The compile reads <mod>/manifest.json next: a zeroed or truncated file (killed run, disk hiccup) would
+        # only fail there, so validate now and fail at this step with its log instead.
+        for mod in ('main', 'sdk'):
+            try:
+                entries = json.loads((gen / mod / 'manifest.json').read_text())
+                entries = entries if isinstance(entries, list) else entries.get('chunks', entries.get('files'))
+                if not entries:
+                    raise ValueError('no chunks')
+            except (OSError, ValueError) as e:
+                raise InstallError('lift.failed', code=0, log=str(log)) from e
         for warn, log in skipped.items():
             rep.warning(warn, log=str(log))
         (gen / STAMP).write_text(ctx.keys['lift'] + '\n')
