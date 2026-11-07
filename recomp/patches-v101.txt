@@ -78,6 +78,15 @@ site res1080 main 40f1b4 52806556 52808716   # mov w22, #810 -> #1080
 site res1080 main 40f1d0 7119001f 711e001f   # cmp w0, #1600 -> #1920
 site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
 
+# Keep the pre-rendered movies on the sound. Bink's wait (main+0x7003E0) restarts a movie's timeline from the current
+# frame once the picture is more than four movie frames late (132 ms at 30 fps), which writes the lateness off. A movie
+# with an audio track of its own is held to that track, but the event movies have none: the opening's sound is Wwise
+# streams started with the event, so each written-off hitch stays as a lasting gap between the picture and the sound.
+# Without the restart the wait keeps answering "show the next frame" until the picture is back on its timeline, at one
+# movie frame per game frame, so catching up needs more than 30 game frames per second. Only this restart is removed.
+set  bink_sync BINK_SYNC 1
+site bink_sync main 7004f0 b906467f d503201f   # str wzr,[x19,#0x644] -> nop
+
 # Dynamic frame rate for the 60 fps mode (the menu's AC_FPS: 30 = shipping 30 fps, 60 = 60 fps with the fix).
 # This replaces the community static 60 fps patch (MrComputerRevo's IPS, whose offsets count the 0x100-byte NSO header)
 # with the Dynamic mod v1.1.1's fixes for its two 60 fps bugs: the frame accumulator's low clamp drops to 1/16 (the
