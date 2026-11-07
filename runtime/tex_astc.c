@@ -524,7 +524,7 @@ void astc_decode_ldr(const uint8_t *blocks, uint32_t width, uint32_t height, uin
     }
 }
 
-// ---- alpha scan (the BC1 choice of vk_texture.c, docs/bc1-plan.md) ----
+// ---- alpha scan (the BC1 choice of vk_texture.c) ----
 
 // Whether any texel of one block can decode to alpha != 255, decided from the header alone wherever that is
 // exact. The header parse mirrors astc_decode_block above and is held to it by the --probe-astc oracle,

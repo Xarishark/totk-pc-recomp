@@ -100,7 +100,7 @@ static uint64_t ru_n, ru_bytes, ru_ns, ru_wt_n, ru_wt_bytes, ru_wt_ns;
 // live image that the GPU wrote gets that image's content (alias_copy). Counts since the last log line.
 static int tex_alias = -1;
 static uint64_t n_alias_copied, n_alias_upload, n_alias_uninit;
-// The recompression accounting (AC_ASTC_BC=bc1, docs/bc1-plan.md), since the last perf line: scans of
+// The recompression accounting (AC_ASTC_BC=bc1), since the last perf line: scans of
 // recompressed ASTC storages at entry creation — count, bytes, nanoseconds, and the split by the format the
 // scan chose (BC1: provably opaque), by where the image ended up (bound into pool memory, own memory against
 // the cache budget) and skipped (3D target, no storage). AC_ASTC_BC=1 (BC3 forced) scans nothing.

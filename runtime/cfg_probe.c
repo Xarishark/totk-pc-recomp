@@ -135,7 +135,7 @@ int probe_cfg(void) {
     CHECK(m && EQ(m->def, "60") && m->live, "meta: fps defaults to 60 and is live");
     m = cfg_meta("ASYNC_PREEMPT");
     CHECK(m && EQ(m->values, "0|1|2") && !m->live, "meta: async_preempt takes 0|1|2 and needs a restart");
-    m = cfg_meta("astralchain_vk_present");
+    m = cfg_meta("ac_vk_present");
     CHECK(m && EQ(m->key, "VK_PRESENT") && EQ(m->values, "mailbox|fifo|immediate") && m->live,
           "meta: prefix and case are accepted");
     m = cfg_meta("RUMBLE_STRENGTH");
