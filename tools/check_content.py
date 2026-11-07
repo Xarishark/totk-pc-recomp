@@ -32,11 +32,9 @@ BLOCKED_NAMES = {"main", "sdk", "rtld", "subsdk0", "subsdk1", "main.npdm"}
 # RomFS files of their own. They are full game UI archives with edited glyphs, so they
 # trip the suffix and size guards below; they are vendored anyway by explicit
 # maintainer decision. The key and generated-code scans still apply to them.
-VENDORED_PREFIXES = ("controller-ui/",)
-
-
+# Matched by directory name so the release-folder check (absolute paths) sees it too.
 def is_vendored(path: Path) -> bool:
-    return any(path.as_posix().startswith(p) for p in VENDORED_PREFIXES)
+    return "controller-ui" in path.parts
 
 
 # Written by the code generator into every file it emits.

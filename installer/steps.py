@@ -768,7 +768,7 @@ class Compile(Step):
     id = 'compile'
 
     def key(self, ctx):
-        return fingerprint('compile-3', ctx.keys['lift'], runtime_key(ctx))
+        return fingerprint('compile-4', ctx.keys['lift'], runtime_key(ctx))
 
     def current(self, ctx, record):
         exe = ctx.dest / ('astralchain' + EXE)
@@ -830,6 +830,16 @@ class Compile(Step):
             raise InstallError('compile.exe_in_use', path=str(dest / layout.xlate.name)) from None
         for dll in layout.dlls:
             replace_file(dll, dest / dll.name)
+        # The controller button mods (controller-ui/, tools/make_prompts_folders.py): repacked ui.pkz overlays
+        # next to the installed exe, picked up through AC_PROMPTS (auto by default). A failure only warns: the
+        # game keeps the Switch prompts.
+        prompts = layout.root / 'controller-ui'
+        if prompts.is_dir():
+            code, log = run_tool(ctx, 'compile', layout.tools / 'make_prompts_folders.py',
+                                  ['--xbox-mod', prompts / 'xbox', '--playstation-mod', prompts / 'playstation',
+                                   '--romfs', dest / 'romfs', '--out', dest])
+            if code:
+                rep.warning('warn.xbox_prompts_failed', code=code, log=str(log))
         return {'exe_sha256': file_sha256(dest / exe.name), 'cpu': cpu}
 
 

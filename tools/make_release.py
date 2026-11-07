@@ -104,7 +104,8 @@ LLVM_SKIP_SUFFIXES = {'.idl', '.tlb'}
 
 # tools/ files the installer steps run (and what they import), copied from the repo.
 TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'check_content.py', 'exefs_patches.py', 'extract.py',
-               'hostmem.py', 'pack_shader_cache.py', 'prepare_shaders.py', 'romfs_index.py', 'shader_census.py']
+               'hostmem.py', 'make_prompts_folders.py', 'pack_shader_cache.py', 'prepare_shaders.py', 'romfs_index.py',
+               'shader_census.py']
 TOOLS_DIRS = ['data']   # data/: the expected hashes of the base game and the update
 RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
 
@@ -261,7 +262,8 @@ def build_python(out):
     copy_tree(tk / 'Lib' / 'tkinter', py / 'tkinter', lambda r: r.startswith('__pycache__'))
     copy_tree(tk / 'tcl', py / 'tcl', lambda r: r.endswith(('.lib', '.sh')) or r.startswith('nmake'))
     check = subprocess.run([str(py / 'python.exe'), '-I', '-c',
-                            'import tkinter, numpy, lz4.block, cryptography, cffi, pycparser, fontTools.ttLib; '
+                            'import tkinter, numpy, lz4.block, cryptography, cffi, pycparser, fontTools.ttLib, '
+                            'zstandard; '
                             'print("python ok: Tcl", tkinter.Tcl().eval("info patchlevel"), "numpy", numpy.__version__)'],
                            env=clean_env(py), capture_output=True, text=True)
     if check.returncode:
@@ -410,6 +412,9 @@ def build_sources(out):
         sys.exit('generated/shader-answers.bin is missing: record a play session and run '
                  'tools/prepare_shaders.py --recordings')
     shutil.copy2(shader_answers, out / 'data' / 'shader-answers.bin')
+    # The controller button mods' sources (tools/make_prompts_folders.py repacks them into the
+    # romfs-patches-xbox/playstation overlays at install time); the release check skips them by directory name.
+    copy_tree(ROOT / 'controller-ui', out / 'controller-ui', lambda r: False)
     copy_tree(ROOT / 'installer', out / 'installer', lambda r: '__pycache__' in r or r.startswith('launcher/'))
     shutil.copy2(ROOT / 'astralchain.ini.example', out / 'astralchain.ini.example')
     shutil.copy2(ROOT / 'THIRD_PARTY_NOTICES.md', out / 'THIRD_PARTY_NOTICES.md')
