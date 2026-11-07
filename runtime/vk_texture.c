@@ -60,6 +60,8 @@ typedef struct Tex {
     uint8_t *snap;                // a texture that fills no page: its storage bytes when the GPU write was recorded
     uint32_t wt_n;                // WriteTexels into the storage since the last upload
     struct Tex *rel_prev, *rel_next;   // while released: the list of released entries, oldest first
+    uint8_t bc_flip;                   // AC_ASTC_BC=bc1: the storage's alpha verdict changed; waiting to be
+                                       // destroyed (sweep_flip) so the next lookup recreates the other format
 } Tex;
 
 // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
@@ -98,6 +100,17 @@ static uint64_t ru_n, ru_bytes, ru_ns, ru_wt_n, ru_wt_bytes, ru_wt_ns;
 // live image that the GPU wrote gets that image's content (alias_copy). Counts since the last log line.
 static int tex_alias = -1;
 static uint64_t n_alias_copied, n_alias_upload, n_alias_uninit;
+// The recompression accounting (AC_ASTC_BC=bc1, docs/bc1-plan.md), since the last perf line: scans of
+// recompressed ASTC storages at entry creation — count, bytes, nanoseconds, and the split by the format the
+// scan chose (BC1: provably opaque), by where the image ended up (bound into pool memory, own memory against
+// the cache budget) and skipped (3D target, no storage). AC_ASTC_BC=1 (BC3 forced) scans nothing.
+static uint64_t sc_n, sc_bytes, sc_ns, sc_op_n, sc_op_bytes, sc_al_n, sc_al_bytes;
+static uint64_t sc_bound_n, sc_bound_bytes, sc_own_n, sc_own_bytes, sc_skip_n;
+// Entries whose storage's alpha verdict turned against their image's format (upload): destroyed at the next
+// submit, so the next lookup recreates them in the other recompression. Rare — a texture's content turning
+// opaque or alpha-carrying after the image was made.
+static Tex **bc_flip_list;
+static int nbc_flip, cbc_flip;
 static uint32_t submit_epoch = 1;   // bumped per queue submit: draw bindings check a texture's storage once per submit
 // Mirrored textures the GPU wrote into, sorted by address (vk_texture_cpu_stale, vk_texture_write_back). Changed under
 // tex_lock and owned_lock; read under either.
@@ -392,6 +405,28 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     }
     nvn_texlayout L;
     nvn_tex_layout(d, &L);
+    // AC_ASTC_BC=bc1 (the default): the alpha scan of the raw storage picks this texture's recompression
+    // before the image exists. A provably opaque one — every 16-byte unit of the storage decodes alpha 255,
+    // astc_storage_alpha_possible (tex_astc.c) — takes BC1 at half of BC3's size with the same colour
+    // quality (the BC3 colour block is a BC1 block); the rest keep BC3. 3D targets stay BC3: the scan, like
+    // the decoder, judges 2D block modes only. A storage not yet written scans as whatever it holds — zeros
+    // are error blocks (opaque), garbage usually alpha-carrying — and the re-scan at every upload (upload)
+    // trades the entry in for the other format when the verdict changes.
+    int bc_verdict = -1;   // -1 not scanned (no BC1 mode, 3D target, no storage), 0 opaque, 1 alpha-carrying
+    uint64_t bc_scan_ns = 0;
+    if (f.astc_bc && vk_astc_bc() == 2 && t->mem && d->target != NVN_TEXTURE_TARGET_3D) {
+        uint64_t s0 = plat_now_ns();
+        bc_verdict = astc_storage_alpha_possible(t->mem, L.size, f.astc_bw, f.astc_bh);
+        bc_scan_ns = plat_now_ns() - s0;
+        if (!bc_verdict) {
+            TexVkFormat g = f;
+            g.vk = f.astc_srgb ? VK_FORMAT_BC1_RGB_SRGB_BLOCK : VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+            g.astc_bc = 2;
+            g.note = "no native ASTC: opaque after the alpha scan (tex_astc.c), encoded to BC1 on the GPU "
+                     "(vk_astc.c, AC_ASTC_BC=bc1)";
+            if (tex_vk_format_supported(&g)) f = g;   // a device that cannot sample BC1 keeps BC3
+        }
+    }
     uint32_t w = umax(d->width, 1), h = umax(d->height, 1), depth = 1, layers = 1;
     uint32_t samples = d->samples > 1 ? (uint32_t)d->samples : 1;
     VkImageType type = VK_IMAGE_TYPE_2D;
@@ -505,6 +540,19 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
         e->bytes = mi.size;
         own_bytes += e->bytes;
     }
+    // The recompression accounting of the perf line (vk_texture_new_submit): the scan's cost, the format
+    // each entry took and where the image lives — the numbers that sized the BC1 change and watch it after.
+    if (f.astc_bc && vk_astc_bc() == 2) {
+        if (bc_verdict >= 0) {
+            sc_n++, sc_bytes += L.size, sc_ns += bc_scan_ns;
+            if (f.astc_bc == 2) sc_op_n++, sc_op_bytes += L.size;
+            else sc_al_n++, sc_al_bytes += L.size;
+        } else {
+            sc_skip_n++;
+        }
+        if (e->bound_to) sc_bound_n++, sc_bound_bytes += L.size;
+        else if (e->alloc) sc_own_n++, sc_own_bytes += e->bytes;
+    }
     VkTexImage *p = &e->pub;
     p->image = img;
     p->format = f.vk;
@@ -593,6 +641,8 @@ static void rel_unlink(Tex *e) {
     e->rel_prev = e->rel_next = NULL;
 }
 
+static void bc_flip_remove(Tex *e);   // destroy_tex calls it; defined with the trade list below
+
 static void destroy_tex(Tex *e) {
     own_remove(e);
     if (e->bytes) own_bytes -= e->bytes;
@@ -607,10 +657,44 @@ static void destroy_tex(Tex *e) {
             if (p->next_at == e) { p->next_at = e->next_at; break; }
     }
     if (e->released) nreleased--, rel_unlink(e);
+    if (e->bc_flip) bc_flip_remove(e);
     vk_exec_image_gone(e->pub.image);
     vk_defer_image(e->pub.image, e->alloc);
     free(e->snap);
     free(e);
+}
+
+// A recompressed entry whose storage's alpha verdict turned against its image's format (upload): destroyed at
+// the next submit (sweep_flip), so the next lookup recreates it in the other format from a fresh scan. Until
+// then it answers lookups with the image it has — one submit of the old content, like a released entry being
+// replaced. upload and make_fresh leave a traded entry alone (bc_flip), so nothing writes into an image whose
+// format the content no longer matches.
+static void bc_trade(Tex *e) {
+    static volatile int32_t n_trade;
+    if (e->bc_flip) return;
+    if (nbc_flip == cbc_flip) {
+        cbc_flip = cbc_flip ? 2 * cbc_flip : 16;
+        if (!(bc_flip_list = realloc(bc_flip_list, sizeof *bc_flip_list * (size_t)cbc_flip)))
+            rt_fatal("vk: out of memory for the BC1 trade list");
+    }
+    bc_flip_list[nbc_flip++] = e;
+    e->bc_flip = 1;
+    log_limited(&n_trade, "texture %#llx fmt %#x %ux%u: its content's alpha verdict changed; the entry is "
+                "recreated as %s", (unsigned long long)e->pub.addr, e->t.d.format, e->t.d.width, e->t.d.height,
+                e->f.astc_bc == 2 ? "BC3" : "BC1");
+}
+
+static void bc_flip_remove(Tex *e) {   // destroy_tex: the traded entry dies, leave the list first
+    for (int i = 0; i < nbc_flip; i++)
+        if (bc_flip_list[i] == e) {
+            memmove(bc_flip_list + i, bc_flip_list + i + 1, sizeof *bc_flip_list * (size_t)(nbc_flip - 1 - i));
+            nbc_flip--;
+            break;
+        }
+}
+
+static void sweep_flip(void) {   // tex_lock held, each submit: recreate the traded entries' format
+    while (nbc_flip) destroy_tex(bc_flip_list[0]);
 }
 
 // Released entries with another descriptor at the same address are replaced; past RELEASED_MAX released entries the
@@ -785,9 +869,22 @@ static void upload(Tex *e) {
     const tex_t *t = &e->t;
     const nvn_texdesc *d = &t->d;
     int bw, bh, bpb = nvn_fmt_bpb(d->format, &bw, &bh);
-    if (!bpb || !t->mem) return;
+    if (!bpb || !t->mem || e->bc_flip) return;
     uint64_t p0 = perf_begin(), u0 = kern_now_ns();
     int linear = nvn_tex_is_linear(d), is3d = d->target == NVN_TEXTURE_TARGET_3D, one_d = e->pub.type == VK_IMAGE_TYPE_1D;
+    // AC_ASTC_BC=bc1: an upload is the moment the storage's content is read, so the alpha scan runs again.
+    // A texture whose content turned opaque or alpha-carrying since its image was made — between the
+    // creation scan and a first upload of unwritten storage, or by a CPU rewrite — trades the entry in for
+    // the other format (bc_trade) instead of uploading into an image that cannot hold it. Nothing is scanned
+    // on a BC3-forced device or for 3D targets, which never take BC1.
+    if (e->f.astc_bc && vk_astc_bc() == 2 && !is3d) {
+        int alpha = astc_storage_alpha_possible(t->mem, e->t.L.size, e->f.astc_bw, e->f.astc_bh);
+        if ((alpha != 0) != (e->f.astc_bc != 2)) {
+            bc_trade(e);
+            perf_end(PERF_TEX, p0);
+            return;
+        }
+    }
     uint32_t levels = linear ? 1 : e->pub.levels, layers = linear ? 1 : e->pub.layers;
     int astc = e->f.astc_bw != 0, rgb = e->f.expand_rgb;
     int agpu = astc && vk_astc_gpu(), acheck = agpu && vk_astc_mode() == VK_ASTC_CHECK;   // raw blocks to the GPU
@@ -966,7 +1063,7 @@ static void make_fresh_snap(Tex *e) {
 // Bytes per block and block size of the image's VkFormat (ASTC decodes to RGBA8, RGB expands to RGBA); 0 when the
 // VkFormat substitutes another one of unknown size.
 static int img_block(const Tex *e, int *bw, int *bh) {
-    if (e->f.astc_bc) { *bw = *bh = 4; return 16; }
+    if (e->f.astc_bc) { *bw = *bh = 4; return e->f.astc_bc == 2 ? 8 : 16; }
     if (e->f.astc_bw) { *bw = *bh = 1; return 4; }
     int b = nvn_fmt_bpb(e->t.d.format, bw, bh);
     if (e->f.expand_rgb) { *bw = *bh = 1; return b / 3 * 4; }
@@ -1324,6 +1421,7 @@ uint32_t vk_texture_epoch(void) { return __atomic_load_n(&submit_epoch, __ATOMIC
 void vk_texture_new_submit(void) {
     lock();
     if (!++submit_epoch) submit_epoch = 1;
+    sweep_flip();
     sweep_pressure();
     if (!(submit_epoch & 3)) sweep_cache();
     static uint64_t log_at;
@@ -1338,6 +1436,18 @@ void vk_texture_new_submit(void) {
                (unsigned long long)f * 60, (unsigned long long)ru_n, ru_bytes / 1048576.0, ru_ns / 1e6,
                (unsigned long long)ru_wt_n, ru_wt_bytes / 1048576.0, ru_wt_ns / 1e6);
         ru_n = ru_bytes = ru_ns = ru_wt_n = ru_wt_bytes = ru_wt_ns = 0;
+        if (sc_n)
+            rt_log("perf: frame %llu: BC1: %llu recompressed ASTC textures scanned (%.1f MiB, %.2f ms, "
+                   "%.1f us per MiB): BC1 %llu (%.1f MiB), BC3 %llu (%.1f MiB); pool-bound %llu (%.1f MiB), "
+                   "own memory %llu (%.1f MiB), skipped %llu",
+                   (unsigned long long)f * 60, (unsigned long long)sc_n, sc_bytes / 1048576.0, sc_ns / 1e6,
+                   sc_bytes ? sc_ns / 1e3 / (sc_bytes / 1048576.0) : 0.0,
+                   (unsigned long long)sc_op_n, sc_op_bytes / 1048576.0,
+                   (unsigned long long)sc_al_n, sc_al_bytes / 1048576.0,
+                   (unsigned long long)sc_bound_n, sc_bound_bytes / 1048576.0,
+                   (unsigned long long)sc_own_n, sc_own_bytes / 1048576.0, (unsigned long long)sc_skip_n);
+        sc_n = sc_bytes = sc_ns = sc_op_n = sc_op_bytes = sc_al_n = sc_al_bytes = 0;
+        sc_bound_n = sc_bound_bytes = sc_own_n = sc_own_bytes = sc_skip_n = 0;
         uint64_t ck, calls, untr;
         vk_mem_snap_stats(&ck, &calls, &untr);
         rt_log("perf: frame %llu: binding storage checks %llu (texture %llu), write-watch snapshot queries %llu, untracked %llu",
@@ -1452,6 +1562,14 @@ static int image_texels_at(Tex *e, const Region *g, const NVNcopyRegion *r, uint
         uint32_t mw = e->t.d.width >> g->level, mh = e->t.d.height >> g->level;
         int bc_cut = e->f.astc_bc && (((w & 3) && (uint32_t)r->xoffset + w != (mw ? mw : 1)) ||
                                       ((h & 3) && (uint32_t)r->yoffset + h != (mh ? mh : 1)));
+        // A BC1 image holds no alpha: a region the game writes with alpha content through this path (a
+        // GPU-owned or non-mirrored ASTC texture, which the re-scan of upload never sees) is encoded with
+        // its alpha dropped. Logged when it happens, so the corner stays visible; the mirrored path writes
+        // the storage instead and trades the entry at its next upload.
+        if (agpu && e->f.astc_bc == 2 &&
+            astc_storage_alpha_possible(stg, (uint64_t)slice * g->nz, e->f.astc_bw, e->f.astc_bh))
+            log_limited(&n_astc, "WriteTexels of alpha content into the BC1 image of texture %#llx: alpha not "
+                        "stored", (unsigned long long)e->pub.addr);
         if (agpu && !bc_cut) {   // bc_cut: nothing recorded, logged below as not decoded
             VkAstcRegion *ar = calloc((size_t)g->nz, sizeof *ar);
             for (int z = 0; z < g->nz; z++)

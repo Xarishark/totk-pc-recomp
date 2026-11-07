@@ -1,11 +1,15 @@
 // ASTC textures on the GPU: the AC_ASTC knob, a compute decoder that turns raw blocks into the RGBA8 image the CPU
 // decoder (tex_astc.c) would have written, and the native ASTC formats where the device samples them itself.
 //
-// AC_ASTC_BC = 1 (gpu mode only, default 1): a second pass (runtime/shaders/bc3_encode.comp) encodes the decoded
-// texels to BC3 and the image is BC3, 8 bits per texel instead of 32, a quarter of the video memory the RGBA8 decode
-// takes. Devices that sample ASTC themselves never decode, so the default leaves them on native ASTC. 0 keeps the
-// decoded images as RGBA8, at BC3's cost being visible: slightly blockier gradients, and data textures (normal maps)
-// losing some precision. --probe-astc holds the encoder to PSNR bounds.
+// AC_ASTC_BC = bc1 (gpu mode only, default): a second pass encodes the decoded texels to block compression and
+// the image is compressed instead of RGBA8. The alpha scan of the raw storage (tex_astc.c
+// astc_storage_alpha_possible, vk_texture.c) picks the format per texture: one whose every block decodes
+// alpha 255 takes BC1 (runtime/shaders/bc1_encode.comp, 4 bits per texel), the rest BC3
+// (runtime/shaders/bc3_encode.comp, 8 bits per texel) — a quarter to a half of the video memory the RGBA8
+// decode takes, the same colour quality either way (the BC3 colour block is a BC1 block). Devices that
+// sample ASTC themselves never decode, so the default leaves them on native ASTC. 1 forces BC3 for every
+// texture, 0 keeps the decoded images as RGBA8, at BC's cost being visible: slightly blockier gradients,
+// and data textures (normal maps) losing some precision. --probe-astc holds both encoders to PSNR bounds.
 //
 // AC_ASTC = auto (default): native when the device reports textureCompressionASTC_LDR and the format's features,
 // else gpu. gpu: compute decode into RGBA8 (runtime/shaders/astc_decode.comp). native: like auto, but logs when the
@@ -22,6 +26,7 @@
 #include <string.h>
 
 #include "astc_decode_spv.h"
+#include "bc1_encode_spv.h"
 #include "bc3_encode_spv.h"
 #include "cfg.h"
 #include "host.h"
@@ -107,7 +112,10 @@ static struct {
     VkPipelineLayout layout;
     VkPipeline pipe;
     VkPipeline bc_pipe;           // the BC3 encoder (AC_ASTC_BC): the decoder's layout, bindings 0 and 1
-    int bc;                       // 1: ASTC images are BC3 (vk_astc_bc)
+    VkPipeline bc1_pipe;          // the BC1 encoder (AC_ASTC_BC=bc1): the same layout, one uvec2 block out
+    int bc;                       // the recompression of decoded ASTC images: 0 none (RGBA8), 1 BC3
+                                  // (AC_ASTC_BC=1), 2 BC1 for the textures the alpha scan (tex_astc.c)
+                                  // proves opaque, BC3 for the rest (AC_ASTC_BC=bc1, the default)
     PFN_vkCmdPushDescriptorSetKHR push;
     VkBuffer tab;                 // device-local copy of the tables
     VmaAllocation tab_alloc;
@@ -299,9 +307,9 @@ static int create_pipeline(VkCtx *c) {
     return 1;
 }
 
-// AC_ASTC_BC=1: the BC3 encoder, when the device samples BC3 (every desktop GPU does); 0 leaves ASTC as RGBA8.
+// The BC3 encoder, when the device samples BC3 (every desktop GPU does): AC_ASTC_BC=1 recompresses every
+// decoded ASTC texture to it, and AC_ASTC_BC=bc1 the ones the alpha scan finds alpha-carrying.
 static int create_bc_pipeline(VkCtx *c) {
-    if (!cfg_bool("AC_ASTC_BC")) return 0;
     VkFormatProperties p;
     vkGetPhysicalDeviceFormatProperties(c->phys, VK_FORMAT_BC3_SRGB_BLOCK, &p);
     VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
@@ -325,6 +333,36 @@ static int create_bc_pipeline(VkCtx *c) {
         return 0;
     }
     rt_log("vk: ASTC textures are encoded to BC3 after the decode (AC_ASTC_BC)");
+    return 1;
+}
+
+// The BC1 encoder (AC_ASTC_BC=bc1): the same colour encoding for the textures the alpha scan proves opaque,
+// at half of BC3's blocks. The game's own DXT1 textures need BC1 sampling, so every device that runs the
+// game has it; one that reports otherwise keeps every recompressed texture in BC3.
+static int create_bc1_pipeline(VkCtx *c) {
+    VkFormatProperties p;
+    vkGetPhysicalDeviceFormatProperties(c->phys, VK_FORMAT_BC1_RGB_SRGB_BLOCK, &p);
+    VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    if ((p.optimalTilingFeatures & need) != need) {
+        rt_log("vk: AC_ASTC_BC=bc1: the device does not sample BC1; the opaque textures stay BC3");
+        return 0;
+    }
+    VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                   .codeSize = sizeof bc1_encode_spv, .pCode = bc1_encode_spv};
+    VkShaderModule m = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(c->device, &mi, NULL, &m) != VK_SUCCESS) return 0;
+    VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                                      .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
+                                      .layout = G.layout};
+    VkResult r = vkCreateComputePipelines(c->device, VK_NULL_HANDLE, 1, &ci, NULL, &G.bc1_pipe);
+    vkDestroyShaderModule(c->device, m, NULL);
+    if (r != VK_SUCCESS) {
+        G.bc1_pipe = VK_NULL_HANDLE;
+        rt_log("vk: AC_ASTC_BC=bc1: the BC1 encoder pipeline failed (%d); the opaque textures stay BC3", (int)r);
+        return 0;
+    }
+    rt_log("vk: ASTC textures the alpha scan finds opaque are encoded to BC1, the rest to BC3 (AC_ASTC_BC=bc1)");
     return 1;
 }
 
@@ -359,7 +397,24 @@ int vk_astc_mode(void) {
             rt_log("vk: ASTC compute decoder unavailable on %s: ASTC decodes on the CPU", c->props.deviceName);
         }
         if (G.failed && m != VK_ASTC_NATIVE) m = VK_ASTC_CPU;
-        G.bc = m == VK_ASTC_GPU && G.pipe && create_bc_pipeline(c);
+        G.bc = 0;
+        if (m == VK_ASTC_GPU && G.pipe) {   // the recompression knob decides which encoders are built
+            const char *b = cfg_get("AC_ASTC_BC");   // what the ini or a profile set; NULL is the absence
+            if (!b || !*b) {   // unset: BC3 with 6 GiB or more of device-local budget, BC1 below it
+                uint64_t used, budget;
+                int exact;
+                int enough = vk_mem_vram(&used, &budget, &exact) && budget >= 6ull << 30;
+                rt_log("vk: AC_ASTC_BC unset, %.1f GiB of the device-local %s: AC_ASTC_BC=%s", budget / 1073741824.0,
+                       exact ? "budget" : "heaps", enough ? "1" : "bc1");
+                b = enough ? "1" : "bc1";
+            }
+            if (!strcmp(b, "0")) G.bc = 0;
+            else if (!strcmp(b, "1")) G.bc = create_bc_pipeline(c) ? 1 : 0;
+            else {
+                if (strcmp(b, "bc1")) rt_log("vk: AC_ASTC_BC=%s is not bc1, 1 or 0: bc1", b);
+                G.bc = create_bc_pipeline(c) ? (create_bc1_pipeline(c) ? 2 : 1) : 0;
+            }
+        }
         G.mode = m;
         rt_log("vk: ASTC textures: %s (textureCompressionASTC_LDR %d)", mode_name(m), native_device(c));
     }
@@ -392,7 +447,7 @@ int vk_astc_bc(void) {
     VkCtx *c = vk_ctx();
     if (!c || vk_astc_mode() != VK_ASTC_GPU) return 0;
     plat_mutex_lock_shared(&g_lock);
-    int on = G.dev == c->device && G.bc;
+    int on = G.dev == c->device ? G.bc : 0;   // 0, 1 or 2 (&& would collapse 2 into 1)
     plat_mutex_unlock_shared(&g_lock);
     return on;
 }
@@ -413,7 +468,9 @@ static VkDeviceSize region_out(const VkAstcRegion *r) { return (VkDeviceSize)r->
 static VkDeviceSize region_in(const VkAstcRegion *r, uint32_t bw, uint32_t bh) {
     return (VkDeviceSize)((r->w + bw - 1) / bw) * ((r->h + bh - 1) / bh) * r->slices * 16;
 }
-static VkDeviceSize region_bc(const VkAstcRegion *r) { return region_in(r, 4, 4); }   // BC3: 16 bytes per 4x4 block
+static VkDeviceSize region_bc(const VkAstcRegion *r, int bc) {   // BC1: 8, BC3: 16 bytes per 4x4 block
+    return region_in(r, 4, 4) >> (bc == 2 ? 1 : 0);
+}
 
 typedef struct { uint32_t in_base, out_base, width, height, bx, bslice; } BcPush;   // bc3_encode.comp Params
 
@@ -424,7 +481,8 @@ int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, cons
     VkCtx *c = vk_ctx();
     if (!c || !vk_astc_gpu() || bw < 4 || bh < 4 || bw > 12 || bh > 12) return 0;
     plat_mutex_lock_shared(&g_lock);
-    VkPipeline pipe = G.dev == c->device ? G.pipe : VK_NULL_HANDLE, bc_pipe = G.dev == c->device ? G.bc_pipe : VK_NULL_HANDLE;
+    VkPipeline pipe = G.dev == c->device ? G.pipe : VK_NULL_HANDLE;
+    VkPipeline bc_pipe = !bc || G.dev != c->device ? VK_NULL_HANDLE : bc == 2 ? G.bc1_pipe : G.bc_pipe;
     plat_mutex_unlock_shared(&g_lock);
     if (!pipe || (bc && !bc_pipe)) return 0;
     if (bc) {
@@ -432,20 +490,20 @@ int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, cons
         for (int i = 0; i < n; i++)   // a BC copy starts on a block corner; a WriteTexels region of a 5x5 or 6x6 footprint may not
             if ((rg[i].offset.x & 3) || (rg[i].offset.y & 3)) {
                 if (plat_inc32(&n_unaligned) <= 16)
-                    rt_log("vk: ASTC to BC3: region at %d,%d is not on a 4x4 block corner: texture left as it was",
+                    rt_log("vk: ASTC to BC: region at %d,%d is not on a 4x4 block corner: texture left as it was",
                            rg[i].offset.x, rg[i].offset.y);
                 return 0;
             }
     }
-    // chunks of consecutive regions; scratch = the largest chunk's blocks, then its texels, then (bc) its BC3 blocks
-    VkDeviceSize out_total = 0, cap_in = 0, cap_out = 0, cap_bc = 0, ci = 0, co = 0, cb3 = 0;
+    // chunks of consecutive regions; scratch = the largest chunk's blocks, then its texels, then (bc) its BC blocks
+    VkDeviceSize out_total = 0, cap_in = 0, cap_out = 0, cap_bc = 0, ci = 0, co = 0, cbo = 0;
     for (int i = 0; i < n; i++) {
         VkDeviceSize o = region_out(&rg[i]), b = region_in(&rg[i], bw, bh);
-        if (co && co + o > CHUNK_OUT) ci = co = cb3 = 0;
-        ci += b, co += o, cb3 += region_bc(&rg[i]), out_total += o;
+        if (co && co + o > CHUNK_OUT) ci = co = cbo = 0;
+        ci += b, co += o, cbo += region_bc(&rg[i], bc), out_total += o;
         if (ci > cap_in) cap_in = ci;
         if (co > cap_out) cap_out = co;
-        if (cb3 > cap_bc) cap_bc = cb3;
+        if (cbo > cap_bc) cap_bc = cbo;
     }
     if (!out_total) return 1;
     VkDeviceSize al = c->props.limits.minStorageBufferOffsetAlignment;   // the texels bind at cap_in, the BC3 blocks after them
@@ -562,13 +620,13 @@ int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, cons
             for (int i = i0; i < i1; i++) {
                 const VkAstcRegion *r = &rg[i];
                 uint32_t bx4 = (r->w + 3) / 4, by4 = (r->h + 3) / 4;
-                BcPush pc = {.in_base = (uint32_t)(to / 4), .out_base = (uint32_t)(bo / 16), .width = r->w, .height = r->h,
-                             .bx = bx4, .bslice = bx4 * by4};
+                BcPush pc = {.in_base = (uint32_t)(to / 4), .out_base = (uint32_t)(bo / (bc == 2 ? 8 : 16)),
+                             .width = r->w, .height = r->h, .bx = bx4, .bslice = bx4 * by4};
                 vkCmdPushConstants(cb, G.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
                 vkCmdDispatch(cb, (bx4 + 7) / 8, (by4 + 7) / 8, r->slices);
                 VkBufferImageCopy *cp = &copies[i - i0];
                 cp->bufferOffset = cap_in + cap_out + bo, cp->bufferRowLength = bx4 * 4, cp->bufferImageHeight = by4 * 4;
-                to += region_out(r), bo += region_bc(r);
+                to += region_out(r), bo += region_bc(r, bc);
             }
         }
         mem_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
@@ -612,6 +670,7 @@ void vk_astc_release(void) {
     if (c && G.dev == c->device) {
         if (G.pipe) vkDestroyPipeline(c->device, G.pipe, NULL);
         if (G.bc_pipe) vkDestroyPipeline(c->device, G.bc_pipe, NULL);
+        if (G.bc1_pipe) vkDestroyPipeline(c->device, G.bc1_pipe, NULL);
         if (G.layout) vkDestroyPipelineLayout(c->device, G.layout, NULL);
         if (G.dsl) vkDestroyDescriptorSetLayout(c->device, G.dsl, NULL);
         if (G.tab) vmaDestroyBuffer(c->vma, G.tab, G.tab_alloc);

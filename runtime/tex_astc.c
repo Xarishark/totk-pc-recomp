@@ -523,3 +523,100 @@ void astc_decode_ldr(const uint8_t *blocks, uint32_t width, uint32_t height, uin
         }
     }
 }
+
+// ---- alpha scan (the BC1 choice of vk_texture.c, docs/bc1-plan.md) ----
+
+// Whether any texel of one block can decode to alpha != 255, decided from the header alone wherever that is
+// exact. The header parse mirrors astc_decode_block above and is held to it by the --probe-astc oracle,
+// which decodes every block the scan calls opaque and checks its alpha bytes.
+//   - error blocks decode to magenta, alpha 255: opaque;
+//   - a void extent is a constant whose alpha is the top byte of its UNORM16 alpha, block[15];
+//   - the alpha-free LDR modes (L, RGB, RGB scale) put both endpoint alphas at 255, and the HDR modes decode
+//     their partition to magenta: opaque without looking at the values;
+//   - an alpha-carrying mode (LA, RGBA, RGB scale + two alphas) decodes its endpoint values: a texel's alpha
+//     interpolates the two endpoint alphas, so it can differ from 255 only when an endpoint alpha does.
+// A block whose footprint this decoder cannot take (not 4..12 x 4..12) is reported alpha-carrying: the
+// caller then keeps the texture in BC3.
+bool astc_block_alpha_possible(const uint8_t block[16], uint32_t bw, uint32_t bh) {
+    if (bw < 4 || bh < 4 || bw > 12 || bh > 12) return true;
+    Bits128 b = {load64(block), load64(block + 8)};
+    uint32_t mode = (uint32_t)(b.lo & 0x7FF);
+
+    if ((mode & 0x1FF) == 0x1FC) {  // void extent
+        if (mode & 0x200) return false;           // HDR constant: error in LDR -> magenta
+        if ((b.lo >> 10 & 3) != 3) return false;  // reserved bits -> magenta
+        uint32_t s0 = rbits(&b, 12, 13), s1 = rbits(&b, 25, 13);
+        uint32_t t0 = rbits(&b, 38, 13), t1 = rbits(&b, 51, 13);
+        bool all_ones = s0 == 0x1FFF && s1 == 0x1FFF && t0 == 0x1FFF && t1 == 0x1FFF;
+        if ((s0 >= s1 || t0 >= t1) && !all_ones) return false;
+        return block[15] != 0xFF;
+    }
+
+    BlockMode bm;
+    if (!block_mode_2d(mode, bw, bh, &bm)) return false;  // error -> magenta
+    int pcount = (int)(b.lo >> 11 & 3) + 1;
+    if (bm.dual && pcount == 4) return false;
+
+    int cem[4], high = 0;
+    if (pcount == 1) {
+        cem[0] = (int)(b.lo >> 13 & 0xF);
+    } else {
+        high = 3 * pcount - 4;
+        int below = 128 - bm.wbits - high;
+        uint32_t enc = (uint32_t)(b.lo >> 23 & 0x3F) | rbits(&b, below, high) << 6;
+        uint32_t base = enc & 3;
+        if (base == 0) {
+            for (int i = 0; i < pcount; i++) cem[i] = (int)(enc >> 2 & 0xF);
+            high = 0;   // the CEM bits were all in the low enc, none borrowed from below
+        } else {
+            base--;
+            for (int i = 0; i < pcount; i++) cem[i] = (int)(((enc >> (2 + i) & 1) + base) << 2);
+            for (int i = 0; i < pcount; i++) cem[i] |= (int)(enc >> (2 + pcount + 2 * i) & 3);
+        }
+    }
+    int ccount = 0;
+    for (int i = 0; i < pcount; i++) ccount += ((cem[i] >> 2) + 1) * 2;
+    if (ccount > 18) return false;
+    int cbits = (pcount == 1 ? 111 : 99) - bm.wbits - high - (bm.dual ? 2 : 0);
+    if (cbits < 0) cbits = 0;
+    int cq = -1;
+    for (int q = 20; q >= 0; q--) {
+        if (ise_bitcount(ccount, q) <= cbits) { cq = q; break; }
+    }
+    if (cq < QUANT_6) return false;
+
+    int carries = 0;   // partitions whose endpoints can hold alpha
+    for (int i = 0; i < pcount; i++) carries += cem[i] == 4 || cem[i] == 5 || cem[i] == 10 || cem[i] == 12 || cem[i] == 13;
+    if (!carries) return false;
+
+    uint8_t cv[18];
+    ise_decode(&b, pcount == 1 ? 17 : 29, ccount, cq, cv);
+    if (cq != QUANT_256) {
+        const uint8_t *ct = cunq_data + cunq_off[cq - QUANT_6];
+        for (int i = 0; i < ccount; i++) cv[i] = ct[cv[i]];
+    }
+    int e0[4], e1[4];
+    for (int p = 0, k = 0; p < pcount; p++) {
+        int n = ((cem[p] >> 2) + 1) * 2;
+        // unpack_endpoints returns false for an HDR mode: that partition decodes to magenta, alpha 255
+        if ((cem[p] == 4 || cem[p] == 5 || cem[p] == 10 || cem[p] == 12 || cem[p] == 13) &&
+            unpack_endpoints(cem[p], cv + k, e0, e1) && (e0[3] != 255 || e1[3] != 255))
+            return true;
+        k += n;
+    }
+    return false;
+}
+
+// Whether any 16-byte unit of a raw ASTC storage can hold an alpha-carrying block: the answer to "can this
+// texture's decoded alpha differ from 255", for the BC1 / BC3 choice (vk_texture.c). The Tegra block-linear
+// swizzle permutes 16-byte sectors only (tex_deswizzle.c), so every ASTC block of a block-linear texture is
+// one contiguous unit of its storage, and pitch storage has its blocks contiguous as well; the walk at
+// 16-byte steps covers every real block. It also reads the padding between levels and layers as if it were
+// a block, which can only make the answer yes (the texture stays BC3), never yes-with-alpha-hidden, so the
+// verdict is sound. The texture's own footprint decides which block modes are valid, as in the decode.
+// 3D textures are the caller's to exclude: their block modes are 3D and this walk cannot judge them.
+bool astc_storage_alpha_possible(const uint8_t *mem, uint64_t bytes, uint32_t bw, uint32_t bh) {
+    for (uint64_t off = 0; off + 16 <= bytes; off += 16)
+        if (astc_block_alpha_possible(mem + off, bw, bh)) return true;
+    return false;
+}

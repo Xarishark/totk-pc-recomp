@@ -23,9 +23,11 @@
 #include "perfmon.h"
 #include "platform/platform.h"
 #include "sysinfo.h"
+#include "vk.h"
 
 static PlatMutex g_lock = PLAT_MUTEX_INIT;   // everything below
 static PerfStats g_stats;                    // the machine numbers the sampler wrote; the rest is made per snapshot
+static char g_os_name[96];                   // the overlay's OS line, plat_os_version, read once
 
 // ---- frames
 static float g_ring[PERF_HISTORY];
@@ -283,10 +285,28 @@ static void machine_clear(PerfStats *s) {
 static void machine_copy(PerfStats *d, const PerfStats *s) {
     memcpy(d->cpu_name, s->cpu_name, sizeof d->cpu_name);
     memcpy(d->gpu_name, s->gpu_name, sizeof d->gpu_name);
+    memcpy(d->os_name, s->os_name, sizeof d->os_name);
+    memcpy(d->tex_mode, s->tex_mode, sizeof d->tex_mode);
     d->cpu_total_pct = s->cpu_total_pct, d->cpu_game_pct = s->cpu_game_pct, d->cpu_temp_c = s->cpu_temp_c;
     d->ram_used_mb = s->ram_used_mb, d->ram_total_mb = s->ram_total_mb, d->ram_game_mb = s->ram_game_mb;
     d->gpu_pct = s->gpu_pct, d->gpu_temp_c = s->gpu_temp_c, d->gpu_power_w = s->gpu_power_w;
     d->gpu_clock_mhz = s->gpu_clock_mhz, d->vram_used_mb = s->vram_used_mb, d->vram_total_mb = s->vram_total_mb;
+}
+
+// The texture holding as the overlay shows it: the ASTC mode (vk_astc.c) with the recompression the AC_ASTC_BC
+// knob resolved to. English like the other technical strings the panel shows (the device names, FSR's line); the
+// labels around them are ui_text.c's. AC_ASTC and ASTC_BC are startup knobs, so this does not move in play.
+static void tex_holding(char *out, size_t n) {
+    switch (vk_astc_mode()) {
+    case VK_ASTC_NATIVE: snprintf(out, n, "ASTC native"); break;
+    case VK_ASTC_GPU: case VK_ASTC_CHECK: {
+        int bc = vk_astc_bc();
+        snprintf(out, n, bc == 2 ? "ASTC decoded to BC1 (opaque) / BC3" : bc == 1 ? "ASTC decoded to BC3"
+                                                                                 : "ASTC decoded to RGBA8");
+        break;
+    }
+    default: snprintf(out, n, "ASTC decoded on the CPU (RGBA8)"); break;
+    }
 }
 
 static void sampler(void *arg) {
@@ -302,6 +322,9 @@ static void sampler(void *arg) {
     float vram_total = g_vram_total_mb;
     plat_mutex_unlock(&g_lock);
     sysinfo_cpu_name(s.cpu_name, sizeof s.cpu_name);
+    if (!g_os_name[0]) plat_os_version(g_os_name, sizeof g_os_name);
+    snprintf(s.os_name, sizeof s.os_name, "%s", g_os_name);
+    tex_holding(s.tex_mode, sizeof s.tex_mode);
     if (!nv.tried) nvml_open(s.gpu_name);
     if (!nv.ok && !adl.tried) adl_open(s.gpu_name, bus);
     PlatLoad *l = plat_load_open(have_luid ? luid : NULL, bus);

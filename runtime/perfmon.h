@@ -27,6 +27,9 @@ typedef struct {
     // ADL (AMD)
     char gpu_name[96];
     float gpu_pct, gpu_temp_c, gpu_power_w, gpu_clock_mhz, vram_used_mb, vram_total_mb;
+    // the OS the game runs on (plat_os_version), and how the textures of the game are held in video memory
+    // (vk_astc.c: the ASTC mode with the recompression the AC_ASTC_BC knob resolved to)
+    char os_name[96], tex_mode[48];
     // per frame, averaged over the last half second: replay (NVN to Vulkan recording), GPU busy time (timestamps; -1
     // without them), the render thread's waits for pipeline builds, shader translation and texture uploads, and the
     // textures uploaded

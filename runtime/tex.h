@@ -41,6 +41,13 @@ bool astc_decode_block(const uint8_t block[16], uint32_t bw, uint32_t bh, bool s
 // tex_astc_mt.c: the same bytes as astc_decode_ldr, large images split by block rows over a worker pool; blocks.
 void astc_decode_ldr_mt(const uint8_t *blocks, uint32_t width, uint32_t height, uint32_t bw, uint32_t bh, bool srgb,
                         uint8_t *rgba_out);
+// Whether one block / a whole raw ASTC storage can decode to alpha != 255 (tex_astc.c, the BC1 choice of
+// vk_texture.c): error blocks decode to magenta (opaque), alpha-free endpoint modes are opaque without
+// reading their values, and an alpha-carrying mode is judged from its endpoint alphas. The storage walk
+// reads every 16-byte unit (the swizzle never splits a block, tex_deswizzle.c), padding included, which can
+// only answer yes. The --probe-astc oracle decodes every block the scan calls opaque and checks its alpha.
+bool astc_block_alpha_possible(const uint8_t block[16], uint32_t bw, uint32_t bh);
+bool astc_storage_alpha_possible(const uint8_t *mem, uint64_t bytes, uint32_t bw, uint32_t bh);
 
 // ---- vk_formats.c (LAS Recomp runtime/nvn/vulkan/textures.c format table, MIT) ----
 typedef struct TexVkFormat {
@@ -54,7 +61,8 @@ typedef struct TexVkFormat {
     uint8_t astc_bw, astc_bh;     // nonzero: ASTC decoded into vk (RGBA8, same colour space) by vk_astc.c or tex_astc.c;
                                   // zero for native ASTC (vk == ideal, raw blocks as for BC)
     uint8_t astc_srgb;
-    uint8_t astc_bc;              // ASTC decoded and then encoded to BC3 (vk BC3, AC_ASTC_BC; vk_astc.c)
+    uint8_t astc_bc;              // 1: ASTC decoded then encoded to BC3 (AC_ASTC_BC); 2: to BC1, chosen per
+                                  // texture by the alpha scan when AC_ASTC_BC=bc1 (vk_astc.c, vk_texture.c)
     uint8_t depth, stencil;       // aspect flags of depth / stencil formats
     const char *note;             // why a fallback or an expansion was chosen; NULL when the mapping is direct
     const char *reason;           // unmapped formats only: why there is no Vulkan format

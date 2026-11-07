@@ -1075,7 +1075,7 @@ static float perf_gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
 // The picture lines: the window, the game image the present shows and the 3D scene it holds (resolution.c), how the
 // present scales the image to the window (gfx_present.c, the last present), the frame limit and the presentation mode
 // in use.
-static void perf_picture(const MenuTarget *t, const ImVec4 &c) {
+static void perf_picture(const MenuTarget *t, const ImVec4 &c, const PerfStats &s) {
     unsigned out[2], scene[2];
     res_sizes(out, scene);
     res_game_size(out);   // the res1080 / res1062 sets: the game renders its scene at its output size
@@ -1098,17 +1098,18 @@ static void perf_picture(const MenuTarget *t, const ImVec4 &c) {
     if (hz > 0) snprintf(v[4], sizeof v[4], menu_text(UI_MENU_OV_FPS), hz);
     const char *pm = present_name(gfx_window_present_mode());
     snprintf(v[5], sizeof v[5], "%s", pm ? pm : menu_text(UI_MENU_OV_NONE));
-    static const UiTextId labels[6] = {UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE,
-                                       UI_MENU_OV_SCALING, UI_MENU_OV_LIMIT, UI_MENU_OV_PRESENT};
+    static const UiTextId labels[7] = {UI_MENU_OV_WINDOW, UI_MENU_OV_OUTPUT, UI_MENU_OV_SCENE,
+                                       UI_MENU_OV_SCALING, UI_MENU_OV_LIMIT, UI_MENU_OV_PRESENT, UI_MENU_OV_TEX};
     if (!ImGui::BeginTable("##perfp", 2, ImGuiTableFlags_SizingFixedFit)) return;
     float vw = 0;
-    for (auto &s : v) vw = fmaxf(vw, ImGui::CalcTextSize(s).x);
+    for (auto &line : v) vw = fmaxf(vw, ImGui::CalcTextSize(line).x);
+    vw = fmaxf(vw, ImGui::CalcTextSize(s.tex_mode).x);
     ImGui::TableSetupColumn("##p0", ImGuiTableColumnFlags_WidthStretch);
     ImGui::TableSetupColumn("##p1", ImGuiTableColumnFlags_WidthFixed, vw);
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         perf_label(labels[i], c);
         ImGui::TableNextColumn();
-        perf_right(v[i], false);
+        perf_right(i == 6 ? s.tex_mode : v[i], false);
     }
     ImGui::EndTable();
 }
@@ -1187,9 +1188,10 @@ static void perf_full_draw(const MenuTarget *t, float scale) {
         perf_cell(UI_MENU_OV_PER_FRAME, s.tex_uploads);
         ImGui::EndTable();
     }
-    perf_picture(t, pic_c);
+    perf_picture(t, pic_c, s);
     if (s.gpu_name[0]) ImGui::TextDisabled("%s", s.gpu_name);
     if (s.cpu_name[0]) ImGui::TextDisabled("%s", s.cpu_name);
+    if (s.os_name[0]) ImGui::TextDisabled("%s: %s", menu_text(UI_MENU_OV_OS), s.os_name);
     ImGui::End();
 }
 
