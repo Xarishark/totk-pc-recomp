@@ -399,15 +399,7 @@ int vk_astc_mode(void) {
         if (G.failed && m != VK_ASTC_NATIVE) m = VK_ASTC_CPU;
         G.bc = 0;
         if (m == VK_ASTC_GPU && G.pipe) {   // the recompression knob decides which encoders are built
-            const char *b = cfg_get("AC_ASTC_BC");   // what the ini or a profile set; NULL is the absence
-            if (!b || !*b) {   // unset: BC3 with 6 GiB or more of device-local budget, BC1 below it
-                uint64_t used, budget;
-                int exact;
-                int enough = vk_mem_vram(&used, &budget, &exact) && budget >= 6ull << 30;
-                rt_log("vk: AC_ASTC_BC unset, %.1f GiB of the device-local %s: AC_ASTC_BC=%s", budget / 1073741824.0,
-                       exact ? "budget" : "heaps", enough ? "1" : "bc1");
-                b = enough ? "1" : "bc1";
-            }
+            const char *b = cfg_value("AC_ASTC_BC");
             if (!strcmp(b, "0")) G.bc = 0;
             else if (!strcmp(b, "1")) G.bc = create_bc_pipeline(c) ? 1 : 0;
             else {

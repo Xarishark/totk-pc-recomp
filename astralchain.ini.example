@@ -55,9 +55,8 @@
 # With the GPU decoder: re-encode the decoded ASTC textures to BC1 when the alpha scan proves them opaque (the
 # colour quality is the same as BC3, half the size) and to BC3 otherwise — together a quarter to an eighth of the
 # video memory, at the cost of BC's slightly blockier results (normal maps lose some precision). 1 forces BC3 for
-# every texture (the old behaviour). Unset: BC3 with 6 GiB or more of device-local budget, BC1 below it. 0 keeps
-# the decoded RGBA8 images.
-# astc_bc =
+# every texture (the old behaviour), 0 keeps the decoded RGBA8 images.
+# astc_bc = bc1
 # Live texture images kept in video memory, in MiB; past it the least recently used are dropped and uploaded again when
 # the game binds them. Empty or 0: an eighth of the device budget, at least 512 MiB and at most 2 GiB; -1: no budget.
 # tex_cache_mb =

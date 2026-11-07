@@ -124,7 +124,7 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   compute shader everywhere else (`vk_astc.c`, `AC_ASTC`), then re-encoded on the GPU: the alpha scan of the raw
   storage (`tex_astc.c`, sound, the swizzle only permutes 16-byte sectors) picks BC1 for the provably opaque
   textures — the same colour quality as BC3 at half its size — and BC3 for the rest (`AC_ASTC_BC=bc1`, the
-  default; an unset knob takes BC3 from 6 GiB of device-local budget up, `1` forces BC3, `0` RGBA8).
+  default; `1` forces BC3 everywhere, `0` RGBA8).
   --probe-astc holds both encoders and the scan to PSNR and exactness bounds. The CPU decoder (`tex_astc*.c`) is the fallback and the test oracle.
 - Draw state. A draw whose program, bound state and textures repeat reuses the previous draw's shaders and skips rebuilding its descriptor sets; descriptor sets are written through update templates (`vk_exec_draw.c`, `vk_pipeline.c`).
 - Allocation: Vulkan Memory Allocator. Debugging: Vulkan validation layers, per-pass frame dumps (`AC_DUMP`, `vk_dump.c`) and a flight recorder (`AC_FLIGHT`). RenderDoc cannot capture, because it hides `VK_EXT_external_memory_host` from the application.
