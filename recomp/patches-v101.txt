@@ -84,7 +84,9 @@ site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0
 # streams started with the event, so each written-off hitch stays as a lasting gap between the picture and the sound.
 # Without the restart the wait keeps answering "show the next frame" until the picture is back on its timeline, at one
 # movie frame per game frame, so catching up needs more than 30 game frames per second. Only this restart is removed.
-set  bink_sync BINK_SYNC 1
+# Off by default: with it on, the opening movie never writes its boot lateness off, so anything timed on its timeline
+# (the title's button prompt) stays late by it, about a minute on a first boot. Opt in with BINK_SYNC=1.
+set  bink_sync BINK_SYNC 0
 site bink_sync main 7004f0 b906467f d503201f   # str wzr,[x19,#0x644] -> nop
 
 # Dynamic frame rate for the 60 fps mode (the menu's AC_FPS: 30 = shipping 30 fps, 60 = 60 fps with the fix).
