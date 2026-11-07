@@ -800,8 +800,10 @@ static void count_use(int cls, int use, uint64_t n) {
 // A buffer descriptor for [addr, addr+size) of guest memory: its backing (a pool's VRAM mirror when it has one) when
 // aligned, a copy in transient memory when the backing is host memory with an unaligned offset. 0 when neither works.
 // written: the shader stores into it (a mirror's range goes back to guest memory at the end of the submission).
+// *mirror (nullable) reports which path a successful bind took: 1 the pool's backing, 0 a transient copy (which no
+// write-back follows).
 static int bind_range(VkExec *ex, uint64_t addr, uint64_t size, uint64_t align, uint64_t max, int use, int written,
-                      VkDescriptorBufferInfo *out) {
+                      VkDescriptorBufferInfo *out, int *mirror) {
     VkMemSpan sp;
     if (!addr || !vk_mem_resolve(addr, 1, &sp)) return 0;
     uint64_t n = size && size < sp.avail ? size : sp.avail;
@@ -813,6 +815,7 @@ static int bind_range(VkExec *ex, uint64_t addr, uint64_t size, uint64_t align, 
         if (written) vk_mem_gpu_wrote(&sp, n), vk_usnap_drop(addr, n);
         count_use(sp.cls, use, n);
         VK_MEM_BOUND(sp);
+        if (mirror) *mirror = 1;
         return 1;
     }
     if (sp.alloc) return 0;
@@ -823,6 +826,7 @@ static int bind_range(VkExec *ex, uint64_t addr, uint64_t size, uint64_t align, 
     vk_mem_count(sp.cls, VK_MUSE_CPU_READ, n);
     vk_mem_count(VK_MCLS_SCRATCH, use, n);
     *out = (VkDescriptorBufferInfo){b, o, n};
+    if (mirror) *mirror = 0;
     return 1;
 }
 
@@ -909,7 +913,8 @@ static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
         const prog_t *p = stage_prog(ex, st);
         if (p && find_stage(p, st, &ctl, &code, &len)) {
             memcpy(&c1, ctl + 0x700, 4);
-            if (c1 < len && bind_range(ex, (uint64_t)(uintptr_t)code + c1, len - c1, align, max, VK_MUSE_UBO, 0, &bi))
+            if (c1 < len && bind_range(ex, (uint64_t)(uintptr_t)code + c1, len - c1, align, max, VK_MUSE_UBO, 0, &bi,
+                                      NULL))
                 return bi;
         }
     } else if (slot >= 3 && slot - 3 < 18) {
@@ -918,7 +923,7 @@ static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
             count_use(VK_MCLS_SCRATCH, VK_MUSE_UBO, bi.range);
             return bi;
         }
-        if (bind_range(ex, b->addr, b->size, align, max, VK_MUSE_UBO, 0, &bi)) return bi;
+        if (bind_range(ex, b->addr, b->size, align, max, VK_MUSE_UBO, 0, &bi, NULL)) return bi;
     }
     return zero_info(max);
 }
@@ -988,11 +993,64 @@ static uint64_t ubo_ptr(const VkExec *ex, int st, const GfxShaderRes *r) {
     return a;
 }
 
+// ---- giant write-back attribution (perf work): an SSBO bind with an unknown size (ubo_ptr, size 0) binds to the
+// end of the backing pool, so one written bind marks tens of MiB for write-back every submission (vk_mem_gpu_wrote,
+// mirror_end's copies and barriers, usnap_drop's snapshot invalidation). With AC_TRACE=perf, written binds of 1 MiB
+// and up are attributed here per (shader, binding) and dumped with the mirror stats, to find which shaders and pools
+// pay it before narrowing any range. Replay thread only, like the write-back lists themselves.
+#define WROTE_THRESH (1ull << 20)
+#define WROTE_TAB_N 64
+static struct {
+    uint64_t serial, addr, range, bytes, n;
+    int stage, binding, cbuf_slot, handle;
+} wrote_tab[WROTE_TAB_N];
+
+static void wrote_note(const VkExec *ex, int st, const GfxShaderRes *r, uint64_t addr, uint64_t bound, uint64_t range) {
+    if (!(rt_trace & RT_TRACE_PERF) || range < WROTE_THRESH) return;
+    const prog_t *p = stage_prog(ex, st);
+    uint64_t serial = p ? p->serial : 0;
+    int i;
+    for (i = 0; i < WROTE_TAB_N; i++)
+        if (wrote_tab[i].n && wrote_tab[i].serial == serial && wrote_tab[i].stage == st &&
+            wrote_tab[i].binding == r->binding && wrote_tab[i].cbuf_slot == r->cbuf_slot &&
+            wrote_tab[i].handle == r->handle) break;
+    if (i == WROTE_TAB_N) {
+        for (i = 0; i < WROTE_TAB_N; i++)
+            if (!wrote_tab[i].n) break;
+        if (i == WROTE_TAB_N) return;   // table full: further culprits stay uncounted
+        wrote_tab[i].serial = serial;
+        wrote_tab[i].stage = st;
+        wrote_tab[i].binding = r->binding;
+        wrote_tab[i].cbuf_slot = r->cbuf_slot;
+        wrote_tab[i].handle = r->handle;
+        rt_log("vk: giant GPU write: shader %llu stage %d binding %u cbuf %d+%#x addr %#llx bound %.2f MiB range "
+               "%.2f MiB",
+               (unsigned long long)serial, st, r->binding, r->cbuf_slot, r->handle, (unsigned long long)addr,
+               bound / 1048576.0, range / 1048576.0);
+    }
+    wrote_tab[i].addr = addr;
+    wrote_tab[i].range = range;
+    wrote_tab[i].bytes += range;
+    wrote_tab[i].n++;
+}
+
+// Aggregates for the mirror stats line (vk_memory.c mirror_log): silent while nothing was noted.
+void vk_wrote_attrib_log(void) {
+    for (int i = 0; i < WROTE_TAB_N; i++)
+        if (wrote_tab[i].n)
+            rt_log("vk: giant writes: shader %llu stage %d binding %u cbuf %d+%#x: %llu binds, %.1f MiB total, "
+                   "last addr %#llx range %.2f MiB",
+                   (unsigned long long)wrote_tab[i].serial, wrote_tab[i].stage, wrote_tab[i].binding,
+                   wrote_tab[i].cbuf_slot, wrote_tab[i].handle, (unsigned long long)wrote_tab[i].n,
+                   wrote_tab[i].bytes / 1048576.0, (unsigned long long)wrote_tab[i].addr,
+                   wrote_tab[i].range / 1048576.0);
+}
+
 static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *r, int written) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     uint64_t max = LIM.sbo_max, align = LIM.sbo_align;
     VkDescriptorBufferInfo bi;
-    int ubo, slot = ssbo_slot(r, st, &ubo);
+    int ubo, backed = 0, slot = ssbo_slot(r, st, &ubo);
     p_bind_buf up = {0};
     const p_bind_buf *b = NULL;
     if (slot >= 0 && slot < 16) b = ubo ? &ex->ubo[st][slot] : &ex->ssbo[st][slot];
@@ -1001,8 +1059,9 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
         // vk_caps.c: shaders translated for sbuf_align address the buffer from its address rounded down to it.
         uint64_t lead = vk_caps.sbuf_align ? b->addr & (vk_caps.sbuf_align - 1) : 0;
         if (bind_range(ex, b->addr - lead, b->size ? b->size + lead : 0, align, max, ubo ? VK_MUSE_UBO : VK_MUSE_SSBO,
-                       written, &bi)) {
+                       written, &bi, &backed)) {
             if (written && bi.buffer != VK_NULL_HANDLE) note_written(ex, b->addr - lead, bi.range);
+            if (written && backed) wrote_note(ex, st, r, b->addr - lead, b->size, bi.range);
             return bi;
         }
         if (b->addr) warn_once(W_SSBO_ALIGN, "storage buffer %#llx is not backed or not aligned: a zero buffer is bound",

@@ -172,7 +172,9 @@ void vk_sampler_register(int id, const samp_par *s);                // sampler d
 void vk_texture_release(const tex_t *t);   // TextureFinalize: the image stays for slots that still name its storage
 void vk_read_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r, uint8_t *dst, uint64_t row, uint64_t img);
 void vk_write_texels(const tex_t *t, const view_t *v, const NVNcopyRegion *r, const uint8_t *src, uint64_t row, uint64_t img);
-void vk_guest_written(uint64_t addr, uint64_t size);   // a host write write-watch may miss: textures there re-upload
+void vk_guest_written(uint64_t addr, uint64_t size);   // a CPU write the write-watch may miss (WriteTexels into
+                                                      // mirrored storage): stamps the CPU domain, so the mirror picks
+                                                      // it up and textures overlapping it re-upload
 
 // GPU address -> backing (section 3.1). avail: bytes from offset that stay contiguous in buffer. alloc/alloc_offset:
 // the device-local memory behind physical and (through the page table) virtual pool addresses, NULL for imported pools.
@@ -226,13 +228,17 @@ int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferI
 void vk_usnap_drop(uint64_t addr, uint64_t n);   // the replay makes the GPU write [addr, addr+n) of guest memory
 uint64_t vk_usnap_gen(void);                      // changes whenever a binding may resolve differently
 void vk_usnap_shutdown(void);                     // vk_exec_draw_shutdown: frees the arenas
+// Giant write-back attribution (vk_exec_draw.c): per (shader, binding) aggregates of written binds of 1 MiB and up,
+// for the mirror stats line; silent while nothing was noted. AC_TRACE=perf only.
+void vk_wrote_attrib_log(void);
 void vk_mem_mirror_begin(void);
 int vk_mem_mirror_end(VkCommandBuffer cb, uint64_t fence);
 int vk_mem_mirror_pending(void);
 void vk_mem_mirror_prologue(VkCommandBuffer cb);
 // Shadow storage (vk_memory.c): vk_sync.c calls vk_mem_shadow_sync right before each submit; the replay notes every GPU
 // write into CPU-visible memory at record time (vk_mem_gpu_pending) and reports it at the fence with vk_gpu_written,
-// which copies the bytes back into guest memory before telling the texture cache (vk_guest_written).
+// which copies the bytes back into guest memory and stamps the GPU domain (textures overlapping it re-upload; the
+// mirror sync does not re-upload it).
 void vk_mem_shadow_sync(void);
 void vk_mem_gpu_pending(uint64_t addr, uint64_t size);
 void vk_gpu_written(uint64_t addr, uint64_t size);

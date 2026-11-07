@@ -56,6 +56,8 @@ typedef struct PoolRec {
     VmaAllocation malloc_;
     uint32_t acc_sub;                  // replay: the last submission that synced the mirror (mirror_sync)
     uint32_t wb_sub;                   // replay: the last submission that wrote mirror bytes back to guest memory
+    uint64_t wb_lo, wb_hi;             // pool offsets of that write-back's span union (ping-pong diagnostic: the next
+                                       // sync's re-upload inside it is bytes the GPU just wrote, copied back uselessly)
     uint32_t mgen;                     // gen_lock: every page write stamped up to this generation is in the mirror
                                        // (or in a copy queued before its next use)
     uint64_t fl_lo, fl_hi;             // flush_lock: nvnMemoryPoolFlushMappedRange bytes not copied yet (fl_hi 0: none)
@@ -588,6 +590,12 @@ static uint64_t gen_pages[1024];
 // sync skips regions with nothing newer than its pool's mirror.
 #define REG_SHIFT 21
 static uint32_t reg_max[RT_ADDRESS_LIMIT >> REG_SHIFT];
+// GPU writes reported at the fence (vk_gpu_written) stamp a separate table on the same clock: the texture checks read
+// both (a texture overlapping either is stale), while the mirror sync reads only the CPU table above. Stamping them
+// together made every submission re-upload what the previous one wrote back: the write-back's own stamp looked like a
+// CPU write the mirror was missing (about 49 MiB re-uploaded per frame for 37 MiB written back at the title).
+static uint32_t *gpu_chunk[GEN_CHUNKS];
+static uint32_t gpu_reg_max[RT_ADDRESS_LIMIT >> REG_SHIFT];
 
 // Every write-watch query of the generation table (gen_lock held exclusively): calls, bytes and time since the last
 // mirror summary, all consumers together; the queries that found written pages (they also flush TLBs) apart.
@@ -643,6 +651,29 @@ static void stamp_range(uint64_t lo, uint64_t hi, uint32_t g) {
     for (uint64_t a = lo; a < hi; a += 1ull << GEN_PAGE_SHIFT) stamp_page(a, g);
 }
 
+static uint32_t *gpu_slot(uint64_t page_addr, int create) {
+    uint64_t ci = page_addr >> GEN_CHUNK_SHIFT;
+    if (ci >= GEN_CHUNKS) return NULL;
+    if (!gpu_chunk[ci]) {
+        if (!create) return NULL;
+        gpu_chunk[ci] = calloc(GEN_PER_CHUNK, sizeof(uint32_t));
+        if (!gpu_chunk[ci]) rt_fatal("vk: out of memory for GPU page generations");
+    }
+    return &gpu_chunk[ci][(page_addr >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)];
+}
+
+// gen_lock held exclusively; GPU writes never drive the region maxima the mirror sync and the freeze pass read.
+static void stamp_gpu_page(uint64_t a, uint32_t g) {
+    uint32_t *s = gpu_slot(a, 1);
+    if (!s) return;
+    *s = g;
+    gpu_reg_max[a >> REG_SHIFT] = g;
+}
+
+static void stamp_gpu_range(uint64_t lo, uint64_t hi, uint32_t g) {
+    for (uint64_t a = lo; a < hi; a += 1ull << GEN_PAGE_SHIFT) stamp_gpu_page(a, g);
+}
+
 void vk_guest_written(uint64_t addr, uint64_t size) {
     if (!size || nvn_gpu_only(addr)) return;
     uint64_t lo = addr & ~0xfffull, hi = (addr + size + 0xfff) & ~0xfffull;
@@ -668,6 +699,10 @@ int vk_mem_changed(uint64_t addr, uint64_t size, uint32_t since, uint32_t *now) 
     for (uint64_t a = lo; tracked && a < hi && !changed; a += 1ull << GEN_PAGE_SHIFT) {
         uint32_t *s = gen_slot(a, 0);
         if (s && *s > since) changed = 1;
+        else {
+            s = gpu_slot(a, 0);
+            if (s && *s > since) changed = 1;
+        }
     }
     plat_mutex_unlock(&gen_lock);
     *now = g;
@@ -742,11 +777,15 @@ int vk_mem_changed_snap(uint64_t addr, uint64_t size, uint32_t since, uint32_t e
     // Pages only in regions stamped after since (reg_max; REG_SHIFT is SNAP_SHIFT): an unchanged texture of 4 MiB was
     // 1,024 page reads, at about 1,100 texture checks a frame.
     for (uint64_t r = r0; !untracked && r <= r1 && !changed; r++) {
-        if (reg_max[r] <= since) continue;
+        if (reg_max[r] <= since && gpu_reg_max[r] <= since) continue;
         uint64_t a = r << REG_SHIFT > lo ? r << REG_SHIFT : lo, b = (r + 1) << REG_SHIFT < hi ? (r + 1) << REG_SHIFT : hi;
         for (; a < b && !changed; a += 1ull << GEN_PAGE_SHIFT) {
             uint32_t *s = gen_slot(a, 0);
             if (s && *s > since) changed = 1;
+            else {
+                s = gpu_slot(a, 0);
+                if (s && *s > since) changed = 1;
+            }
         }
     }
     *now = gen_now;   // every observation so far is in the table
@@ -926,12 +965,14 @@ static void shadow_sync_pool(PoolRec *r) {
         if (a < lo) a = lo;
         if (b > hi) b = hi;
         const uint32_t *ch = gen_chunk[a >> GEN_CHUNK_SHIFT];   // a 2 MiB region lies in one chunk
-        if (reg_max[k] <= since || !ch) {
+        const uint32_t *gh = gpu_chunk[a >> GEN_CHUNK_SHIFT];
+        if ((reg_max[k] <= since || !ch) && (gpu_reg_max[k] <= since || !gh)) {
             if (run) shadow_copy(r, run, a, 0), run = 0;
             continue;
         }
         for (uint64_t x = a; x < b; x += 1ull << GEN_PAGE_SHIFT) {
-            int dirty = ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since;
+            int dirty = ch && ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since;
+            if (!dirty && gh) dirty = gh[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since;
             if (dirty && !run) run = x;
             else if (!dirty && run) shadow_copy(r, run, x, 0), run = 0;
         }
@@ -978,7 +1019,12 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
         plat_mutex_unlock(&shadow_lock);
         plat_mutex_unlock_shared(&pool_lock);
     }
-    vk_guest_written(addr, size);
+    if (size && !nvn_gpu_only(addr)) {   // the GPU domain: textures overlapping it re-upload, the mirror does not
+        uint64_t lo = addr & ~0xfffull, hi = (addr + size + 0xfff) & ~0xfffull;
+        plat_mutex_lock(&gen_lock);
+        stamp_gpu_range(lo, hi, ++gen_now);
+        plat_mutex_unlock(&gen_lock);
+    }
 }
 
 static void shadow_log(uint64_t frame) {
@@ -1044,9 +1090,12 @@ void vk_mem_dirty_submit(void) {
             uint64_t ci = a >> GEN_CHUNK_SHIFT, ce = (ci + 1) << GEN_CHUNK_SHIFT;
             if (ce > hi) ce = hi;
             const uint32_t *ch = ci < GEN_CHUNKS ? gen_chunk[ci] : NULL;
-            if (ch)
+            const uint32_t *gh = ci < GEN_CHUNKS ? gpu_chunk[ci] : NULL;
+            if (ch || gh)
                 for (uint64_t x = a; x < ce; x += 1ull << GEN_PAGE_SHIFT) {
-                    uint32_t v = ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)];
+                    uint32_t v = ch ? ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] : 0;
+                    uint32_t w = gh ? gh[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] : 0;
+                    if (w > v) v = w;
                     ne += v > since;
                     nl += lz && v > ls;
                 }
@@ -1158,6 +1207,7 @@ static PlatMutex flush_lock = PLAT_MUTEX_INIT;
 typedef struct {
     uint64_t subs, syncs, upload_bytes, upload_copies, first_n, first_bytes, wb_bytes, wb_copies, wb_ranges;
     uint64_t presnap_queries, sync_queries, presnap_t, sync_t, prologues, presnap_bytes;
+    uint64_t reup_in, reup_out;        // sync uploads inside / outside the previous submission's write-back span
 } MirrorAcc;
 static MirrorAcc mrep;                 // replay: this submission
 static MirrorAcc macc;                 // mirror_stat_lock: since the last summary
@@ -1225,6 +1275,13 @@ static int copy_ranges(VkCommandBuffer cb, MRange *a, int n, int to_mirror, uint
             uint64_t lo = a[i].off, hi = a[i].off + a[i].size;
             if (hi > lim) hi = lim;
             if (lo >= hi) continue;
+            if (!to_mirror) {   // mirror_end's write-backs: the span the next sync measures its re-upload against
+                if (r->wb_sub != msub) r->wb_lo = lo, r->wb_hi = hi, r->wb_sub = msub;
+                else {
+                    if (lo < r->wb_lo) r->wb_lo = lo;
+                    if (hi > r->wb_hi) r->wb_hi = hi;
+                }
+            }
             if (k && lo <= mregions[k - 1].srcOffset + mregions[k - 1].size) {
                 uint64_t end = mregions[k - 1].srcOffset + mregions[k - 1].size;
                 if (hi > end) mregions[k - 1].size += hi - end;
@@ -1377,9 +1434,15 @@ static void mirror_sync(PoolRec *r) {
         if (b > hi) b = hi;
         const uint32_t *ch = gen_chunk[a >> GEN_CHUNK_SHIFT];   // a 2 MiB region lies in one chunk
         if (!ch) continue;
-        for (uint64_t x = a; x < b; x += 1ull << GEN_PAGE_SHIFT)
-            if (ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since)
-                range_add(&pend, &npend, &cpend, r, x - lo, 1ull << GEN_PAGE_SHIFT);
+        uint64_t page = 1ull << GEN_PAGE_SHIFT;
+        int in_wb = r->wb_sub && r->wb_sub == msub - 1;   // the previous submission wrote [wb_lo, wb_hi) back
+        for (uint64_t x = a; x < b; x += page)
+            if (ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since) {
+                uint64_t off = x - lo;
+                range_add(&pend, &npend, &cpend, r, off, page);
+                if (in_wb && off >= r->wb_lo && off < r->wb_hi) mrep.reup_in += page;
+                else mrep.reup_out += page;
+            }
     }
     r->mgen = gen_now;
     if (excl) plat_mutex_unlock(&gen_lock);
@@ -1522,6 +1585,8 @@ static uint64_t ver_off;
 static int page_dirty(uint64_t a, uint32_t mgen) {
     uint32_t *s = gen_slot(a, 0);
     if (s && __atomic_load_n(s, __ATOMIC_RELAXED) > mgen) return 1;
+    s = gpu_slot(a, 0);
+    if (s && __atomic_load_n(s, __ATOMIC_RELAXED) > mgen) return 1;
     uint64_t p[1];
     return mem_written_peek(a, 1ull << GEN_PAGE_SHIFT, p, 1) != 0;   // UINT64_MAX (not watched) counts as written
 }
@@ -1659,13 +1724,14 @@ static void mirror_log(uint64_t frame) {
     rt_log("mem: mirror frame %llu: pools %lld, %.1f MiB device-local; stay imported: budget %lld (%.1f MiB), untracked "
            "%lld, overlapping %lld, failed %lld; per frame: submits %.2f, syncs %.1f, upload %.3f MiB in %.1f ranges, "
            "first use %.2f pools %.3f MiB, write-back %.3f MiB in %.1f ranges, flush calls %.1f (%.3f MiB), queries "
-           "%.1f pre-snap (%.1f MiB) + %.1f sync, prologues %.2f, tracking cpu %.3f ms (pre-snap %.3f, syncs %.3f)%s",
+           "%.1f pre-snap (%.1f MiB) + %.1f sync, prologues %.2f, tracking cpu %.3f ms (pre-snap %.3f, syncs %.3f), re-up %.1f + %.1f MiB%s",
            (unsigned long long)frame, (long long)m_live_n, m_live_bytes / M, (long long)m_refused_n[MR_BUDGET],
            m_refused_bytes[MR_BUDGET] / M, (long long)m_refused_n[MR_UNTRACKED], (long long)m_refused_n[MR_OVERLAP],
            (long long)m_refused_n[MR_ALLOC], a.subs / f, a.syncs / f, a.upload_bytes / f / M, a.upload_copies / f,
            a.first_n / f, a.first_bytes / f / M, a.wb_bytes / f / M, a.wb_copies / f, fc / f, fb / f / M,
            a.presnap_queries / f, a.presnap_bytes / f / M, a.sync_queries / f, a.prologues / f, qpc_ms(a.presnap_t + a.sync_t) / f,
-           qpc_ms(a.presnap_t) / f, qpc_ms(a.sync_t) / f, ver);
+           qpc_ms(a.presnap_t) / f, qpc_ms(a.sync_t) / f, a.reup_in / f / M, a.reup_out / f / M, ver);
+    vk_wrote_attrib_log();
 }
 
 // With AC_TRACE=perf every 600 frames: what holds device-local memory, to see what grows over a long session.
@@ -2026,5 +2092,6 @@ void vk_mem_shutdown(void) {
     plat_mutex_unlock(&pool_lock);
     plat_mutex_lock(&gen_lock);
     for (uint64_t i = 0; i < GEN_CHUNKS; i++) free(gen_chunk[i]), gen_chunk[i] = NULL;
+    for (uint64_t i = 0; i < GEN_CHUNKS; i++) free(gpu_chunk[i]), gpu_chunk[i] = NULL;
     plat_mutex_unlock(&gen_lock);
 }
