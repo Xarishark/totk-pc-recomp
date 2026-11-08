@@ -353,13 +353,13 @@ int res_wants_wide_overlay(const unsigned out[2]) {
     return !res_is_16x9(out[0], out[1]) && rt_patch_set("aspect") >= 0;
 }
 
-// Field of view (AC_FOV, percent of the game's own, 50..200, live): the camera lens's vertical view angle times the
+// Field of view (AC_FOV, percent of the game's own, 70..140, live): the camera lens's vertical view angle times the
 // factor on page +60 where the projection matrix is built from it, and where the scene setup copies it for its
 // screen-size work (recomp/patches-v101.txt, set fov: rt_fov_s0). The horizontal angle follows through the aspect
 // ratio. 100 switches the set off, so the camera code is the game's own. Runs on a settings change (gfx_present.c
 // window_settings_live), the first time at the first present.
-#define FOV_MIN 50
-#define FOV_MAX 200
+#define FOV_MIN 70
+#define FOV_MAX 140
 
 void rt_fov_s0(Cpu *c) {
     float k;
