@@ -56,8 +56,13 @@ site res1062 main 40f1b4 52806556 528084d6   # mov w22, #810 -> #1062
 site res1062 main 40f1d0 7119001f 711d801f   # cmp w0, #1600 -> #1888
 site res1062 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias)
 
-# 1080p: the res1062 sites with 1920x1080 (0x780 x 0x438), as 1.0.0's res1080 set, the ladder's entries included, so the
-# scene stays at 1920x1080 whatever scale the dynamic-resolution logic picks. 1920x1080 is the engine's maximum (on
+# 1080p: the res1062 sites with 1920x1080 (0x780 x 0x438), as 1.0.0's res1080 set, the ladder's docked entries included,
+# so the scene stays at 1920x1080 whatever scale the dynamic-resolution logic picks. Each ladder level picks one size
+# when the scene target has the docked width and another when it has not; handheld (1280x720 targets, main+0x40d5a0)
+# always takes the second. Those two handheld entries (40f1a4 and 40f1b0) get res1062's 1280x720, the handheld targets'
+# own size: 1920x1080 there is larger than the targets the game made for handheld, the level's target is never
+# created, and loading a save in handheld read through its null texture in main+0x9d0df0 (issues #25 and #38).
+# 1920x1080 is the engine's maximum (on
 # 1.0.0, 2048x1152 crashed its render-context setup). On by default: AC_SSAA's 1440p and 2160p are then exactly 4/3
 # and 2, the render-target sizes the Intel Arc 140T played for hours (other enlarged sizes, such as 1888x1062 x 4/3 =
 # 2517x1416, lost the device on entering play).
@@ -70,10 +75,10 @@ site res1080 main 40fb04 5280c809 5280f009   # mov w9, #1600 -> #1920 (handheld)
 site res1080 main 40fb14 52807089 52808709   # mov w9, #900 -> #1080
 site res1080 main 40f184 7119001f 711e001f   # cmp w0, #1600 -> #1920 (ladder)
 site res1080 main 40f188 52807088 52808708   # mov w8, #900 -> #1080
-site res1080 main 40f1a4 321603e8 5280f008   # mov w8, #1024 -> #1920
+site res1080 main 40f1a4 321603e8 5280a008   # mov w8, #1024 -> #1280 (handheld, as res1062)
 site res1080 main 40f1a8 5280b409 5280f009   # mov w9, #1440 -> #1920
 site res1080 main 40f1ac 7119001f 711e001f   # cmp w0, #1600 -> #1920
-site res1080 main 40f1b0 52804ed4 52808714   # mov w20, #630 -> #1080
+site res1080 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720 (handheld, as res1062)
 site res1080 main 40f1b4 52806556 52808716   # mov w22, #810 -> #1080
 site res1080 main 40f1d0 7119001f 711e001f   # cmp w0, #1600 -> #1920
 site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
