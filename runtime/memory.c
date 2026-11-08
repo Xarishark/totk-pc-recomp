@@ -264,6 +264,25 @@ uint64_t mem_written_peek(uint64_t addr, uint64_t size, uint64_t *pages, uint64_
     return written_pages(addr, size, pages, max, 0);
 }
 
+// Clears the write-watch bits of [addr, addr+size), which must lie wholly in the watched reservations.
+// Returns 1 when every page was reset, 0 when the range is not watched or crosses a frozen region (nothing reset:
+// GetWriteWatch RESET always touches the whole range it queries, so the caller must not mix a partial failure
+// with a purge that assumes the bits are gone). Frozen regions are refused because a freeze guards its coverage
+// by the OS write bits as well.
+uint64_t mem_written_reset(uint64_t addr, uint64_t size) {
+    if (!size || !watched(addr, size)) return 0;
+    uint64_t r0 = addr >> FRZ_SHIFT, r1 = (addr + size - 1) >> FRZ_SHIFT;
+    for (uint64_t r = r0; r <= r1; r++)
+        if (r < RT_ADDRESS_LIMIT >> FRZ_SHIFT && __atomic_load_n(&frz[r], __ATOMIC_ACQUIRE)) return 0;
+    uint64_t pages[256], p0 = addr & ~0xfffull, span = ((addr + size + 0xfff) & ~0xfffull) - p0;
+    for (uint64_t tries = 0; span && tries < (1u << 20); tries++) {
+        uint64_t n = plat_mem_written(p0, span, pages, sizeof pages / sizeof *pages, 1);
+        if (n == UINT64_MAX) return 0;
+        if (n < sizeof pages / sizeof *pages) return 1;   // not full: the reset consumed every flagged page
+    }
+    return 0;
+}
+
 static uint64_t image_bytes(void) {
     uint64_t n = 0;
     for (int i = 0; i < ldr_count(); i++) n += ldr_module(i)->size;

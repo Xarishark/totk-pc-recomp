@@ -33,6 +33,13 @@ enum { MS_NONE, MS_ON, MS_REFUSED };
 
 typedef struct { struct PoolRec *phys; uint64_t off; } VPage;   // virtual page -> physical pool and offset
 
+// Write-back span of a mirrored pool (gen_lock). The write-back's DMA into the imported guest pages sets the OS
+// write-watch bits, which the next sync cannot tell from CPU writes: until the purge (fence completion) runs, its
+// pages must not be re-uploaded. purge_gen is the generation they were re-stamped with; a page the CPU rewrote
+// since carries a newer one and follows the ordinary rule.
+#define WB_SPANS 24
+typedef struct { uint64_t lo, hi; uint32_t fence; uint32_t purge_gen; } WbSpan;
+
 typedef struct PoolRec {
     const pool_t *key;
     int kind;
@@ -58,6 +65,12 @@ typedef struct PoolRec {
     uint32_t wb_sub;                   // replay: the last submission that wrote mirror bytes back to guest memory
     uint64_t wb_lo, wb_hi;             // pool offsets of that write-back's span union (ping-pong diagnostic: the next
                                        // sync's re-upload inside it is bytes the GPU just wrote, copied back uselessly)
+    // Write-back spans waiting for their fence (gen_lock). The write-back's DMA into the imported guest pages sets
+    // the OS write-watch bits, which the next sync cannot tell from CPU writes; until the purge below, mirror_sync
+    // skips these pages. purge_gen after the purge ran: pages stamped at gen_now, pages the CPU rewrote since carry
+    // a newer generation and are copied again by the ordinary rule.
+    WbSpan wb[WB_SPANS];
+    int nwb;
     uint32_t mgen;                     // gen_lock: every page write stamped up to this generation is in the mirror
                                        // (or in a copy queued before its next use)
     uint64_t fl_lo, fl_hi;             // flush_lock: nvnMemoryPoolFlushMappedRange bytes not copied yet (fl_hi 0: none)
@@ -1262,9 +1275,55 @@ static int range_cmp(const void *x, const void *y) {
     return a->off < b->off ? -1 : a->off > b->off;
 }
 
+typedef struct { PoolRec *r; WbSpan *span; uint64_t lo, hi, fence; } WbPurge;
+
+// Registers a write-back span for the skip-until-purge rule; takes gen_lock itself (copy_ranges: replay thread,
+// not under it).
+static void wb_span_add(PoolRec *r, uint64_t lo, uint64_t hi, uint64_t fence) {
+    uint64_t size = r->import_hi - r->import_lo;
+    lo &= ~0xfffull, hi = (hi + 0xfff) & ~0xfffull;
+    if (hi > size) hi = size;
+    if (lo >= hi) return;
+    if (r->nwb < WB_SPANS) {
+        r->wb[r->nwb++] = (WbSpan){lo, hi, (uint32_t)fence, 0};
+        return;
+    }
+    // Full ring: the oldest span is dropped; if it was not purged yet, its pages go the pre-fix way (copied once
+    // more). Correctness is unchanged: the skip only saves the copy.
+    memmove(r->wb, r->wb + 1, (WB_SPANS - 1) * sizeof *r->wb);
+    r->wb[WB_SPANS - 1] = (WbSpan){lo, hi, (uint32_t)fence, 0};
+}
+
+// Completion thread, once the submission's fence is done: the write-back's DMA writes into the imported guest
+// pages are over, so their write-watch bits stop meaning CPU writes. Resets the bits and re-stamps the pages in
+// the CPU generation table at gen_now WITHOUT driving the region maxima (stamp_page would make mirror_sync treat
+// the whole 2 MiB region as freshly written by the CPU): the next sync judges these pages only through this span.
+// Skipped by both sides: without the fix the OS bits of those pages were re-uploaded forever.
+static void wb_purge(void *arg) {
+    WbPurge *p = arg;
+    PoolRec *r = p->r;
+    plat_mutex_lock(&gen_lock);
+    if (!mem_written_reset(r->import_lo + p->lo, p->hi - p->lo)) {
+        static volatile int32_t logged;
+        if (plat_inc32(&logged) <= 4)
+            rt_log("mem: write-back purge of %.2f MiB of pool %#llx failed (not write-watched or a frozen region "
+                   "inside): its pages go to the mirror once more",
+                   (p->hi - p->lo) / 1048576.0, (unsigned long long)r->lo);
+    }
+    uint32_t g = ++gen_now;
+    for (uint64_t a = p->lo & ~0xfffull; a < p->hi; a += 1ull << GEN_PAGE_SHIFT)
+        *gen_slot(r->import_lo + a, 1) = g;
+    if (p->span->fence == (uint32_t)p->fence) p->span->purge_gen = g;   // a reused slot with another span: leave it
+    plat_mutex_unlock(&gen_lock);
+    free(p);
+}
+
 // Records the ranges as one vkCmdCopyBuffer per pool, overlapping and adjacent ranges merged; to_mirror: buf -> mbuf,
 // else mbuf -> buf. Returns the commands recorded; adds what they move to *bytes and *copies.
-static int copy_ranges(VkCommandBuffer cb, MRange *a, int n, int to_mirror, uint64_t *bytes, uint64_t *copies) {
+// Write-backs (to_mirror 0) register each with its fence for wb_purge, so mirror_sync can skip those pages until
+// the DMA is over and the write-watch bits are reset (the GPU writes there must not re-sync into the mirror).
+static int copy_ranges(VkCommandBuffer cb, MRange *a, int n, int to_mirror, uint64_t fence, uint64_t *bytes,
+                       uint64_t *copies) {
     qsort(a, (size_t)n, sizeof *a, range_cmp);
     int rec = 0;
     for (int i = 0; i < n;) {
@@ -1275,12 +1334,16 @@ static int copy_ranges(VkCommandBuffer cb, MRange *a, int n, int to_mirror, uint
             uint64_t lo = a[i].off, hi = a[i].off + a[i].size;
             if (hi > lim) hi = lim;
             if (lo >= hi) continue;
-            if (!to_mirror) {   // mirror_end's write-backs: the span the next sync measures its re-upload against
-                if (r->wb_sub != msub) r->wb_lo = lo, r->wb_hi = hi, r->wb_sub = msub;
-                else {
+            if (!to_mirror) {
+                if (r->wb_sub != msub) {   // the span union the next sync's re-up line measures against
+                    r->wb_lo = lo, r->wb_hi = hi, r->wb_sub = msub;
+                } else {
                     if (lo < r->wb_lo) r->wb_lo = lo;
                     if (hi > r->wb_hi) r->wb_hi = hi;
                 }
+                plat_mutex_lock(&gen_lock);
+                wb_span_add(r, lo, hi, fence);
+                plat_mutex_unlock(&gen_lock);
             }
             if (k && lo <= mregions[k - 1].srcOffset + mregions[k - 1].size) {
                 uint64_t end = mregions[k - 1].srcOffset + mregions[k - 1].size;
@@ -1296,6 +1359,16 @@ static int copy_ranges(VkCommandBuffer cb, MRange *a, int n, int to_mirror, uint
         rec++;
         for (int j = 0; j < k; j++) *bytes += mregions[j].size;
         *copies += (uint64_t)k;
+        if (!to_mirror) {   // purge at the fence: every queued write-back span of this pool, one callback each
+            for (int s = 0; s < r->nwb; s++) {
+                WbSpan *sp = r->wb + s;
+                if (sp->purge_gen || sp->fence != (uint32_t)fence) continue;
+                WbPurge *p = malloc(sizeof *p);
+                if (!p) continue;
+                *p = (WbPurge){r, sp, sp->lo, sp->hi, fence};
+                vk_completion_add(fence, wb_purge, p);
+            }
+        }
     }
     return rec;
 }
@@ -1411,6 +1484,19 @@ static void mirror_retire(void *arg) {
     destroy_rec(vk_ctx(), arg);
 }
 
+// gen_lock held: 1 when page [off, off+page) of the pool belongs to a write-back span the sync must not queue:
+// its DMA into the imported pages has set the write-watch bits. purge_gen 0 = the purge has not run (in flight or
+// waiting for its fence): skip. After the purge, pages stamped at purge_gen (their pre-DMA CPU stamp is gone) are
+// skipped too; a page the CPU rewrote since carries a newer generation and follows the ordinary rule.
+static int wb_span_skip(const PoolRec *r, uint64_t off, uint32_t gen) {
+    for (int i = 0; i < r->nwb; i++) {
+        const WbSpan *sp = &r->wb[i];
+        if (off >= sp->hi || off + (1ull << GEN_PAGE_SHIFT) <= sp->lo) continue;
+        return !sp->purge_gen || gen <= sp->purge_gen;
+    }
+    return 0;
+}
+
 // Replay thread, the first access of this submission: queues the copies of the pages written since the last sync.
 static void mirror_sync(PoolRec *r) {
     uint64_t t0 = qpc();
@@ -1439,14 +1525,27 @@ static void mirror_sync(PoolRec *r) {
         for (uint64_t x = a; x < b; x += page)
             if (ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since) {
                 uint64_t off = x - lo;
+                if (wb_span_skip(r, off, ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)])) {
+                    mrep.reup_in += page;   // bytes the GPU just wrote back: not a CPU change to upload
+                    continue;
+                }
                 range_add(&pend, &npend, &cpend, r, off, page);
                 if (in_wb && off >= r->wb_lo && off < r->wb_hi) mrep.reup_in += page;
                 else mrep.reup_out += page;
             }
     }
     r->mgen = gen_now;
-    if (excl) plat_mutex_unlock(&gen_lock);
-    else plat_mutex_unlock_shared(&gen_lock);
+    // A purged span held the sync off its pages for exactly one pass; past this mgen the gen stamps (purge_gen)
+    // read <= since by themselves, so the spans go. Needs exclusive: wb_span_add (mirror_end) iterates nwb.
+    if (!excl) {
+        plat_mutex_unlock_shared(&gen_lock);
+        plat_mutex_lock(&gen_lock);
+    }
+    int j = 0;
+    for (int i = 0; i < r->nwb; i++)
+        if (!r->wb[i].purge_gen) r->wb[j++] = r->wb[i];
+    r->nwb = j;
+    plat_mutex_unlock(&gen_lock);
     if (__atomic_load_n(&r->fl_hi, __ATOMIC_ACQUIRE)) {
         plat_mutex_lock(&flush_lock);
         uint64_t a = r->fl_lo, b = r->fl_hi;
@@ -1509,12 +1608,29 @@ void nvn_pool_flushed(const pool_t *p, uint64_t off, uint64_t size) {
     plat_mutex_unlock_shared(&pool_lock);
 }
 
+// gen_lock exclusive (and in mirror mode pool_lock shared, as mirror_begin holds): 1 when any mirrored pool has a
+// write-back span in flight inside [a, b): its DMA is still writing guest pages there, so the region cannot be made
+// read-only (the DMA would fault or stall the engine silently, no CPU fault thaw covers it).
+static int wb_flight_overlap(uint64_t a, uint64_t b) {
+    if (!vk_mirror_on) return 0;
+    for (int i = 0; i < nm; i++) {
+        const PoolRec *r = mlist[i];
+        for (int s = 0; s < r->nwb; s++) {
+            const WbSpan *sp = &r->wb[s];
+            if (sp->purge_gen) continue;   // done (purged): its DMA is over
+            if (r->import_lo + sp->lo < b && r->import_lo + sp->hi > a) return 1;
+        }
+    }
+    return 0;
+}
+
 // gen_lock exclusive: freezes up to FREEZE_PER_SUB candidate regions still idle. The query after the
 // protection collects the writes made before it took effect.
 static void freeze_pass(void) {
     for (int done = 0; nfcand && done < FREEZE_PER_SUB;) {
         uint64_t j = fcand[--nfcand], a = j << REG_SHIFT;
         if (ww_ep - reg_last[j] < (uint32_t)freeze_idle || mem_frozen(a)) continue;
+        if (wb_flight_overlap(a, a + (1ull << REG_SHIFT))) continue;
         done++;
         if (!mem_freeze(a)) { n_frz_refused++; continue; }
         query_stamp(a, a + (1ull << REG_SHIFT), ++gen_now);
@@ -1568,7 +1684,7 @@ void vk_mem_mirror_prologue(VkCommandBuffer cb) {
     if (!npend) return;
     mbarrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
              VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    copy_ranges(cb, pend, npend, 1, &mrep.upload_bytes, &mrep.upload_copies);
+    copy_ranges(cb, pend, npend, 1, 0, &mrep.upload_bytes, &mrep.upload_copies);
     mbarrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
              VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     npend = 0;
@@ -1674,7 +1790,7 @@ int vk_mem_mirror_end(VkCommandBuffer cb, uint64_t fence) {
                  VK_ACCESS_2_TRANSFER_READ_BIT);
         for (int i = 0; i < nwbl; i++) wbl[i].r->wb_sub = msub;
         mrep.wb_ranges += (uint64_t)nwbl;
-        rec += copy_ranges(cb, wbl, nwbl, 0, &mrep.wb_bytes, &mrep.wb_copies) + 2;
+        rec += copy_ranges(cb, wbl, nwbl, 0, fence, &mrep.wb_bytes, &mrep.wb_copies) + 2;
         mbarrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_HOST_BIT | VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                  VK_ACCESS_2_HOST_READ_BIT | VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);

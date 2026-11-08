@@ -159,8 +159,8 @@ uint64_t mem_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, uint64
                                                            // inside the stack/heap block or the alias region
                                                            // (write watch); otherwise returns UINT64_MAX
 uint64_t mem_written_peek(uint64_t addr, uint64_t size, uint64_t *pages, uint64_t max);
-                                                           // the same without the reset: the bits stay for the next
-                                                           // mem_written_pages (verify checks only)
+uint64_t mem_written_reset(uint64_t addr, uint64_t size);  // clears the write-watch bits; 1 done, 0 when the
+                                                           // range is not wholly watched or crosses a frozen one
 int mem_freeze(uint64_t a);                                // makes the 2 MiB region at a (2 MiB aligned, watched,
                                                            // committed PAGE_READWRITE) read-only until a write or
                                                            // mem_thaw thaws it; 1 frozen (or already), 0 refused
