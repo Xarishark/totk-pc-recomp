@@ -62,6 +62,8 @@ typedef struct Tex {
     struct Tex *rel_prev, *rel_next;   // while released: the list of released entries, oldest first
     uint8_t bc_flip;                   // AC_ASTC_BC=bc1: the storage's alpha verdict changed; waiting to be
                                        // destroyed (sweep_flip) so the next lookup recreates the other format
+    uint32_t bc_gen;                   // AC_ASTC_BC=bc1: page generation of create_tex's alpha scan, until the first
+                                       // upload consumes it (bc_verdict_current); 0 none
 } Tex;
 
 // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
@@ -414,8 +416,12 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     // trades the entry in for the other format when the verdict changes.
     int bc_verdict = -1;   // -1 not scanned (no BC1 mode, 3D target, no storage), 0 opaque, 1 alpha-carrying
     uint64_t bc_scan_ns = 0;
+    uint32_t bc_gen = 0;   // page generation taken just before the scan; 0 when the storage is not tracked
     if (f.astc_bc && vk_astc_bc() == 2 && t->mem && d->target != NVN_TEXTURE_TARGET_3D) {
         uint64_t s0 = plat_now_ns();
+        // Stamped before the scan reads the bytes: a write after this point carries a newer generation, so the
+        // first upload can tell whether this verdict still describes the storage (upload, bc_verdict_current).
+        if (vk_mem_changed(k->addr, L.size, 0, &bc_gen) < 0) bc_gen = 0;
         bc_verdict = astc_storage_alpha_possible(t->mem, L.size, f.astc_bw, f.astc_bh);
         bc_scan_ns = plat_now_ns() - s0;
         if (!bc_verdict) {
@@ -515,6 +521,7 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     e->f = f;
     e->last_use = submit_epoch;
     e->pub.addr = k->addr;
+    e->bc_gen = bc_verdict >= 0 ? bc_gen : 0;
     VkImage img = VK_NULL_HANDLE;
     if (scale <= 1.0f && nvn_gpu_only(k->addr)) {   // storage in a physical or virtual pool: alias the pool memory (section 3.2)
         if (vkCreateImage(c->device, &ci, NULL, &img) == VK_SUCCESS && !bind_pool_memory(c, e, img, L.size)) {
@@ -863,6 +870,15 @@ static void astc_check(const Tex *e, const uint8_t *raw, const VkAstcRegion *ar,
 // 8 GB of shared memory and the game closed before the title screen.
 #define UPLOAD_PART (32ull << 20)   // fits the staging pool (vk_staging takes up to half of its 64 MiB block)
 
+// Whether create_tex's alpha verdict still describes the storage: no page written since its scan. Consumed by
+// the first upload that asks, so a later upload (the storage was rewritten) scans again.
+static int bc_verdict_current(Tex *e) {
+    uint32_t since = e->bc_gen, now;
+    if (!since) return 0;
+    e->bc_gen = 0;
+    return vk_mem_changed(e->pub.addr, e->t.L.size, since, &now) == 0;
+}
+
 // Copies the whole storage into the image (every level and layer the image has).
 static void upload(Tex *e) {
     static volatile int32_t n_bad, n_undecoded, n_split;
@@ -876,8 +892,10 @@ static void upload(Tex *e) {
     // A texture whose content turned opaque or alpha-carrying since its image was made — between the
     // creation scan and a first upload of unwritten storage, or by a CPU rewrite — trades the entry in for
     // the other format (bc_trade) instead of uploading into an image that cannot hold it. Nothing is scanned
-    // on a BC3-forced device or for 3D targets, which never take BC1.
-    if (e->f.astc_bc && vk_astc_bc() == 2 && !is3d) {
+    // on a BC3-forced device or for 3D targets, which never take BC1. The first upload skips the scan when no
+    // page of the storage was written since create_tex scanned it (bc_verdict_current): the bytes are the ones
+    // that verdict was taken from, and the scan is the costly part of a new texture.
+    if (e->f.astc_bc && vk_astc_bc() == 2 && !is3d && !bc_verdict_current(e)) {
         int alpha = astc_storage_alpha_possible(t->mem, e->t.L.size, e->f.astc_bw, e->f.astc_bh);
         if ((alpha != 0) != (e->f.astc_bc != 2)) {
             bc_trade(e);
