@@ -112,8 +112,8 @@
 [display]
 # Device profile: auto (the Steam Deck when this is one), desktop or deck. On a Steam Deck the keys this file does not
 # set default to fullscreen = 1, window_size = 1280x800, output_res = 1280x800, render_scale = game, vk_present = fifo,
-# fps = 30, astc_bc = 1, tex_cache_mb = 512, tex_vram_pressure = 70, aniso = game, shadow_res = 512, shadow_scale = 1,
-# shadow_range = 100, contact_shadows = 0, pcss = 0. Read at start.
+# fps = 30, operation_mode = handheld, astc_bc = 1, tex_cache_mb = 512, tex_vram_pressure = 70, aniso = game,
+# shadow_res = 512, shadow_scale = 1, shadow_range = 100, contact_shadows = 0, pcss = 0. Read at start.
 # device_profile = auto
 # Presentation mode: mailbox (default when the driver offers it, vsync otherwise), fifo (vsync) or immediate.
 # vk_present = mailbox
@@ -209,7 +209,7 @@
 # Language: a Windows locale such as de-DE, or a Switch code (en-US, ja, zh-Hant, ...). Default: the Windows locale.
 # locale = en-US
 # lang = en-US
-# System mode reported to the game: docked or handheld.
+# System mode reported to the game: docked or handheld (handheld by default on a Steam Deck).
 # operation_mode = docked
 # Language of the settings menu and the overlay: en, ru, pt-BR or zh-Hans. Default: the Windows display language, English if
 # it is none of them.
