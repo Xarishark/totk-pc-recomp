@@ -63,6 +63,7 @@ typedef struct PoolRec {
     uint32_t wb_sub;                   // replay: the last submission that wrote mirror bytes back to guest memory
     uint64_t wb_lo, wb_hi;             // pool offsets of that write-back's span union (ping-pong diagnostic: the next
                                        // sync's re-upload inside it is bytes the GPU just wrote, copied back uselessly)
+    uint32_t wb_span_sub;              // replay: the submission [wb_lo, wb_hi) belongs to (copy_ranges)
     // Write-back spans not yet seen by a sync after their purge (gen_lock; mirror_sync, "write-back spans" there).
     WbSpan *wb;
     int nwb, cwb;
@@ -1320,7 +1321,9 @@ static int copy_ranges(VkCommandBuffer cb, MRange *a, int n, int to_mirror, uint
             if (hi > lim) hi = lim;
             if (lo >= hi) continue;
             if (!to_mirror) {   // mirror_end's write-backs: the span the next sync measures its re-upload against
-                if (r->wb_sub != msub) r->wb_lo = lo, r->wb_hi = hi, r->wb_sub = msub;
+                // wb_span_sub, not wb_sub: vk_mem_mirror_end stamps wb_sub before it calls here, so wb_sub cannot
+                // tell this submission's first write-back range from a later one
+                if (r->wb_span_sub != msub) r->wb_lo = lo, r->wb_hi = hi, r->wb_span_sub = msub;
                 else {
                     if (lo < r->wb_lo) r->wb_lo = lo;
                     if (hi > r->wb_hi) r->wb_hi = hi;
@@ -1518,7 +1521,7 @@ static void mirror_sync(PoolRec *r) {
         const uint32_t *ch = gen_chunk[a >> GEN_CHUNK_SHIFT];   // a 2 MiB region lies in one chunk
         if (!ch) continue;
         uint64_t page = 1ull << GEN_PAGE_SHIFT;
-        int in_wb = r->wb_sub && r->wb_sub == msub - 1;   // the previous submission wrote [wb_lo, wb_hi) back
+        int in_wb = r->wb_span_sub && r->wb_span_sub == msub - 1;   // the previous submission wrote [wb_lo, wb_hi) back
         for (uint64_t x = a; x < b; x += page)
             if (ch[(x >> GEN_PAGE_SHIFT) & (GEN_PER_CHUNK - 1)] > since) {
                 uint64_t off = x - lo, kept = 0;
