@@ -284,6 +284,7 @@ void frame_step_init(void);                                // after rt_patches_i
 int frame_step_realtime(void);                             // the real-time step is on: presents ignore the interval
 uint64_t frame_step_cap_ns(void);                          // with the real-time step: the shortest frame in ns
 double frame_step_limit_hz(void);                         // the frame rate the limit gives (overlay); 0 unknown
+int frame_step_cutscene(void);                             // the game's cutscene flag is set (frame_rate.c); any thread
 int64_t frame_step_world_us(void);                         // game time since the loaded save's first frame, -1 before
                                                            // (AC_FPS, live: 60 fps patch on or off)
 uint64_t frame_step_ticks(void);                           // game time since the first present in 60 Hz ticks (input scripts)

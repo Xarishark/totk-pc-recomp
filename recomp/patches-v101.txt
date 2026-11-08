@@ -95,7 +95,8 @@ site bink_sync main 7004f0 b906467f d503201f   # str wzr,[x19,#0x644] -> nop
 # matrix at lens+0x40 (bl main+0x9b28e0); main+0x9a3054 builds the same for a second target. The scene setup also
 # copies the angle into the render scene at +0x140 for its screen-size work (two copies of that sequence). Each site
 # multiplies the loaded or stored angle by the factor on page +60 (rt_fov_s0), so the projection, the culling built
-# from it and the screen sizes stay in step. Off while AC_FOV is 100, so the camera code is the game's own.
+# from it and the screen sizes stay in step; while the game's cutscene flag is set the angle passes unscaled, so
+# cutscenes keep their framing. Off while AC_FOV is 100, so the camera code is the game's own.
 set  fov AC_FOV_PATCH 0
 site fov main 9a3010 bd427f00 bd427f00 @fn:rt_fov_s0   # ldr s0,[x24,#0x27c]; then s0 *= factor (projection)
 site fov main 9a3054 bd427d00 bd427d00 @fn:rt_fov_s0   # ldr s0,[x8,#0x27c]; then s0 *= factor (second target)

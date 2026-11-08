@@ -66,7 +66,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                             "screen): keep the picture's shape with black bars, or stretch it over the window.",
     [UI_MENU_ASPECT_FIT] = "Black bars", [UI_MENU_ASPECT_STRETCH] = "Stretch",
     [UI_MENU_FOV] = "Field of view",
-    [UI_MENU_FOV_DESC] = "How much of the world the camera shows, in percent of the game's own (50 degrees vertically in play). Cutscenes widen or narrow by the same factor.",
+    [UI_MENU_FOV_DESC] = "How much of the world the camera shows, in percent of the game's own (50 degrees vertically in play). Cutscenes keep the game's own framing.",
     [UI_MENU_SHADOW_RES] = "Shadow map size",
     [UI_MENU_SHADOW_RES_DESC] = "Size of the sun's shadow map. The game's own size changes with the view, down to about 400 "
                                 "near the ground, so leaf shadows look blocky and jump; a fixed size keeps them still and "
@@ -451,7 +451,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                             "форму картинки с чёрными полосами или растянуть её на всё окно.",
     [UI_MENU_ASPECT_FIT] = "Чёрные полосы", [UI_MENU_ASPECT_STRETCH] = "Растянуть",
     [UI_MENU_FOV] = "Поле зрения",
-    [UI_MENU_FOV_DESC] = "Сколько мира показывает камера, в процентах от игрового (50 градусов по вертикали в игре). Ролики меняются на тот же множитель.",
+    [UI_MENU_FOV_DESC] = "Сколько мира показывает камера, в процентах от игрового (50 градусов по вертикали в игре). Ролики сохраняют исходное кадрирование.",
     [UI_MENU_SHADOW_RES] = "Размер карты теней",
     [UI_MENU_SHADOW_RES_DESC] = "Размер карты теней от солнца. Собственный размер игры меняется вместе с видом, у земли до "
                                 "примерно 400, поэтому тени листвы выглядят квадратными и дёргаются; постоянный размер делает "
@@ -1087,7 +1087,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_OV_FMT_AREA] = "média por área, nitidez %d%%",
     [UI_MENU_FOV] = "Campo de visão",
     [UI_MENU_FOV_DESC] = "Quanto do mundo a câmera mostra, em porcentagem do original do jogo (50 graus na vertical "
-                         "durante o jogo). As cenas mudam pelo mesmo fator.",
+                         "durante o jogo). As cenas mantêm o enquadramento original.",
     [UI_MENU_SHADOW_RES] = "Tamanho do mapa de sombras",
     [UI_MENU_SHADOW_RES_DESC] = "Tamanho do mapa de sombras do sol. O tamanho do jogo muda com a vista, até cerca de "
                                 "400 perto do chão, então as sombras das folhas ficam quadriculadas e pulam; um "
@@ -1294,7 +1294,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_ASPECT_STRETCH] = "拉伸",
     [UI_MENU_FOV] = "视野",
     [UI_MENU_FOV_DESC] = "镜头能看到多大范围，以游戏自身视野的百分比表示。"
-                          "游戏中垂直视角为 50 度；过场动画按相同比例变化。",
+                          "游戏中垂直视角为 50 度；过场动画保持原有构图。",
     [UI_MENU_SHARPNESS] = "FSR 锐度",
     [UI_MENU_SHARPNESS_DESC] = "FSR 缩放后的锐化强度；0 为关闭。",
     [UI_MENU_COLOR] = "色彩",

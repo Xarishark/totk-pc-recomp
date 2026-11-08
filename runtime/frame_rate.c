@@ -127,10 +127,8 @@ void rt_fps_cutscene_s8(Cpu *c) { FP_SETS(8, cutscene_step()); }
 // rate * step: the same at step 1.0, and the last increment before the cut's end at any whole-vsync step. Outside a
 // cutscene the step floats and the game's own hold stays. s1 = the cut length, s8 = rate, as the replaced fsub has them.
 void rt_fps_cut_hold_s1(Cpu *c) {
-    uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
-    uint32_t volatile *flags = *(uint32_t volatile *volatile *)(base + 0xDB8398ull);
     float rate = VSF32(8);
-    FP_SETS(1, VSF32(1) - (flags && (*flags >> 30 & 1) ? rate * cutscene_step() : rate));
+    FP_SETS(1, VSF32(1) - (frame_step_cutscene() ? rate * cutscene_step() : rate));
 }
 
 // The dialogue text reveal adds a fixed amount per frame to its character accumulator. A talk line ends 0.5 s after both
@@ -267,10 +265,14 @@ double frame_step_limit_hz(void) { return fps_hz; }
 // at main+0xDB8398 names (main+0x42FE60 sets it, main+0x42FEA0 clears it); the log marks where cutscenes start and end.
 static int in_cutscene;
 
+int frame_step_cutscene(void) {
+    uint32_t volatile *flags = *(uint32_t volatile *volatile *)((uintptr_t)MOD_MAIN_BASE + 0xDB8398ull);
+    return flags && (*flags >> 30 & 1);
+}
+
 static void cutscene_rate(void) {
     uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
-    uint32_t volatile *flags = *(uint32_t volatile *volatile *)(base + 0xDB8398ull);
-    int now = flags && (*flags >> 30 & 1);
+    int now = frame_step_cutscene();
     if (in_cutscene != now) {
         in_cutscene = now;
         rt_log("frame rate: %s (world %.2f s)", now ? "cutscene" : "gameplay", (double)frame_step_world_us() / 1e6);
