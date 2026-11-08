@@ -51,7 +51,10 @@ enum { PAD_KIND_NONE, PAD_KIND_XBOX, PAD_KIND_PLAYSTATION };
 
 // Gamepad layouts (AC_PAD_LAYOUT): which face button is Switch A. Nintendo: by position, east A, south B, west Y,
 // north X. Xbox: south A, east B, west X, north Y, as an Xbox pad labels them (cross A, circle B on a PlayStation pad).
-enum { PAD_LAYOUT_NINTENDO, PAD_LAYOUT_XBOX, PAD_LAYOUT_COUNT };
+// PlayStation: south A, east B as labelled (cross A, circle B), west Y, north X as positioned (square, triangle): the
+// PlayStation button mod swaps A and B to cross and circle but draws X and Y at the Switch positions, so only this
+// hybrid matches its glyphs.
+enum { PAD_LAYOUT_NINTENDO, PAD_LAYOUT_XBOX, PAD_LAYOUT_PLAYSTATION, PAD_LAYOUT_COUNT };
 
 enum { INPUT_BINDING_MAX = 96, INPUT_PAD_BINDING_MAX = 48 };
 
@@ -84,16 +87,18 @@ int input_map_bind(const char *button, const char *list);
 // Applies the AC_BIND_<action> settings (cfg_get) over the defaults: at start, and again when one of them changes.
 void input_map_configure(void);
 
-// The layout for a AC_PAD_LAYOUT value: "nintendo" or "xbox" (any case); "xbox_prompts", 0.1.9's name for the Nintendo
-// layout with the Xbox prompts, maps the buttons as "nintendo". Anything else ("auto", NULL) picks Nintendo when the
-// pad's east button is labelled A (a Switch Pro Controller, a GuliKit) and Xbox otherwise.
-int input_pad_layout_pick(const char *setting, int east_labelled_a);
+// The layout for a AC_PAD_LAYOUT value: "nintendo", "xbox" or "playstation" (any case); "xbox_prompts", 0.1.9's
+// name for the Nintendo layout with the Xbox prompts, maps the buttons as "nintendo". Anything else ("auto", NULL)
+// picks PlayStation for a PlayStation pad, Nintendo when the pad's east button is labelled A (a Switch Pro
+// Controller, a GuliKit) and Xbox otherwise.
+int input_pad_layout_pick(const char *setting, int east_labelled_a, int pad_kind);
 
 // Button prompts (AC_PROMPTS): the controller whose buttons the game's prompts show. Nintendo: the game's own. Xbox
-// and PlayStation: button mods shipped as romfs-patches folders (tools/make_prompts_folders.py), drawn at
-// the Switch positions (runtime/romfs.c overlay_init). With the Nintendo layout the right button does Switch A and
-// the Xbox mod shows it as B; with the Xbox layout the same glyphs name the wrong buttons (the menu warns). Automatic
-// follows the controller in use (input_prompts_auto_for_kind): its mod when built, else Nintendo.
+// and PlayStation: button mods shipped as romfs-patches folders (tools/make_prompts_folders.py). The Xbox mod draws
+// each Switch button as its Xbox label, so only the Xbox layout matches it; the PlayStation mod swaps A and B to
+// cross and circle (switch A/B in the emulator controls) but draws X and Y at the Switch positions, so only the
+// PlayStation layout matches it. A loaded mod forces its layout (input_prompts_layout, input.c pad_layout_get).
+// Automatic follows the controller in use (input_prompts_auto_for_kind): its mod when built, else Nintendo.
 enum { PROMPTS_NINTENDO, PROMPTS_XBOX, PROMPTS_PLAYSTATION, PROMPTS_AUTO };
 // The prompts for a AC_PROMPTS value ("auto", "nintendo", "xbox" or "playstation", any case). Unset or empty:
 // Xbox while the pad layout setting is "xbox_prompts" (0.1.9's name for the Nintendo layout with the Xbox prompts),
@@ -104,9 +109,12 @@ int input_prompts_pick(const char *prompts, const char *pad_layout);
 // live).
 int input_prompts_auto_for_kind(int kind);
 // The folder next to romfs-index.bin that holds those prompts, NULL for the game's own or AUTO (resolve AUTO
-// first). One folder per mod whatever the AC_PAD_LAYOUT value: the mods only draw the Switch positions, so the
-// layout keeps moving the buttons live and the glyphs mismatch it outside the Nintendo layout.
+// first). One folder per mod; a loaded mod forces its layout (input_prompts_layout).
 const char *input_prompts_folder(int prompts, const char *pad_layout);
+// The layout a loaded prompts mod is drawn for: the Xbox layout for the Xbox mod, the PlayStation layout for the
+// PlayStation mod, -1 for the game's own prompts or unresolved AUTO (no forcing). Pure, so the probes check it
+// without RomFS; the callers map the loaded folder back to a prompts id first (input.c, the menu).
+int input_prompts_layout(int prompts);
 // down[pad] != 0 for the gamepad inputs held. Returns the Switch button bits (0..15) the layout's pad table presses.
 uint64_t input_map_pad_buttons(const uint8_t down[PAD_COUNT], int layout);
 

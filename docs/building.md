@@ -108,8 +108,8 @@ From the repository root, in PowerShell. Every step that depends on the game ver
    from the emulator mods with `tools\make_prompts_folders.py` (defaults read `controller-ui\`):
    they write the two `romfs-patches-*` folders, which `build_game.py` copies next to `astralchain.exe` like
    `romfs-patches`. The default `prompts = auto` loads the mod of the controller in use at the first run (no
-   restart needed); the Controls tab shows and changes it. The mods draw the Switch positions, so the Xbox layout
-   mismatches their glyphs (the menu warns).
+   restart needed); the Controls tab shows and changes it. Each mod is drawn for one gamepad layout (a loaded mod
+   forces it: Xbox for the Xbox mod, PlayStation for the PlayStation mod).
 
 6. Prepare the shaders (once per build folder and translator). It reads the variants players met from
    `generated\shader-answers.bin` (recorded in play; `tools\prepare_shaders.py --recordings` turns a recording into it)

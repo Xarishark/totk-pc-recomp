@@ -290,12 +290,18 @@ int probe_cfg(void) {
               input_stick_percent(0, 0) == 0 && fabs(input_stick_percent(3000, -4000) - 5000 * 100.0 / 32767) < 1e-9,
           "stick percent: an axis's end is 100%, the centre 0%, round in between");
     // Gamepad layouts (input_map.c)
-    CHECK(input_pad_layout_pick("auto", 1) == PAD_LAYOUT_NINTENDO && input_pad_layout_pick(NULL, 0) == PAD_LAYOUT_XBOX,
+    CHECK(input_pad_layout_pick("auto", 1, PAD_KIND_NONE) == PAD_LAYOUT_NINTENDO &&
+              input_pad_layout_pick(NULL, 0, PAD_KIND_NONE) == PAD_LAYOUT_XBOX,
           "pad layout: automatic is Nintendo for an east button labelled A, Xbox otherwise");
-    CHECK(input_pad_layout_pick("Xbox", 1) == PAD_LAYOUT_XBOX && input_pad_layout_pick("nintendo", 0) == PAD_LAYOUT_NINTENDO,
-          "pad layout: a set layout wins over the labels");
-    CHECK(input_pad_layout_pick("xbox_prompts", 0) == PAD_LAYOUT_NINTENDO &&
-              input_pad_layout_pick("Xbox_Prompts", 1) == PAD_LAYOUT_NINTENDO,
+    CHECK(input_pad_layout_pick("auto", 0, PAD_KIND_PLAYSTATION) == PAD_LAYOUT_PLAYSTATION &&
+              input_pad_layout_pick("auto", 1, PAD_KIND_PLAYSTATION) == PAD_LAYOUT_PLAYSTATION,
+          "pad layout: automatic is PlayStation for a PlayStation pad whatever the labels");
+    CHECK(input_pad_layout_pick("Xbox", 1, PAD_KIND_PLAYSTATION) == PAD_LAYOUT_XBOX &&
+              input_pad_layout_pick("nintendo", 0, PAD_KIND_XBOX) == PAD_LAYOUT_NINTENDO &&
+              input_pad_layout_pick("PlayStation", 0, PAD_KIND_NONE) == PAD_LAYOUT_PLAYSTATION,
+          "pad layout: a set layout wins over the labels and the kind");
+    CHECK(input_pad_layout_pick("xbox_prompts", 0, PAD_KIND_NONE) == PAD_LAYOUT_NINTENDO &&
+              input_pad_layout_pick("Xbox_Prompts", 1, PAD_KIND_XBOX) == PAD_LAYOUT_NINTENDO,
           "pad layout: 0.1.9's xbox_prompts keeps the Nintendo positions (only the prompts change, romfs.c overlay_init)");
     // Button prompts (input_map.c)
     CHECK(input_prompts_pick(NULL, "auto") == PROMPTS_AUTO && input_prompts_pick("", "xbox") == PROMPTS_AUTO &&
@@ -321,27 +327,38 @@ int probe_cfg(void) {
               EQ(input_prompts_folder(PROMPTS_XBOX, "xbox"), "romfs-patches-xbox") &&
               EQ(input_prompts_folder(PROMPTS_XBOX, "auto"), "romfs-patches-xbox") &&
               EQ(input_prompts_folder(PROMPTS_XBOX, NULL), "romfs-patches-xbox"),
-          "prompts: one Xbox folder whatever the layout (the mod draws the Switch positions)");
+          "prompts: one Xbox folder whatever the layout (the Xbox mod is drawn for the Xbox layout)");
     CHECK(EQ(input_prompts_folder(PROMPTS_PLAYSTATION, "nintendo"), "romfs-patches-playstation") &&
               EQ(input_prompts_folder(PROMPTS_PLAYSTATION, "xbox"), "romfs-patches-playstation") &&
               EQ(input_prompts_folder(PROMPTS_PLAYSTATION, NULL), "romfs-patches-playstation"),
-          "prompts: one PlayStation folder whatever the layout (the mod draws the Switch positions)");
-    // The button mods draw the face buttons at the Switch positions: romfs-patches-xbox shows A as B
-    // (tools/make_prompts_folders.py copies the mods' files). It matches exactly where the layout puts A on the
-    // east button, which an Xbox pad labels B; elsewhere the menu warns.
+          "prompts: one PlayStation folder whatever the layout (the PlayStation mod is drawn for the PlayStation layout)");
+    CHECK(input_prompts_layout(PROMPTS_XBOX) == PAD_LAYOUT_XBOX &&
+              input_prompts_layout(PROMPTS_PLAYSTATION) == PAD_LAYOUT_PLAYSTATION &&
+              input_prompts_layout(PROMPTS_NINTENDO) == -1 && input_prompts_layout(PROMPTS_AUTO) == -1,
+          "prompts: a loaded mod forces its layout, the game's own prompts and unresolved auto none");
+    // Each button mod is drawn for one layout: the Xbox mod draws each Switch button as its Xbox label (south A),
+    // the PlayStation mod swaps A and B to cross and circle but draws X and Y at the Switch positions (south cross
+    // A, west square Y). A layout matches a mod exactly where it puts each action on the button the glyph names.
     input_map_reset();
-    static const char *const layouts[] = {"nintendo", "xbox", "auto", "xbox_prompts"};
-    for (int i = 0; i < 4; i++) {
-        int nintendo = input_pad_layout_pick(layouts[i], 0) == PAD_LAYOUT_NINTENDO;
-        int a_east = input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_EAST] = 1}, input_pad_layout_pick(layouts[i], 0)) == 1ull << B_A;
-        CHECK(a_east == nintendo,
-              "prompts: only the Nintendo layout puts A on the button the mods draw it on");
+    static const char *const layouts[] = {"nintendo", "xbox", "playstation", "auto", "xbox_prompts"};
+    for (int i = 0; i < 5; i++) {
+        int layout = input_pad_layout_pick(layouts[i], 0, PAD_KIND_NONE);
+        int a_east = input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_EAST] = 1}, layout) == 1ull << B_A;
+        CHECK(a_east == (layout == PAD_LAYOUT_NINTENDO),
+              "prompts: only the Nintendo layout puts A on the east button");
     }
     uint8_t pd[PAD_COUNT] = {0};
     pd[PAD_SOUTH] = pd[PAD_NORTH] = 1;
     CHECK(input_map_pad_buttons(pd, PAD_LAYOUT_NINTENDO) == (1ull << B_B | 1ull << B_X) &&
           input_map_pad_buttons(pd, PAD_LAYOUT_XBOX) == (1ull << B_A | 1ull << B_Y),
           "pad layout: south and north are B and X by position, A and Y on Xbox");
+    pd[PAD_SOUTH] = pd[PAD_NORTH] = 0;
+    pd[PAD_WEST] = pd[PAD_EAST] = 1;
+    CHECK(input_map_pad_buttons(pd, PAD_LAYOUT_PLAYSTATION) == (1ull << B_Y | 1ull << B_B) &&
+          input_map_pad_buttons((uint8_t[PAD_COUNT]){[PAD_SOUTH] = 1, [PAD_NORTH] = 1}, PAD_LAYOUT_PLAYSTATION) ==
+              (1ull << B_A | 1ull << B_X),
+          "pad layout: PlayStation is A and B as labelled, Y and X by position");
+    pd[PAD_WEST] = pd[PAD_EAST] = 0;
     pd[PAD_SOUTH] = pd[PAD_NORTH] = 0;
     pd[PAD_START] = pd[PAD_ZR] = 1;
     CHECK(input_map_pad_buttons(pd, PAD_LAYOUT_XBOX) == (1ull << B_PLUS | 1ull << B_ZR), "pad layout: Xbox keeps the other buttons");

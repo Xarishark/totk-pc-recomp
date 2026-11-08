@@ -100,10 +100,13 @@ static const char *pad_label(int p) {
     return menu_text((UiTextId)(UI_PAD_SOUTH + (p - PAD_SOUTH)));
 }
 
-// The layout the gamepad cells show: the one in effect, or without a gamepad the one the setting names (Xbox for auto).
+// The layout the gamepad cells show: the one in effect, or without a gamepad the one the setting names (forced to
+// its layout while a prompts mod is loaded, as in effect).
 static int shown_layout(void) {
     int l = input_pad_layout();
-    return l >= 0 ? l : input_pad_layout_pick(cfg_value("AC_PAD_LAYOUT"), 0);
+    if (l >= 0) return l;
+    int forced = input_forced_layout();
+    return forced >= 0 ? forced : input_pad_layout_pick(cfg_value("AC_PAD_LAYOUT"), 0, PAD_KIND_NONE);
 }
 
 // Writes the bind_ line of every action whose line for m differs from the one set; a line at the defaults goes away.

@@ -7,8 +7,8 @@ writes romfs-patches-xbox and romfs-patches-playstation next to romfs-index.bin
 archive with the mod's entries swapped in) plus its manifest.tsv, served in place of
 the game's own archive while AC_PROMPTS is xbox or playstation (or auto with such a
 controller). The game reads ui.pkz, not loose ui_core files, so a copy of the mods'
-loose files would never load. The mods draw the Switch positions, so each folder is
-layout-independent (input_prompts_folder).
+loose files would never load. Each mod is drawn for one gamepad layout (a loaded mod
+forces it: Xbox for the Xbox mod, PlayStation for the PlayStation mod).
 
 The mod sources are vendored under controller-ui/ (xbox and playstation, each an
 emulator mod root or a romfs/ tree), which the defaults read, or pass their paths.

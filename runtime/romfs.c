@@ -810,7 +810,8 @@ static void overlay_init(void) {
     // the UI laid out for that shape (make_romfs_patches.py --aspect), when the game version has the camera aspect patch
     // the layout goes with (res_wants_wide_overlay).
     // With prompts = xbox or playstation, that mod's folder in its place (input_prompts_folder): the button
-    // mod's files (tools/make_prompts_folders.py), drawn at the Switch positions. The game reads the archives
+    // mod's files (tools/make_prompts_folders.py), each drawn for one gamepad layout (a loaded mod forces it).
+    // The game reads the archives
     // once at boot, so the prompts stay until restart even though the layout itself changes live. Each folder replaces
     // romfs-patches as a whole, so a game resolution that is not 16:9 keeps the Switch prompts. So does a RomFS mod
     // (the AC_ROMFS_MODS manifest or a player mod) that replaces one of the prompts' files: romfs-patches loads in

@@ -31,13 +31,16 @@
     {PAD_ZR, B_ZR}
 #define NINTENDO_PADS DEFAULT_PADS(B_B, B_A, B_Y, B_X)
 #define XBOX_PADS DEFAULT_PADS(B_A, B_B, B_X, B_Y)
+// PlayStation: A and B as labelled (south cross A, east circle B), X and Y by position (west square Y, north
+// triangle X), to match the button mod's glyphs.
+#define PLAYSTATION_PADS DEFAULT_PADS(B_A, B_B, B_Y, B_X)
 enum { DEFAULT_KEY_COUNT = 26, DEFAULT_PAD_COUNT = 16 };
 _Static_assert(sizeof (Binding[]){DEFAULT_KEYS} / sizeof (Binding) == DEFAULT_KEY_COUNT, "DEFAULT_KEY_COUNT");
 
-static const InputMap defaults = {{DEFAULT_KEYS}, DEFAULT_KEY_COUNT, {{NINTENDO_PADS}, {XBOX_PADS}},
-                                  {DEFAULT_PAD_COUNT, DEFAULT_PAD_COUNT}};
-InputMap input_map = {{DEFAULT_KEYS}, DEFAULT_KEY_COUNT, {{NINTENDO_PADS}, {XBOX_PADS}},
-                      {DEFAULT_PAD_COUNT, DEFAULT_PAD_COUNT}};
+static const InputMap defaults = {{DEFAULT_KEYS}, DEFAULT_KEY_COUNT, {{NINTENDO_PADS}, {XBOX_PADS}, {PLAYSTATION_PADS}},
+                                  {DEFAULT_PAD_COUNT, DEFAULT_PAD_COUNT, DEFAULT_PAD_COUNT}};
+InputMap input_map = {{DEFAULT_KEYS}, DEFAULT_KEY_COUNT, {{NINTENDO_PADS}, {XBOX_PADS}, {PLAYSTATION_PADS}},
+                      {DEFAULT_PAD_COUNT, DEFAULT_PAD_COUNT, DEFAULT_PAD_COUNT}};
 
 static const char *const action_names[ACTION_COUNT] = {
     "A", "B", "X", "Y", "LCLICK", "RCLICK", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN",
@@ -282,9 +285,11 @@ void input_map_line(const InputMap *m, int action, char *out, size_t n) {
 #undef PUT
 }
 
-int input_pad_layout_pick(const char *setting, int east_labelled_a) {
+int input_pad_layout_pick(const char *setting, int east_labelled_a, int pad_kind) {
     if (setting && (!strcasecmp(setting, "nintendo") || !strcasecmp(setting, "xbox_prompts"))) return PAD_LAYOUT_NINTENDO;
     if (setting && !strcasecmp(setting, "xbox")) return PAD_LAYOUT_XBOX;
+    if (setting && !strcasecmp(setting, "playstation")) return PAD_LAYOUT_PLAYSTATION;
+    if (pad_kind == PAD_KIND_PLAYSTATION) return PAD_LAYOUT_PLAYSTATION;
     return east_labelled_a ? PAD_LAYOUT_NINTENDO : PAD_LAYOUT_XBOX;
 }
 
@@ -306,10 +311,16 @@ int input_prompts_auto_for_kind(int kind) {
 }
 
 const char *input_prompts_folder(int prompts, const char *pad_layout) {
-    (void)pad_layout;   // the button mods draw the Switch positions whatever the layout in effect
+    (void)pad_layout;   // one folder per mod whatever the layout in effect
     if (prompts == PROMPTS_XBOX) return "romfs-patches-xbox";
     if (prompts == PROMPTS_PLAYSTATION) return "romfs-patches-playstation";
     return NULL;   // Nintendo needs no folder; AUTO is resolved by the caller
+}
+
+int input_prompts_layout(int prompts) {
+    if (prompts == PROMPTS_XBOX) return PAD_LAYOUT_XBOX;
+    if (prompts == PROMPTS_PLAYSTATION) return PAD_LAYOUT_PLAYSTATION;
+    return -1;   // the game's own prompts pair with no single layout; AUTO is resolved by the caller
 }
 
 uint64_t input_map_pad_buttons(const uint8_t down[PAD_COUNT], int layout) {

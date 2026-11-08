@@ -30,6 +30,10 @@ int input_detect_pad_kind(void);
 int input_prompts_auto(void);
 // The gamepad layout in effect (PAD_LAYOUT_*, input_map.h; AC_PAD_LAYOUT, live); -1 without a gamepad. Any thread.
 int input_pad_layout(void);
+// The layout the loaded button prompts force (input_map.h PAD_LAYOUT_*), or -1 with the game's own prompts: the
+// Xbox mod forces the Xbox layout, the PlayStation mod the PlayStation layout (input_prompts_layout). Follows the
+// loaded prompts rather than the asked-for ones (romfs.c overlay_init). Any thread.
+int input_forced_layout(void);
 // How far the open gamepad's left (pct[0]) and right (pct[1]) sticks are from the centre now, in percent of full
 // deflection, before the dead zone: the menu shows it on the dead zone rows, so a drifting stick's resting value can be
 // read off. 0 (and both 0) without a connected gamepad. Any thread.

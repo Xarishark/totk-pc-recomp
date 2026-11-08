@@ -233,15 +233,19 @@
 # rumble_curve = 0.6
 # rumble_triggers = 0
 # Which gamepad button is Switch A: nintendo (by position: east A, south B, west Y, north X), xbox (south A, east B,
-# west X, north Y, as an Xbox pad labels them; cross A on a PlayStation pad) or auto (nintendo for a pad with Nintendo
-# labels, xbox for the others). The bind_ lines below apply on top. Changes while the game runs take effect at once.
+# west X, north Y, as an Xbox pad labels them), playstation (south A, east B as labelled with cross and circle, west
+# Y, north X by position for square and triangle, to match the PlayStation button mod) or auto (playstation for a
+# PlayStation pad, nintendo for a pad with Nintendo labels, xbox for the others). A loaded Xbox or PlayStation
+# prompts mod forces its layout whatever this names. The bind_ lines below apply on top. Changes while the game runs
+# take effect at once.
 # 0.1.9's xbox_prompts is read as nintendo with prompts = xbox.
 # pad_layout = auto
 # The buttons the game's prompts show: auto (the controller in use: the Xbox or PlayStation mod when built, else
 # Nintendo), nintendo (the game's own), xbox or playstation (the controller button mods, built from emulator mods
-# with tools\make_prompts_folders.py into romfs-patches-xbox and romfs-patches-playstation next to the exe). Both
-# draw the buttons at the Switch positions: with nintendo, A shows as B on Xbox. The PlayStation mod only covers the
-# base and US UI files. Read at start: changing it needs a restart, which the Controls tab offers.
+# with tools\make_prompts_folders.py into romfs-patches-xbox and romfs-patches-playstation next to the exe). Each mod
+# is drawn for one layout (a loaded mod forces it: Xbox for the Xbox mod, PlayStation for the PlayStation mod). The
+# PlayStation mod only covers the base and US UI files. Read at start: changing it needs a restart, which the
+# Controls tab offers.
 # prompts = auto
 # Gamepad stick dead zone in percent of full deflection (0 to 50). Raise it for a stick that drifts: inside the circle
 # the stick reads centred, and the rest of its travel is scaled to start there.

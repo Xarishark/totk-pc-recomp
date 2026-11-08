@@ -670,13 +670,24 @@ static void tab_sound(float scale) {
 // A confirmation is open (Controls: restart, Advanced: reset): B and Esc close it, not the menu; L / R stay on the page.
 static bool g_modal;
 
-// The note under the layout: Automatic with a gamepad connected, the layout it picked ("in use: Xbox"). NULL otherwise.
+// The menu text id of a layout in effect.
+static UiTextId layout_name(int layout) {
+    return layout == PAD_LAYOUT_XBOX         ? UI_MENU_PAD_LAYOUT_XBOX
+           : layout == PAD_LAYOUT_PLAYSTATION ? UI_MENU_PAD_LAYOUT_PLAYSTATION
+                                              : UI_MENU_PAD_LAYOUT_NINTENDO;
+}
+
+// The note under the layout: the layout in effect when it is not what the setting names (Automatic with a gamepad
+// connected, or a prompts mod's forced layout under another setting). NULL otherwise (without a gamepad, or the
+// setting naming the layout in effect).
 static const char *pad_layout_note(void) {
     int got = input_pad_layout();
-    if (got < 0 || strcmp(cfg_value("AC_PAD_LAYOUT"), "auto")) return nullptr;
+    if (got < 0) return nullptr;
+    const char *set = cfg_value("AC_PAD_LAYOUT");
+    int named = input_pad_layout_pick(set, input_pad_label(PAD_EAST) == PAD_LABEL_A, input_pad_kind());
+    if (got == named && strcmp(set, "auto")) return nullptr;
     static char note[96];
-    snprintf(note, sizeof note, menu_text(UI_MENU_PAD_LAYOUT_IN_USE),
-             menu_text(got == PAD_LAYOUT_XBOX ? UI_MENU_PAD_LAYOUT_XBOX : UI_MENU_PAD_LAYOUT_NINTENDO));
+    snprintf(note, sizeof note, menu_text(UI_MENU_PAD_LAYOUT_IN_USE), menu_text(layout_name(got)));
     return note;
 }
 
@@ -715,22 +726,12 @@ static void row_walk_key(void) {
                     -1, n);
 }
 
-// Whether the loaded prompts are a Switch-positions mod with the Xbox layout in effect: their glyphs name the
-// wrong buttons. Shown in the row's description (right panel) instead of a note, so the row keeps its shape.
-static bool prompts_layout_warn(void) {
-    const char *layout = cfg_value("AC_PAD_LAYOUT"), *used = romfs_prompts();
-    int pick = input_prompts_pick(cfg_get("AC_PROMPTS"), layout);
-    if (pick == PROMPTS_AUTO) pick = input_prompts_auto_for_kind(input_pad_kind());
-    const char *want = input_prompts_folder(pick, layout);
-    return want && used && !strcmp(want, used) && input_pad_layout() == PAD_LAYOUT_XBOX;
-}
-
 // The note under the prompts. The settings name a prompts folder (input_prompts_folder: AUTO resolved through the
 // gamepad in effect), but the game reads its UI archive once at start (romfs.c overlay_init). While the folder in
 // use differs: "files missing" when the setup did not write the one asked for, why it was left out at start
 // (damaged, a game resolution that is not 16:9, a RomFS mod with the same files, AC_ROMFS_PATCHES), else "prompts
 // change after restart", and only then *restart is set: a restart would bring the prompts asked for. NULL when
-// they match (a Switch-positions mod with the Xbox layout in effect warns through prompts_layout_warn instead).
+// they match.
 static const char *prompts_note(bool *restart) {
     *restart = false;
     const char *layout = cfg_value("AC_PAD_LAYOUT"), *used = romfs_prompts();
@@ -790,14 +791,14 @@ static void restart_confirm(void) {
 
 static void tab_controls(float scale) {
     opt_begin("##controls", scale);
-    static const UiTextId layout[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX};
-    opt_choice("AC_PAD_LAYOUT", UI_MENU_PAD_LAYOUT, layout, 3, UI_MENU_PAD_LAYOUT_DESC, pad_layout_note());
+    static const UiTextId layout[] = {UI_MENU_PAD_LAYOUT_AUTO, UI_MENU_PAD_LAYOUT_NINTENDO, UI_MENU_PAD_LAYOUT_XBOX,
+                                        UI_MENU_PAD_LAYOUT_PLAYSTATION};
+    opt_choice("AC_PAD_LAYOUT", UI_MENU_PAD_LAYOUT, layout, 4, UI_MENU_PAD_LAYOUT_DESC, pad_layout_note());
     static const UiTextId prompts[] = {UI_MENU_PROMPTS_AUTO, UI_MENU_PROMPTS_NINTENDO, UI_MENU_PROMPTS_XBOX,
                                         UI_MENU_PROMPTS_PLAYSTATION};
     bool restart;
     const char *note = prompts_note(&restart);
-    opt_choice("AC_PROMPTS", UI_MENU_PROMPTS, prompts, 4,
-               prompts_layout_warn() ? UI_MENU_PROMPTS_DESC_LAYOUT : UI_MENU_PROMPTS_DESC, note);
+    opt_choice("AC_PROMPTS", UI_MENU_PROMPTS, prompts, 4, UI_MENU_PROMPTS_DESC, note);
     bool ask = restart && opt_button("##restart", UI_MENU_RESTART, UI_MENU_RESTART_DESC);
     opt_toggle("AC_MOTION", UI_MENU_MOTION, UI_MENU_MOTION_DESC);
     opt_slider("AC_RUMBLE_STRENGTH", UI_MENU_RUMBLE_STRENGTH, 0, 300, UI_MENU_RUMBLE_STRENGTH_DESC, 10, "%.0f %%");

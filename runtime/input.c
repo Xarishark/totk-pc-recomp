@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 
 #include "cfg.h"
+#include "fs.h"
 #include "host.h"
 #include "input.h"
 #include "input_map.h"
@@ -391,15 +392,40 @@ static void scan_pads(void) {
 }
 
 // Under lock: the layout of the open gamepad, picked again when a setting or the gamepad changed; logs each change.
+// A loaded Xbox/PlayStation prompts mod forces its layout whatever the setting names (each mod is drawn for one
+// layout); overlay_init runs before input starts, so romfs_prompts is set by the first pick.
+static const char *layout_name(int layout) {
+    return layout == PAD_LAYOUT_XBOX ? "xbox" : layout == PAD_LAYOUT_PLAYSTATION ? "playstation" : "nintendo";
+}
+
+// The forced layout of the loaded prompts folder (input_prompts_folder): the Xbox mod forces the Xbox layout, the
+// PlayStation mod the PlayStation layout, the game's own prompts no forcing (-1). It follows the loaded prompts
+// rather than the asked-for ones, so the buttons keep matching the glyphs on screen until a restart brings the new
+// prompts.
+int input_forced_layout(void) {
+    const char *loaded = romfs_prompts();
+    if (loaded && !strcmp(loaded, input_prompts_folder(PROMPTS_XBOX, NULL))) return input_prompts_layout(PROMPTS_XBOX);
+    if (loaded && !strcmp(loaded, input_prompts_folder(PROMPTS_PLAYSTATION, NULL)))
+        return input_prompts_layout(PROMPTS_PLAYSTATION);
+    return -1;
+}
+
 static int pad_layout_get(void) {
     unsigned ver = cfg_version();
     if (pad_layout >= 0 && ver == pad_layout_seen) return pad_layout;
     pad_layout_seen = ver;
     int was = pad_layout;
     const char *set = cfg_value("AC_PAD_LAYOUT");
-    pad_layout = input_pad_layout_pick(set, pad_east_a);
-    if (pad_layout != was)
-        rt_log("input: gamepad layout %s (pad_layout = %s)", pad_layout == PAD_LAYOUT_XBOX ? "xbox" : "nintendo", set);
+    int kind = (int)plat_cas32(&pad_kind_shown, 0, 0);
+    int forced = input_forced_layout();
+    pad_layout = forced >= 0 ? forced : input_pad_layout_pick(set, pad_east_a, kind);
+    if (pad_layout != was) {
+        if (forced >= 0)
+            rt_log("input: gamepad layout %s (%s is loaded, pad_layout = %s)", layout_name(pad_layout),
+                   romfs_prompts(), set);
+        else
+            rt_log("input: gamepad layout %s (pad_layout = %s)", layout_name(pad_layout), set);
+    }
     plat_xchg32(&pad_layout_shown, pad_layout);
     return pad_layout;
 }
