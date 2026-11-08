@@ -11,7 +11,7 @@
 // the frame's display time from the pacer (nvn_api_obj.c), so present-to-present intervals stay even whatever the
 // replay took. The blit is already on the queue, so the wait blocks no submission.
 //
-// Asynchronous replay (AC_REPLAY_ASYNC, default 0; 1 turns it on): nvnQueueSubmitCommands
+// Asynchronous replay (AC_REPLAY_ASYNC, default on; 0 turns it off): nvnQueueSubmitCommands
 // and nvnQueuePresentTexture only queue. Each item gets its timeline value at enqueue (vk_sync_reserve), in queue
 // order; the replay thread runs the synchronous submit and present bodies in that order, so every value is signalled
 // by the submission it was handed out for. The game runs at most one frame ahead: queueing present N waits until the
@@ -173,7 +173,7 @@ static uint64_t ck_reads, ck_diff, ck_diff_unexplained, ck_diff_idle;
 int vk_replay_async(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("AC_REPLAY_ASYNC");   // off by default: no measured gain yet, one more frame of latency
+        on = cfg_bool("AC_REPLAY_ASYNC");   // on by default: A/B on the dev machine showed identical throughput (docs), 0 turns it off
         rt_log("vk: replay %s (AC_REPLAY_ASYNC=%d)",
                on ? "on its own thread, at most one frame behind the game" : "on the submitting thread", on);
     }
