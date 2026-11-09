@@ -1,5 +1,13 @@
-# Title screen to gameplay (first save slot).
-300 A 4
-520 A 4
-700 A 4
-900 A 4
+# Title screen to gameplay on the first save slot. Timed lines (@ms of the world clock, from the first present).
+# Presses are spaced so each screen is up before its press, docked at 60 fps as handheld at 30: a menu waits for its
+# input, but a press sent before the screen is ready is lost and the rest of the script falls out of step.
+# Title (ZL + ZR held) -> LOAD DATA (A) -> slot A (A; RIGHT before it takes slot B) -> load it (A) -> play style
+# "Oui" (LEFT, A). The game is in play about 34 s in.
+@2100 PLUS 35
+@10000 ZL 400
+@10000 ZR 400
+@14000 A 200
+@21500 A 200
+@24000 A 200
+@27000 LEFT 150
+@28000 A 200
