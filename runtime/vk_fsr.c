@@ -209,7 +209,9 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
         // FSR sharpening does, and the picture keeps the detail the larger render targets produced.
         barrier(cb, F.img[1], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, CS | XF, 0, CS,
                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        float rcas[8] = {(float)dw, (float)dh, (float)(100 - sharp) / 50.0f, 0, 0, 0, 0, 0};
+        // RCAS reads the crop rectangle where it lies in the source (crop[0], crop[1]), not from the image's corner
+        float rcas[8] = {(float)dw, (float)dh, (float)(100 - sharp) / 50.0f, 0,
+                         (float)crop[0], (float)crop[1], (float)cw, (float)ch};
         bind_pass(cb, F.rcas, F.src_view[slot], F.view[1], rcas);
         vkCmdDispatch(cb, gx, gy, 1);
         barrier(cb, F.img[1], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, CS,
@@ -234,7 +236,7 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
     if (sharp > 0) {
         barrier(cb, F.img[0], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                 CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        float rcas[8] = {(float)dw, (float)dh, (float)(100 - sharp) / 50.0f, 0, 0, 0, 0, 0};
+        float rcas[8] = {(float)dw, (float)dh, (float)(100 - sharp) / 50.0f, 0, 0, 0, (float)dw, (float)dh};
         bind_pass(cb, F.rcas, F.view[0], F.view[1], rcas);
         vkCmdDispatch(cb, gx, gy, 1);
         last = 1;
