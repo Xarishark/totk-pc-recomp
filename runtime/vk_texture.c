@@ -745,9 +745,12 @@ static void sweep_pressure(void) {   // tex_lock held
 }
 
 // AC_TEX_CACHE_MB: own memory the texture images may take, in MiB, live and released together. Empty or 0: an eighth
-// of the device budget, at least 512 MiB and at most 2 GiB; negative: no budget. Past it, the least recently used
-// entries that can come back intact are dropped, a few per submit, and uploaded again when the game binds them. The
-// released sweep above bounds the cache's dead entries by count; this one bounds the memory of everything it holds.
+// of the device budget, at least 512 MiB and at most 2 GiB; when the decoded ASTC textures stay RGBA8 (AC_ASTC_BC=0,
+// the default on a discrete GPU with 6 GB or more), four to eight times BC's bytes, half of the budget, at most 8 GiB,
+// so the textures of one area are not dropped and decoded again as the camera turns; negative: no budget. Past it,
+// the least recently used entries that can come back intact are dropped, a few per submit, and uploaded again when the
+// game binds them. The released sweep above bounds the cache's dead entries by count; this one bounds the memory of
+// everything it holds. The VRAM pressure sweep (sweep_pressure) still drops released entries near the device budget.
 #define CACHE_STEP 8
 #define CACHE_AGE 90   // submit epochs unused before the budget may drop an entry (about 1.5 s at 60 submits a second)
 static uint64_t cache_budget;   // tex_lock
@@ -765,9 +768,11 @@ static void cache_budget_init(void) {   // tex_lock held
     } else {
         uint64_t used, budget;
         int exact;
-        cache_budget = vk_mem_vram(&used, &budget, &exact) && budget ? budget / 8 : (1024ull << 20);
+        int rgba8 = vk_astc_mode() != VK_ASTC_NATIVE && !vk_astc_bc();
+        cache_budget = vk_mem_vram(&used, &budget, &exact) && budget ? budget / (rgba8 ? 2 : 8) : (1024ull << 20);
+        uint64_t most = rgba8 ? 8192ull << 20 : 2048ull << 20;
         if (cache_budget < (512ull << 20)) cache_budget = 512ull << 20;
-        if (cache_budget > (2048ull << 20)) cache_budget = 2048ull << 20;
+        if (cache_budget > most) cache_budget = most;
     }
     rt_log("vk: texture cache: %llu MiB of images (AC_TEX_CACHE_MB)", (unsigned long long)(cache_budget >> 20));
 }
@@ -1957,13 +1962,18 @@ static void sampler_features(VkCtx *c) {
     sf.mirror_clamp_edge = f12.samplerMirrorClampToEdge;
     sf.minmax = f12.samplerFilterMinmax;
     sf.border_no_format = c->has_custom_border_color && cbf.customBorderColors && cbf.customBorderColorWithoutFormat;
-    // AC_ANISO=auto (the default) follows the emulators' automatic mode (Eglantine, video_core/textures/texture.cpp,
-    // TSCEntry::MaxAnisotropy): one doubling of the game's level per whole step of AC_SSAA above 1, so 2 gives twice
-    // the game's level and 1 or 1.333 keep it. Without AC_SSAA it is the same as game.
+    // AC_ANISO=auto (the default). At AC_SSAA=2160p it follows the emulators' automatic mode (Eglantine,
+    // video_core/textures/texture.cpp, TSCEntry::MaxAnisotropy): one doubling of the game's level per whole step of
+    // the scale above 1, so twice the game's level. At 1440p that rule adds nothing (the scale is 4/3), and the game
+    // asks for no anisotropy on its surfaces (level 1 on all 312 repeating trilinear samplers of a gameplay frame
+    // dump), while 4/3 supersampling does little for ground seen at a shallow angle: four doublings, 16x (the device's
+    // limit applies). 2160p keeps the doubling: its 2x supersampling already sharpens those surfaces, and it is the
+    // setting where the GPU has the least time left. Without AC_SSAA it is the same as game.
     const char *an = cfg_value("AC_ANISO");
     int is_auto = !strcmp(an, "auto");
     sf.aniso = is_auto || !strcmp(an, "game") ? 0 : (float)atoi(an);
-    sf.aniso_add = is_auto ? (int)floorf(vk_render_scale()) - 1 : 0;
+    float rs = vk_render_scale();
+    sf.aniso_add = !is_auto || rs <= 1.0f ? 0 : rs < 2.0f ? 4 : (int)floorf(rs) - 1;
     if (sf.aniso_add < 0) sf.aniso_add = 0;
     if (sf.aniso > 1) rt_log("vk: anisotropic filtering: %s", an);
     else if (sf.aniso_add) rt_log("vk: anisotropic filtering: the game's level times %d (AC_ANISO=auto, AC_SSAA)", 1 << sf.aniso_add);

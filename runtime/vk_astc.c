@@ -1,15 +1,17 @@
 // ASTC textures on the GPU: the AC_ASTC knob, a compute decoder that turns raw blocks into the RGBA8 image the CPU
 // decoder (tex_astc.c) would have written, and the native ASTC formats where the device samples them itself.
 //
-// AC_ASTC_BC = bc1 (gpu mode only, default): a second pass encodes the decoded texels to block compression and
-// the image is compressed instead of RGBA8. The alpha scan of the raw storage (tex_astc.c
-// astc_storage_alpha_possible, vk_texture.c) picks the format per texture: one whose every block decodes
-// alpha 255 takes BC1 (runtime/shaders/bc1_encode.comp, 4 bits per texel), the rest BC3
-// (runtime/shaders/bc3_encode.comp, 8 bits per texel) — a quarter to a half of the video memory the RGBA8
-// decode takes, the same colour quality either way (the BC3 colour block is a BC1 block). Devices that
-// sample ASTC themselves never decode, so the default leaves them on native ASTC. 1 forces BC3 for every
-// texture, 0 keeps the decoded images as RGBA8, at BC's cost being visible: slightly blockier gradients,
-// and data textures (normal maps) losing some precision. --probe-astc holds both encoders to PSNR bounds.
+// AC_ASTC_BC (gpu mode only) = auto (default): 0 on a discrete GPU with 6 GB of video memory or more, bc1 below
+// it and on integrated GPUs (auto_bc). 0 keeps the decoded images as RGBA8, the quality of the ASTC data.
+// bc1: a second pass encodes the decoded texels to block compression and the image is compressed instead of
+// RGBA8. The alpha scan of the raw storage (tex_astc.c astc_storage_alpha_possible, vk_texture.c) picks the
+// format per texture: one whose every block decodes alpha 255 takes BC1 (runtime/shaders/bc1_encode.comp,
+// 4 bits per texel), the rest BC3 (runtime/shaders/bc3_encode.comp, 8 bits per texel) — an eighth to a quarter
+// of the video memory the RGBA8 decode takes. BC1 and BC3 give the same colour quality (the BC3 colour block is
+// a BC1 block), but both lose against RGBA8: blockier gradients, and data textures (normal maps) losing
+// precision, which shows most on the environments' large tiled surfaces. 1 forces BC3 for every texture.
+// Devices that sample ASTC themselves never decode, so they stay on native ASTC whatever the knob says.
+// --probe-astc holds both encoders to PSNR bounds (a correctness floor, not a quality bar).
 //
 // AC_ASTC = auto (default): native when the device reports textureCompressionASTC_LDR and the format's features,
 // else gpu. gpu: compute decode into RGBA8 (runtime/shaders/astc_decode.comp). native: like auto, but logs when the
@@ -368,6 +370,24 @@ static int create_bc1_pipeline(VkCtx *c) {
 
 static int native_device(VkCtx *c) { return c->has_astc_ldr; }
 
+// AC_ASTC_BC=auto (the default): a discrete GPU with 6 GB of video memory or more keeps the decoded textures as RGBA8,
+// the quality the ASTC data has; below that, and on an integrated GPU (its video memory is the system RAM the game
+// also lives in), bc1. The size is the device-local heaps' total, not the budget: the budget is what the OS leaves
+// the process at the moment, below the card's size (a 6 GB card can report about 5.3 GiB). The threshold sits at
+// 5.5 GiB so a 6 GB card whose driver keeps a small carve-out out of its heaps still counts.
+#define RGBA8_VRAM_MIN (5632ull << 20)
+
+static const char *auto_bc(VkCtx *c) {
+    uint64_t vram = 0;
+    for (uint32_t h = 0; h < c->mem_props.memoryHeapCount && h < VK_MAX_MEMORY_HEAPS; h++)
+        if (c->mem_props.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram += c->mem_props.memoryHeaps[h].size;
+    int discrete = c->props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+    const char *b = discrete && vram >= RGBA8_VRAM_MIN ? "0" : "bc1";
+    rt_log("vk: AC_ASTC_BC=auto: %s GPU, %.1f GiB of video memory: %s", discrete ? "discrete" : "integrated or other",
+           vram / 1073741824.0, *b == '0' ? "RGBA8" : "bc1");
+    return b;
+}
+
 static const char *mode_name(int m) {
     return m == VK_ASTC_CPU ? "cpu" : m == VK_ASTC_GPU ? "gpu" : m == VK_ASTC_NATIVE ? "native" : "check";
 }
@@ -400,10 +420,11 @@ int vk_astc_mode(void) {
         G.bc = 0;
         if (m == VK_ASTC_GPU && G.pipe) {   // the recompression knob decides which encoders are built
             const char *b = cfg_value("AC_ASTC_BC");
+            if (!strcmp(b, "auto")) b = auto_bc(c);
             if (!strcmp(b, "0")) G.bc = 0;
             else if (!strcmp(b, "1")) G.bc = create_bc_pipeline(c) ? 1 : 0;
             else {
-                if (strcmp(b, "bc1")) rt_log("vk: AC_ASTC_BC=%s is not bc1, 1 or 0: bc1", b);
+                if (strcmp(b, "bc1")) rt_log("vk: AC_ASTC_BC=%s is not auto, bc1, 1 or 0: bc1", b);
                 G.bc = create_bc_pipeline(c) ? (create_bc1_pipeline(c) ? 2 : 1) : 0;
             }
         }

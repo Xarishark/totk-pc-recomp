@@ -73,7 +73,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                                 "sharper. Above 1024 the shadows cost more GPU time and video memory.",
     [UI_MENU_SHADOW_RES_GAME] = "Game (changes)",
     [UI_MENU_ANISO] = "Texture filtering",
-    [UI_MENU_ANISO_DESC] = "Anisotropic filtering of surface textures: ground, roads and walls seen at a shallow angle stay sharp into the distance instead of blurring. Game: the level the game asks for, as on the Switch. Auto: the game's level, doubled at a 3D render scale of 2x, as emulators do.",
+    [UI_MENU_ANISO_DESC] = "Anisotropic filtering of surface textures: ground, roads and walls seen at a shallow angle stay sharp into the distance instead of blurring. Game: the level the game asks for, as on the Switch. Auto: 16x with 3D render scale 1440p, twice the game's level at 2160p, the game's level otherwise.",
     [UI_MENU_ANISO_GAME] = "Game",
     [UI_MENU_ANISO_AUTO] = "Auto",
     [UI_MENU_SHARPNESS] = "FSR sharpness",
@@ -454,7 +454,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                                 "их ровными и чётче. Выше 1024 тени требуют больше времени GPU и видеопамяти.",
     [UI_MENU_SHADOW_RES_GAME] = "Как в игре (меняется)",
     [UI_MENU_ANISO] = "Фильтрация текстур",
-    [UI_MENU_ANISO_DESC] = "Анизотропная фильтрация текстур поверхностей: земля, дороги и стены под острым углом остаются чёткими вдали, а не размываются. Игра: уровень, который запрашивает игра, как на Switch. Авто: уровень игры, удвоенный при масштабе 3D-отрисовки 2x, как в эмуляторах.",
+    [UI_MENU_ANISO_DESC] = "Анизотропная фильтрация текстур поверхностей: земля, дороги и стены под острым углом остаются чёткими вдали, а не размываются. Игра: уровень, который запрашивает игра, как на Switch. Авто: 16x при масштабе 3D-отрисовки 1440p, удвоенный уровень игры при 2160p, иначе уровень игры.",
     [UI_MENU_ANISO_GAME] = "Игра",
     [UI_MENU_ANISO_AUTO] = "Авто",
     [UI_MENU_SHARPNESS] = "Резкость FSR",
@@ -1086,8 +1086,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_ANISO] = "Filtragem de texturas",
     [UI_MENU_ANISO_DESC] = "Filtragem anisotrópica das texturas de superfície: chão, estradas e paredes vistos em "
                            "ângulo raso continuam nítidos ao longe em vez de borrar. Jogo: o nível que o jogo pede, "
-                           "como no Switch. Auto: o nível do jogo, dobrado com escala de renderização 3D de 2x, como "
-                           "nos emuladores.",
+                           "como no Switch. Auto: 16x com escala de renderização 3D 1440p, o dobro do nível do jogo "
+                           "em 2160p, o nível do jogo nos demais casos.",
     [UI_MENU_ANISO_GAME] = "Jogo",
     [UI_MENU_ANISO_AUTO] = "Auto",
     [UI_MENU_COLOR] = "Cor",
@@ -1634,7 +1634,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                                 "GPU 时间和显存。",
     [UI_MENU_SHADOW_RES_GAME] = "游戏默认（会变化）",
     [UI_MENU_ANISO] = "纹理过滤",
-    [UI_MENU_ANISO_DESC] = "表面纹理的各向异性过滤：以小角度看到的地面、道路和墙壁在远处依然清晰，而不会模糊。游戏：使用游戏请求的级别，与 Switch 上相同。自动：使用游戏的级别，3D 渲染比例为 2 倍时加倍，与模拟器相同。",
+    [UI_MENU_ANISO_DESC] = "表面纹理的各向异性过滤：以小角度看到的地面、道路和墙壁在远处依然清晰，而不会模糊。游戏：使用游戏请求的级别，与 Switch 上相同。自动：3D 渲染比例为 1440p 时为 16x，2160p 时为游戏级别的两倍，其他情况使用游戏的级别。",
     [UI_MENU_ANISO_GAME] = "游戏",
     [UI_MENU_ANISO_AUTO] = "自动",
     [UI_MENU_HDR_GROUP] = "HDR",

@@ -55,13 +55,14 @@
 # ASTC texture decoding: native (the GPU's own ASTC support), gpu (a compute shader), cpu, or auto (native when the GPU
 # has it, gpu otherwise).
 # astc = auto
-# With the GPU decoder: re-encode the decoded ASTC textures to BC1 when the alpha scan proves them opaque (the
-# colour quality is the same as BC3, half the size) and to BC3 otherwise — together a quarter to an eighth of the
-# video memory, at the cost of BC's slightly blockier results (normal maps lose some precision). 1 forces BC3 for
-# every texture (the old behaviour), 0 keeps the decoded RGBA8 images.
-# astc_bc = bc1
-# Live texture images kept in video memory, in MiB; past it the least recently used are dropped and uploaded again when
-# the game binds them. Empty or 0: an eighth of the device budget, at least 512 MiB and at most 2 GiB; -1: no budget.
+# With the GPU decoder: 0 keeps the decoded ASTC textures as RGBA8, the textures' full quality. bc1 re-encodes them
+# to BC1 when the alpha scan proves them opaque and to BC3 otherwise — together an eighth to a quarter of the video
+# memory, at the cost of blockier gradients and normal maps that lose precision. 1 forces BC3 for every texture.
+# auto: 0 on a discrete GPU with 6 GB of video memory or more, bc1 below it and on integrated GPUs.
+# astc_bc = auto
+# Texture images kept in video memory, in MiB; past it the least recently used are dropped and uploaded again when
+# the game binds them. Empty or 0: an eighth of the device budget, at least 512 MiB and at most 2 GiB, or half of it,
+# at most 8 GiB, when the decoded ASTC textures stay RGBA8; -1: no budget.
 # tex_cache_mb =
 # Game memory shared with the GPU: auto (mirror on a discrete GPU, import on an integrated one), import (host memory
 # imported into Vulkan), mirror (pools used as buffers get a copy in video memory) or verify (mirror plus a check of
@@ -112,7 +113,7 @@
 [display]
 # Device profile: auto (the Steam Deck when this is one), desktop or deck. On a Steam Deck the keys this file does not
 # set default to fullscreen = 1, window_size = 1280x800, output_res = 1280x800, render_scale = game, vk_present = fifo,
-# fps = 30, operation_mode = handheld, astc_bc = 1, tex_cache_mb = 512, tex_vram_pressure = 70, aniso = game,
+# fps = 30, operation_mode = handheld, astc_bc = bc1, tex_cache_mb = 512, tex_vram_pressure = 70, aniso = game,
 # shadow_res = 512, shadow_scale = 1, shadow_range = 100, contact_shadows = 0, pcss = 0. Read at start.
 # device_profile = auto
 # Presentation mode: mailbox (default when the driver offers it, vsync otherwise), fifo (vsync) or immediate.
@@ -150,8 +151,9 @@
 # Field of view, in percent of the game's own: 70 to 140, 100 (the default) leaves the camera as it is. Higher shows
 # more of the world around Link. Game version 1.4.3 only. Changes while the game runs take effect at once.
 # fov = 100
-# Anisotropic filtering of surface textures: auto (the default: the game's level, doubled at ssaa = 2, as emulators do),
-# game (the level the game asks for, as on the Switch) or 2, 4, 8, 16. Keeps ground, roads and walls seen at a shallow
+# Anisotropic filtering of surface textures: auto (the default: 16x at ssaa = 1440p, twice the game's level at
+# ssaa = 2160p, as emulators do at 2x, the game's level without ssaa), game (the level the game asks for, as on the
+# Switch, which is 1: none) or 2, 4, 8, 16. Keeps ground, roads and walls seen at a shallow
 # angle sharp into the distance. Only filtered, mipmapped textures that tile are raised; shadow maps, data maps and
 # screen-sized buffers keep the game's setting. Read at start.
 # aniso = auto
