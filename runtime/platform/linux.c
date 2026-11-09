@@ -917,6 +917,44 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
     return got;
 }
 
+// The asynchronous write protection clears a page's protection on its first write, through a fault (several hundred
+// ns each: 36 MiB of write-backs a frame took about 4700 of them). One UFFDIO_WRITEPROTECT clearing the whole range does
+// the same in one call, and plat_mem_written reports the pages as written either way. A write after a reset in between
+// faults as usual. A range outside the watch fails the call (ENOENT), and its writes take no fault for it anyway.
+void plat_mem_will_write(uint64_t addr, uint64_t n) {
+    if (ww_fd < 0 || !n) return;
+    uint64_t lo = addr & ~(PG - 1), hi = (addr + n + PG - 1) & ~(PG - 1);
+    struct uffdio_writeprotect wp = {.range = {lo, hi - lo}, .mode = 0};
+    ioctl(ww_fd, UFFDIO_WRITEPROTECT, &wp);
+}
+
+void *plat_mem_stage(uint64_t n) {
+    void *p = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) return NULL;
+    madvise(p, n, MADV_NOHUGEPAGE);   // the pages it replaces are watched per 4 KiB page
+    return p;
+}
+
+// The moved mapping leaves the userfaultfd registration behind (no UFFD_FEATURE_EVENT_REMAP), so the range is
+// registered again. Its pages carry no write protection then, which plat_mem_written reports as written; a scan between
+// the move and the registration fails, and the caller treats the range as untracked (written in full).
+int plat_mem_replace(uint64_t addr, void *stage, uint64_t n) {
+    void *p = mremap(stage, n, n, MREMAP_MAYMOVE | MREMAP_FIXED, (void *)(uintptr_t)addr);
+    if (p != (void *)(uintptr_t)addr) {   // not expected: copy in place instead
+        int ok = !mprotect((void *)(uintptr_t)addr, n, PROT_READ | PROT_WRITE);
+        if (ok) memcpy((void *)(uintptr_t)addr, stage, n);
+        munmap(stage, n);
+        if (!ok) return 0;
+    } else if (ww_fd >= 0) {
+        struct uffdio_register reg = {.range = {addr, n}, .mode = UFFDIO_REGISTER_MODE_WP};
+        if (ioctl(ww_fd, UFFDIO_REGISTER, &reg))
+            fprintf(stderr, "platform: write watch over %#llx+%#llx failed again (%s)\n", (unsigned long long)addr,
+                    (unsigned long long)n, strerror(errno));
+    }
+    ps_set(addr, n, PS_RW);
+    return 1;
+}
+
 // One handler for the synchronous faults. A SIGSEGV whose page-fault error code has the write bit set goes to the
 // write-fault hook first (memory.c thaws a frozen region); a fault in this executable's code then goes to the crash
 // hook (main.c); anything else gets the default action. Runs on the thread's signal stack.

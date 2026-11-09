@@ -609,6 +609,19 @@ uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t m
     return got;
 }
 
+void plat_mem_will_write(uint64_t addr, uint64_t n) { (void)addr, (void)n; }   // GetWriteWatch writes take no fault
+
+void *plat_mem_stage(uint64_t n) { return VirtualAlloc(NULL, (SIZE_T)n, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE); }
+
+// No atomic page replacement here: another thread may read the old bytes during the copy. Only shadow storage holds
+// ranges (vk_memory.c: on under Wine, and with AC_SHADOW=1), and only for storage-buffer writes the CPU rarely reads.
+int plat_mem_replace(uint64_t addr, void *stage, uint64_t n) {
+    int ok = plat_mem_protect(addr, n, PLAT_PROT_RW);
+    if (ok) memcpy((void *)(uintptr_t)addr, stage, (size_t)n);
+    VirtualFree(stage, 0, MEM_RELEASE);
+    return ok;
+}
+
 static int (*fault_hook)(uint64_t addr);
 static int (*read_fault_hook)(uint64_t addr);
 

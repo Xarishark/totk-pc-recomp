@@ -885,7 +885,7 @@ static int nstouch, cstouch;
 static SRange *spend;                             // shadow_lock: GPU writes recorded and not copied back yet
 static int nspend, cspend;
 static int64_t s_live_n, s_live_bytes;            // shadow_lock
-static uint64_t s_syncs, s_copied, s_queries, s_untracked, s_wb_bytes, s_ticks;   // shadow_lock: since the last log
+static uint64_t s_syncs, s_copied, s_queries, s_untracked, s_wb_bytes, s_held_bytes, s_ticks;   // shadow_lock: since the last log
 
 static int shadow_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size) {
     r->import_lo = addr & ~0xfffull;
@@ -949,7 +949,8 @@ static void shadow_forget(PoolRec *r) {
 }
 
 // shadow_lock held: copies guest [a, b) into the shadow, leaving out the bytes of GPU writes not copied back yet
-// (spend from index i on).
+// (spend from index i on) and the ranges this pool holds (gpu_written): the GPU stamps their pages, and reading them
+// would fetch them back.
 static void shadow_copy(PoolRec *r, uint64_t a, uint64_t b, int i) {
     for (; i < nspend; i++)
         if (spend[i].lo < b && spend[i].hi > a) {
@@ -957,6 +958,12 @@ static void shadow_copy(PoolRec *r, uint64_t a, uint64_t b, int i) {
             if (spend[i].hi < b) shadow_copy(r, spend[i].hi, b, i + 1);
             return;
         }
+    uint64_t hlo, hhi;
+    if (mem_held_by(a, b, r, &hlo, &hhi)) {   // the shadow has the newest bytes there, guest memory older ones
+        if (hlo > a) shadow_copy(r, a, hlo, nspend);
+        if (hhi < b) shadow_copy(r, hhi, b, nspend);
+        return;
+    }
     memcpy(r->smap + (a - r->import_lo), (const void *)(uintptr_t)a, b - a);
     vmaFlushAllocation(vk_ctx()->vma, r->salloc, a - r->import_lo, b - a);   // non-coherent memory only (shadow_pool)
     s_copied += b - a;
@@ -1027,20 +1034,48 @@ void vk_mem_gpu_pending(uint64_t addr, uint64_t size) {
     plat_mutex_unlock(&shadow_lock);
 }
 
-void vk_gpu_written(uint64_t addr, uint64_t size) {
+// memory.c fetch for a held range (gpu_written): the shadow's bytes, which the GPU wrote. No lock: the pool's shadow
+// outlives its holds (vk_pool_fini's mem_thaw fetches them back first).
+static void shadow_fetch(void *ctx, uint64_t a, uint64_t n, void *dst) {
+    PoolRec *r = ctx;
+    vmaInvalidateAllocation(vk_ctx()->vma, r->salloc, a - r->import_lo, n);   // non-coherent memory only
+    memcpy(dst, r->smap + (a - r->import_lo), n);
+}
+
+// shadow_lock held: copies the GPU's bytes of [a, b) from the shadow into guest memory.
+static void write_back(PoolRec *r, uint64_t a, uint64_t b) {
+    if (a >= b) return;
+    mem_thaw(a, b - a);
+    plat_mem_will_write(a, b - a);   // one call instead of a write-watch fault per page
+    // Non-coherent memory only (shadow_pool): drop the CPU's cached lines so the GPU's bytes are read.
+    vmaInvalidateAllocation(vk_ctx()->vma, r->salloc, a - r->import_lo, b - a);
+    memcpy((void *)(uintptr_t)a, r->smap + (a - r->import_lo), b - a);
+    s_wb_bytes += b - a;
+}
+
+// hold: the whole pages of a range of HOLD_MIN and up stay in the shadow (mem_hold) until the CPU touches them, and the
+// partial pages at its ends are copied back. The GPU's storage buffers of the title menu (light lists and the like,
+// 36 MiB a frame) are never read by the CPU: copying them back at each fence cost about 6.5 ms a frame on the
+// completion thread, which every fence wait and every submission (shadow_lock) waited for. A range still held from
+// an earlier write costs nothing.
+#define HOLD_MIN (1ull << 20)
+static void gpu_written(uint64_t addr, uint64_t size, int hold) {
     if (shadow_on && size) {
         plat_mutex_lock_shared(&pool_lock);
         const pidx_ent *e = pidx_find(&pool_index, addr, size);
         PoolRec *r = e ? e->buf : NULL;
         plat_mutex_lock(&shadow_lock);
         if (r && r->smap && addr >= r->import_lo && addr + size <= r->import_hi) {
-            mem_thaw(addr, size);
-            // Non-coherent memory only (shadow_pool): drop the CPU's cached lines so the GPU's bytes are read.
-            vmaInvalidateAllocation(vk_ctx()->vma, r->salloc, addr - r->import_lo, size);
-            memcpy((void *)(uintptr_t)addr, r->smap + (addr - r->import_lo), size);
-            s_wb_bytes += size;
+            uint64_t lo = (addr + 0xfff) & ~0xfffull, hi = (addr + size) & ~0xfffull;
+            if (hold && hi > lo && hi - lo >= HOLD_MIN && mem_hold(lo, hi - lo, shadow_fetch, r)) {
+                write_back(r, addr, lo);
+                write_back(r, hi, addr + size);
+                s_held_bytes += hi - lo;
+            } else {
+                write_back(r, addr, addr + size);
+            }
         }
-        for (int i = 0; i < nspend; i++)
+    for (int i = 0; i < nspend; i++)
             if (spend[i].lo == addr && spend[i].hi == addr + size) { spend[i] = spend[--nspend]; break; }
         plat_mutex_unlock(&shadow_lock);
         plat_mutex_unlock_shared(&pool_lock);
@@ -1053,15 +1088,23 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
     }
 }
 
+void vk_gpu_written(uint64_t addr, uint64_t size) { gpu_written(addr, size, 0); }
+void vk_gpu_stored(uint64_t addr, uint64_t size) { gpu_written(addr, size, 1); }
+
 static void shadow_log(uint64_t frame) {
     if (!shadow_on) return;
     plat_mutex_lock(&shadow_lock);
+    int held_now;
+    uint64_t holds, fetched;
+    mem_hold_stats(&held_now, &holds, &fetched);
     rt_log("mem: shadow at frame %llu: %lld pools %.1f MiB; since the last: %llu pool syncs, %llu queries, %.1f MiB "
-           "copied in (%llu untracked), %.1f MiB written back, %.2f ms, %d GPU writes pending",
+           "copied in (%llu untracked), %.1f MiB written back, %.1f MiB left in the shadow (%d ranges held, %llu new, "
+           "%llu fetched back), %.2f ms, %d GPU writes pending",
            (unsigned long long)frame, (long long)s_live_n, s_live_bytes / 1048576.0, (unsigned long long)s_syncs,
            (unsigned long long)s_queries, s_copied / 1048576.0, (unsigned long long)s_untracked, s_wb_bytes / 1048576.0,
-           qpc_ms(s_ticks), nspend);
-    s_syncs = s_queries = s_copied = s_untracked = s_wb_bytes = s_ticks = 0;
+           s_held_bytes / 1048576.0, held_now, (unsigned long long)holds, (unsigned long long)fetched, qpc_ms(s_ticks),
+           nspend);
+    s_syncs = s_queries = s_copied = s_untracked = s_wb_bytes = s_held_bytes = s_ticks = 0;
     plat_mutex_unlock(&shadow_lock);
 }
 

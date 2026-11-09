@@ -1002,7 +1002,7 @@ static void init_once(void *param) {
     // The game reads the RomFS image at the fixed guest address ROMFS_BASE (recomp/layout.py): it parses the image
     // directly, no nn::fs calls. The range lies inside the module window reservation (PAGE_NOACCESS), so pages are
     // committed and filled from the image on the first guest read fault (romfs_read_fault).
-    plat_mem_read_fault_hook(romfs_read_fault);
+    mem_read_fault_hook(romfs_read_fault);   // after memory.c's held ranges
     verify_image(index_dir);
     const char *mm = cfg_get("AC_ROMFS_MMAP");
     if (mm && strcmp(mm, "0")) {

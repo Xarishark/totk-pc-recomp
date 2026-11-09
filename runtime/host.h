@@ -170,6 +170,17 @@ void mem_thaw(uint64_t a, uint64_t n);                     // makes the frozen r
                                                            // before a kernel write (file read) into guest memory
 void mem_freeze_stats(uint64_t *frozen, uint64_t *freezes, uint64_t *fault_thaws, uint64_t *other_thaws);
                                                            // regions frozen now; freezes and thaws since the last call
+// Held ranges (memory.c): whole pages of the stack/heap block or the alias region whose current bytes live elsewhere.
+// They stay inaccessible until the first access, by the guest or the host, or a mem_thaw or mapping change over them,
+// which calls fetch(ctx, a, n, dst) to copy the bytes into dst and puts them in place. fetch runs under memory.c's leaf
+// lock, possibly in a fault handler: it reads the owner's storage only, takes no lock and never touches guest memory.
+typedef void (*MemFetch)(void *ctx, uint64_t a, uint64_t n, void *dst);
+int mem_hold(uint64_t a, uint64_t n, MemFetch fetch, void *ctx);   // 1 held (or still held by the same owner), 0 not:
+                                                           // the caller puts the bytes in place itself
+int mem_held_by(uint64_t a, uint64_t b, const void *ctx, uint64_t *lo, uint64_t *hi);
+                                                           // a range ctx holds overlapping [a, b): 1 and its bounds
+void mem_hold_stats(int *live, uint64_t *held, uint64_t *fetched); // held now; holds and fetches since the last call
+void mem_read_fault_hook(int (*fn)(uint64_t a));           // read faults outside the watched reservations go to fn
 void mem_kernel_free(void *p, uint64_t size);              // TLR/TLS reuse after thread exit
 
 // ---- modules (loader.c)

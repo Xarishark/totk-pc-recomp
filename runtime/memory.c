@@ -105,8 +105,90 @@ static void thaw_range_locked(uint64_t a, uint64_t n, int why) {
     for (uint64_t r = r0; r <= r1; r++) thaw_locked(r, why);
 }
 
+// ---- held ranges
+// Whole pages of a watched reservation whose current bytes live outside guest memory: vk_memory.c's shadow storage
+// keeps what the GPU wrote into large storage buffers instead of copying it back at every fence (36 MiB a frame in the
+// title menu, which the CPU never reads). The pages are inaccessible meanwhile. The first access, by the guest or the
+// host, faults: the owner's fetch copies the bytes into a staging buffer, which then replaces the pages in one step
+// (plat_mem_replace), so no other thread reads the old bytes in between. A kernel access fails instead of faulting, so
+// mem_thaw (before a file read into guest memory) and every mapping change here fetch the held ranges they touch
+// first. Under frz_lock, like the freezes: a fetch reads the owner's storage only, never guest memory.
+typedef struct { uint64_t lo, hi; MemFetch fetch; void *ctx; } Hold;
+static Hold *holds;                     // frz_lock
+static int nholds, cholds;
+static volatile int32_t nholds_live;    // nholds, read without the lock: 0 skips the lookups
+static volatile int64_t hold_count[2];  // ranges held, fetched back
+
+// frz_lock held: fetches hold i back and drops it.
+static void hold_fetch_locked(int i) {
+    Hold h = holds[i];
+    holds[i] = holds[--nholds];
+    __atomic_store_n(&nholds_live, nholds, __ATOMIC_RELEASE);
+    uint64_t n = h.hi - h.lo;
+    void *stage = plat_mem_stage(n);
+    if (!stage) rt_fatal("memory: no staging buffer to fetch held %#llx+%#llx", (unsigned long long)h.lo, (unsigned long long)n);
+    h.fetch(h.ctx, h.lo, n, stage);
+    if (!plat_mem_replace(h.lo, stage, n))
+        rt_fatal("memory: putting held %#llx+%#llx back failed", (unsigned long long)h.lo, (unsigned long long)n);
+    plat_inc64(&hold_count[1]);
+}
+
+// frz_lock held: fetches back the held ranges overlapping [a, a+n); 1 when there was one.
+static int hold_release_locked(uint64_t a, uint64_t n) {
+    int any = 0;
+    if (!n || !nholds) return 0;
+    for (int i = 0; i < nholds;)
+        if (holds[i].lo < a + n && a < holds[i].hi) hold_fetch_locked(i), any = 1;
+        else i++;
+    return any;
+}
+
+int mem_hold(uint64_t a, uint64_t n, MemFetch fetch, void *ctx) {
+    if (!n || ((a | n) & (PAGE - 1)) || !watched(a, n)) return 0;
+    plat_mutex_lock(&frz_lock);
+    for (int i = 0; i < nholds; i++)
+        if (holds[i].lo == a && holds[i].hi == a + n && holds[i].fetch == fetch && holds[i].ctx == ctx) {
+            plat_mutex_unlock(&frz_lock);
+            return 1;   // still held: nothing read or wrote its pages since
+        }
+    hold_release_locked(a, n);
+    thaw_range_locked(a, n, 3);
+    uint64_t end;
+    int ok = plat_mem_state(a, a + n, &end) == PLAT_PROT_RW && end == a + n;
+    if (ok && nholds == cholds) {
+        Hold *g = realloc(holds, (size_t)(cholds ? cholds * 2 : 16) * sizeof *g);
+        if (g) holds = g, cholds = cholds ? cholds * 2 : 16;
+        else ok = 0;
+    }
+    if (ok) ok = plat_mem_protect(a, n, PLAT_PROT_NONE);
+    if (ok) {
+        holds[nholds++] = (Hold){a, a + n, fetch, ctx};
+        __atomic_store_n(&nholds_live, nholds, __ATOMIC_RELEASE);
+        plat_inc64(&hold_count[0]);
+    }
+    plat_mutex_unlock(&frz_lock);
+    return ok;
+}
+
+int mem_held_by(uint64_t a, uint64_t b, const void *ctx, uint64_t *lo, uint64_t *hi) {
+    if (!__atomic_load_n(&nholds_live, __ATOMIC_ACQUIRE)) return 0;
+    int found = 0;
+    plat_mutex_lock(&frz_lock);
+    for (int i = 0; i < nholds && !found; i++)
+        if (holds[i].ctx == ctx && holds[i].lo < b && a < holds[i].hi) *lo = holds[i].lo, *hi = holds[i].hi, found = 1;
+    plat_mutex_unlock(&frz_lock);
+    return found;
+}
+
+void mem_hold_stats(int *live, uint64_t *held, uint64_t *fetched) {
+    *live = __atomic_load_n(&nholds_live, __ATOMIC_RELAXED);
+    *held = (uint64_t)plat_xchg64(&hold_count[0], 0);
+    *fetched = (uint64_t)plat_xchg64(&hold_count[1], 0);
+}
+
 void mem_thaw(uint64_t a, uint64_t n) {
     plat_mutex_lock(&frz_lock);   // also when nothing is frozen: the hold keeps a read's buffer writable
+    hold_release_locked(a, n);
     thaw_range_locked(a, n, 2);
     plat_mutex_unlock(&frz_lock);
 }
@@ -160,20 +242,39 @@ void mem_freeze_stats(uint64_t *frozen, uint64_t *freezes, uint64_t *fault_thaws
 // The first write into a frozen region thaws it and retries. A fault in a region another thread thawed meanwhile
 // retries too; any other fault goes on to the crash handler.
 // The platform's write-fault hook (plat_mem_fault_hook): 1 retries the write.
+// A write into a held range fetches it back first.
 static int thaw_fault(uint64_t a) {
     if (a >= RT_ADDRESS_LIMIT || !watched(a, 1)) return 0;
     plat_mutex_lock(&frz_lock);
+    int held = hold_release_locked(a & ~(PAGE - 1), PAGE);
     int was = frz[a >> FRZ_SHIFT];
     thaw_locked(a >> FRZ_SHIFT, 1);
     plat_mutex_unlock(&frz_lock);
-    if (was) return 1;
+    if (was || held) return 1;
     uint64_t end;
     return plat_mem_state(a & ~(PAGE - 1), (a & ~(PAGE - 1)) + PAGE, &end) == PLAT_PROT_RW;
 }
 
-// Mapping changes thaw the regions they touch and run under frz_lock, so no freeze sees them half done.
+// The platform's read-fault hook: a read of a held range fetches it back and retries (so does a read another thread's
+// fetch made possible meanwhile); faults outside the watched reservations go to the next hook (romfs.c).
+static int (*next_read_fault)(uint64_t a);
+
+static int hold_read_fault(uint64_t a) {
+    if (a >= RT_ADDRESS_LIMIT || !watched(a, 1)) return next_read_fault ? next_read_fault(a) : 0;
+    plat_mutex_lock(&frz_lock);
+    int held = hold_release_locked(a & ~(PAGE - 1), PAGE);
+    plat_mutex_unlock(&frz_lock);
+    uint64_t end;
+    return held || plat_mem_state(a & ~(PAGE - 1), (a & ~(PAGE - 1)) + PAGE, &end) >= PLAT_PROT_READ;
+}
+
+void mem_read_fault_hook(int (*fn)(uint64_t a)) { next_read_fault = fn; }
+
+// Mapping changes fetch back the held ranges and thaw the regions they touch, under frz_lock, so no freeze sees them
+// half done.
 static void commit(uint64_t a, uint64_t n, const char *what) {
     plat_mutex_lock(&frz_lock);
+    hold_release_locked(a, n);
     thaw_range_locked(a, n, 3);
     int ok = !n || plat_mem_commit(a, n);
     plat_mutex_unlock(&frz_lock);
@@ -182,6 +283,7 @@ static void commit(uint64_t a, uint64_t n, const char *what) {
 
 static void decommit(uint64_t a, uint64_t n, const char *what) {
     plat_mutex_lock(&frz_lock);
+    hold_release_locked(a, n);
     thaw_range_locked(a, n, 3);
     int ok = !n || plat_mem_decommit(a, n);
     plat_mutex_unlock(&frz_lock);
@@ -190,6 +292,7 @@ static void decommit(uint64_t a, uint64_t n, const char *what) {
 
 static void protect(uint64_t a, uint64_t n, int prot, const char *what) {
     plat_mutex_lock(&frz_lock);
+    hold_release_locked(a, n);
     thaw_range_locked(a, n, 3);
     int ok = !n || plat_mem_protect(a, n, prot);
     plat_mutex_unlock(&frz_lock);
@@ -229,6 +332,7 @@ void mem_init(void) {
     if (!alias) reexec_or_fail("a 64 GiB alias region below 2^39");
 
     plat_mem_fault_hook(thaw_fault);   // before the crash handler
+    plat_mem_read_fault_hook(hold_read_fault);
     alias_pages = calloc(ALIAS_PAGES, 1);
     if (!alias_pages) rt_fatal("memory: cannot allocate the alias page map");
     // astralchain.ini is read here, once the address space is claimed and before the first setting: the pool size below

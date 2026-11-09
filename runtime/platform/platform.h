@@ -211,6 +211,16 @@ int plat_mem_state(uint64_t addr, uint64_t limit, uint64_t *end);
 // The pages of a watched reservation written since the last reset, up to max page addresses into pages, in address
 // order; reset: those reported start over as unwritten. UINT64_MAX when writes to the range are not tracked.
 uint64_t plat_mem_written(uint64_t addr, uint64_t n, uint64_t *pages, uint64_t max, int reset);
+// The caller is about to write all of [addr, addr + n): its pages count as written for plat_mem_written from now on,
+// as the writes would make them, without the fault a write watch may take on each page's first write.
+void plat_mem_will_write(uint64_t addr, uint64_t n);
+// A page-aligned read-write staging buffer of n bytes for plat_mem_replace; NULL on failure.
+void *plat_mem_stage(uint64_t n);
+// Puts the staging buffer's bytes in place of the committed pages of [addr, addr + n) (page-aligned, any protection),
+// leaves them read-write and written for plat_mem_written, and consumes the buffer. Linux moves the staging pages in
+// with one mremap, so other threads see the old pages (and fault on them) or the new ones, nothing in between; Windows
+// copies after making the pages writable. 1 on success.
+int plat_mem_replace(uint64_t addr, void *stage, uint64_t n);
 // A write that faulted on a read-only page at addr goes to fn first; fn returns 1 when it made the page writable and
 // the write should run again, 0 to let the fault go on (to the crash handler). One hook per process.
 void plat_mem_fault_hook(int (*fn)(uint64_t addr));
