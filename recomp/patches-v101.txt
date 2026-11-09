@@ -115,7 +115,7 @@ site fov main 998f90 bd014260 @fn:rt_fov_s0 bd014260   # str s0,[x19,#0x140] -> 
 # AstralChain-Dynamic-FPS mod v1.1.1 are marked so. AC_FPS=30 runs the original instructions (the shipping 30 fps).
 set  fps60 FPS60 1
 # frame call: request mode 0 (present interval 1) instead of mode 1 (interval 2, 30 fps); the present pacer
-# (nvn_api_obj.c) holds 60 fps, and 30 in a cutscene
+# (nvn_api_obj.c) holds 60 fps, and 30 in a cutscene unless AC_CUTSCENE60 runs it at 60
 site fps60 main 3e39d0 320003e0 52800000   # orr w0, wzr, #1 -> mov w0, #0
 # frame timer: the first call (no previous tick) publishes the game's step as the first ticks; every later call takes
 # its step from rt_fps_timer and goes on at the tick store
@@ -141,17 +141,10 @@ site fps60 main 6a3f54 6b08013f @fnz:rt_fps_cue_cmp    # cmp w9,w8 -> Z = entry 
 site fps60 main 8c2550 1e283821 @fn:rt_cut_hold_s1   # fsub s1,s1,s8 -> len - rate, or just below len
 site fps60 main 8c255c bd400680 @fn:rt_cut_prev_s0   # ldr s0,[x20,#4] -> the old time, or s1 (no hold)
 site fps60 main 8c2568 1e2703e1 @fn:rt_cut_next_s1   # fmov s1,wzr -> 0, or the overshoot
-# the game's audio sync of a cutscene with a voice track (main+0x8B9DC0, twin main+0x8C2E10): s0 = the track's position
-# minus the picture's, in seconds, recorded for the cutscene log line (frame_rate.c rt_cut_drift_s0)
+# the game's audio sync of an event with a voice track (main+0x8B9DC0, twin main+0x8C2E10): s0 = the track's position
+# minus the picture's, in seconds, recorded for the log (frame_rate.c rt_cut_drift_s0); no change to what it does
 site fps60 main 8b9eac 1e202820 1e202820 @fn:rt_cut_drift_s0   # fadd s0,s1,s0; then record s0
 site fps60 main 8c2efc 1e202820 1e202820 @fn:rt_cut_drift_s0   # fadd s0,s1,s0; then record s0
-# the Bink player (open main+0x9BEFD0): which open handles are full-screen movies (by their size), and when one last
-# waited for its next frame, so a cutscene with a movie keeps the 30 fps hold
-site fps60 main 9bf058 f9000680 @fn:rt_movie_opened f9000680   # str x0,[x20,#8] after BinkOpen; the handle first
-site fps60 main 9bf26c 97f502cd @fn:rt_movie_close 97f502cd    # bl BinkClose; the handle first
-site fps60 main 9bf430 97f503ec @fn:rt_movie_wait 97f503ec     # bl BinkWait
-site fps60 main 9bf514 97f503b3 @fn:rt_movie_wait 97f503b3     # bl BinkWait
-site fps60 main 9bf6a8 97f5034e @fn:rt_movie_wait 97f5034e     # bl BinkWait
 # step -> integer frame-count readers (fcvtzs/fcvtzu): read the whole-tick count instead of floor(step)
 site fps60 main 48be14 1e380008 @fn:rt_fps_ticks_w8   # fcvtzs w8,s0 -> w8 = whole ticks
 site fps60 main 57e7dc bd40d300 @fn:rt_fps_ticks_w8   # ldr s0,[x24,#0xd0] -> w8 = whole ticks
@@ -304,3 +297,14 @@ site fps60 main 91dee8 71000610 @fnz:rt_fps_duration_w16  # +0x30 duration
 # sibling paths of two input counters above, from AstralChain-Dynamic-FPS v1.1.1
 site fps60 main 0d5dd4 71000508 @fnz:rt_fps_hs_w8   # +0x2024, sibling of 0d5e28
 site fps60 main 2876d4 71000508 @fnz:rt_fps_hs_w8   # +0x14d4, sibling of 28759c
+
+# Full-screen movies (runtime/frame_rate.c rt_movie_*): the game's Bink player (open main+0x9BEFD0) tells the runtime
+# which open handles are full-screen movies (1280x720 or more) and when one last waited for its next frame, so a
+# cutscene with a movie keeps the 30 fps hold under AC_CUTSCENE60. Nothing changes what the player does. Its own set,
+# on at 30 fps too, so a movie opened before a switch to 60 is known.
+set  movies AC_MOVIE_TRACK 1
+site movies main 9bf058 f9000680 @fn:rt_movie_opened f9000680   # str x0,[x20,#8] after BinkOpen; the handle first
+site movies main 9bf26c 97f502cd @fn:rt_movie_close 97f502cd    # bl BinkClose; the handle first
+site movies main 9bf430 97f503ec @fn:rt_movie_wait 97f503ec     # bl BinkWait
+site movies main 9bf514 97f503b3 @fn:rt_movie_wait 97f503b3     # bl BinkWait
+site movies main 9bf6a8 97f5034e @fn:rt_movie_wait 97f5034e     # bl BinkWait

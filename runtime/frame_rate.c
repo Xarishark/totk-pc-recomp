@@ -55,9 +55,10 @@ static int fps_read;
 // whole 60 Hz vsyncs (0.5 each): the cutscene presents at 60 and keeps to the wall clock, which the voices and music
 // play on. A frame that took longer than its vsyncs (a hitch, a shader compile) leaves its time as debt, which the next
 // frames pay back at up to 4 vsyncs (step 2.0, the original timer's high clamp) each, so the picture catches up with
-// the sound instead of staying behind. The debt is capped at 1 s: what a longer stall leaves beyond that is dropped (and
-// counted in the log), so a load or a debugger pause does not end in seconds of fast-forward. The cut clock's end-of-cut test is made exact
-// for steps of 0.5 (rt_cut_* below). Movies (Bink files with their own clock) keep the 30 fps hold while they play.
+// the sound instead of staying behind. The debt is capped at 1 s: what a longer stall leaves beyond that is dropped
+// (and counted in the log), so a load or a debugger pause does not end in seconds of fast-forward. The cut clock's
+// end-of-cut test is made exact for steps of 0.5 (rt_cut_* below). A full-screen movie (a Bink file with its own clock)
+// keeps the cutscene it plays in at the 30 fps hold (rt_movie_* below).
 #define CUT_VSYNC_MS (1000.0 / 60.0)
 #define CUT_VSYNCS_MAX 4             // a frame steps 2.0 at most, the original timer's high clamp
 #define CUT_DEBT_MAX_MS 1000.0       // the frame time a cutscene catches up after a stall
@@ -132,41 +133,54 @@ static float cutscene_step(double dt_ms, int first) {
     return (float)n * 0.5f;
 }
 
-// ---- the cutscene log line: one per run of cutscene frames in one mode (at 60, or held to 30), at its end. Measured is
-// the frame time the game's timer took, stepped what the frames moved the cutscene by (1/30 s per 1.0 of step); the two
-// differ by the debt still open, the stall time dropped and the first frame's clamp at 60, and by every late frame when
-// held (the held mode is frame-locked, as the original). drift: the game's own audio-to-picture check of a cutscene with
-// a synchronised voice track (rt_cut_drift_s0), when the cutscene has one.
-static unsigned run_frames, run_drift_n;
-static double run_wall_ms, run_game_ms, run_drift_sum, run_drift_lo, run_drift_hi;
+// Seconds since the guest started, for the log lines that mark where things happen.
+static double wall_s(void) { return rt_guest_start_ns ? (kern_now_ns() - rt_guest_start_ns) / 1e9 : 0.0; }
+
+// ---- the cutscene log line: one per run of cutscene frames in one mode (at 60, or held to 30), at its end. Measured
+// is the frame time the game's timer took, stepped what the frames moved the cutscene by (1/30 s per 1.0 of step); the
+// two differ by the debt still open, the stall time dropped and the first frame's clamp at 60, and by every late frame
+// when held (the held mode is frame-locked, as the original).
+static unsigned run_frames;
+static double run_wall_ms, run_game_ms;
 
 static void cutscene_report(int at60) {
     if (!run_frames) return;
-    char drift[128] = "no voice sync check";
-    if (run_drift_n)
-        snprintf(drift, sizeof drift, "audio minus picture %+.1f ms mean, %+.1f..%+.1f ms (%u checks)",
-                 run_drift_sum / run_drift_n, run_drift_lo, run_drift_hi, run_drift_n);
     if (at60)
         rt_log("frame rate: cutscene run at 60: %u frames, %.3f s measured, %.3f s stepped, %u catch-up frames, peak "
-               "debt %.1f ms, %.1f ms of stalls dropped; %s",
-               run_frames, run_wall_ms / 1000.0, run_game_ms / 1000.0, cut_catchup, cut_debt_peak, cut_drop_ms, drift);
+               "debt %.1f ms, %.1f ms of stalls dropped",
+               run_frames, run_wall_ms / 1000.0, run_game_ms / 1000.0, cut_catchup, cut_debt_peak, cut_drop_ms);
     else
-        rt_log("frame rate: cutscene run held to 30: %u frames, %.3f s measured, %.3f s stepped; %s", run_frames,
-               run_wall_ms / 1000.0, run_game_ms / 1000.0, drift);
-    run_frames = run_drift_n = cut_catchup = 0;
-    run_wall_ms = run_game_ms = run_drift_sum = cut_drop_ms = cut_debt_peak = 0;
+        rt_log("frame rate: cutscene run held to 30: %u frames, %.3f s measured, %.3f s stepped", run_frames,
+               run_wall_ms / 1000.0, run_game_ms / 1000.0);
+    run_frames = cut_catchup = 0;
+    run_wall_ms = run_game_ms = cut_drop_ms = cut_debt_peak = 0;
 }
 
-// The game's audio sync of a cutscene with a voice track (main+0x8B9DC0 and its twin main+0x8C2E10): s0 = the track's
-// position minus the picture's, in seconds (the cut frames are 1/59.94 s). The game turns more than 30 ms of it into the
-// timer override, which a held cutscene's fixed step ignores. Site: after the fadd that forms it.
+// The game's audio sync of an event with a voice track (main+0x8B9DC0 and its twin main+0x8C2E10): s0 = the track's
+// position minus the picture's, in seconds (the cut frames are 1/59.94 s). The game turns more than 30 ms of it into
+// the timer override, which only the step outside the cutscene flag takes, so the check may run with the flag off.
+// Recorded either way (site: after the fadd that forms it) and logged once the checks stop for a second.
+static unsigned sync_n, sync_flag_n;
+static double sync_sum, sync_lo, sync_hi;
+static uint64_t sync_last_ns;
+
 void rt_cut_drift_s0(Cpu *c) {
-    if (!in_cutscene) return;
     double ms = VSF32(0) * 1000.0;
-    if (!run_drift_n || ms < run_drift_lo) run_drift_lo = ms;
-    if (!run_drift_n || ms > run_drift_hi) run_drift_hi = ms;
-    run_drift_sum += ms;
-    run_drift_n++;
+    if (!sync_n || ms < sync_lo) sync_lo = ms;
+    if (!sync_n || ms > sync_hi) sync_hi = ms;
+    sync_sum += ms;
+    sync_n++;
+    sync_flag_n += in_cutscene != 0;
+    sync_last_ns = kern_now_ns();
+}
+
+static void sync_report(void) {
+    if (!sync_n || kern_now_ns() - sync_last_ns < 1000000000ull) return;
+    rt_log("frame rate: voice sync (wall %.3f s): audio minus picture %+.1f ms mean, %+.1f..%+.1f ms over %u checks, "
+           "%u of them with the cutscene flag set",
+           wall_s(), sync_sum / sync_n, sync_lo, sync_hi, sync_n, sync_flag_n);
+    sync_n = sync_flag_n = 0;
+    sync_sum = 0;
 }
 
 // AC_TEST_HITCH=<ms>[:<every ms>] (testing): the game thread sleeps <ms> in a cutscene frame, once per <every ms> of
@@ -182,17 +196,19 @@ static void test_hitch(void) {
     plat_sleep_ns(hitch_ms * 1000000ull);
 }
 
-static int movie_now;   // an event movie played in a cutscene at the last timer call (game thread, for the log)
+static int movie_now;   // a full-screen movie held the last cutscene frame (game thread, for the log)
 
 void rt_fps_timer(Cpu *c) {
     uint8_t *t = (uint8_t *)(uintptr_t)c->x[19];
     int fixed = (uint32_t)c->x[21] == 0;
     double dt_ms = *(float volatile *)(t + 0xE0);
-    int movie = movie_playing();
+    int movie = fixed && movie_playing();       // a full-screen movie keeps its cutscene at the 30 fps hold
     int cut60 = fixed && cut60_cfg && !movie;
+    int ended = in_cutscene && (!fixed || cut60 != cut60_now);   // the run of cutscene frames before this one
+    int first = fixed && (!in_cutscene || cut60 != cut60_now);   // a new run: its frame time is what came before it
     float step;
     if (fixed) {
-        step = cut60 ? cutscene_step(dt_ms, !cut60_now) : 1.0f;
+        step = cut60 ? cutscene_step(dt_ms, first) : 1.0f;
         g_fps_debt_ms = 0;
     } else {
         double s = frame_paced_ms(dt_ms) * *(float volatile *)(t + 0xDC);
@@ -204,15 +220,11 @@ void rt_fps_timer(Cpu *c) {
     *(uint32_t volatile *)(t + 0xD4) = 0;
     *(uint32_t volatile *)(t + 0xD8) = 0;
     *(uint32_t volatile *)(t + 0xE4) = 0;
-    if (in_cutscene && (!fixed || cut60_now != cut60)) cutscene_report(cut60_now);
-    int first = fixed && (!in_cutscene || cut60_now != cut60);   // its frame time is what came before (a load)
-    movie = fixed && movie;
-    if (in_cutscene != fixed || cut60_now != cut60 || movie_now != movie) {
+    if (ended) cutscene_report(cut60_now);
+    if (in_cutscene != fixed || cut60 != cut60_now || movie != movie_now)
         rt_log("frame rate: %s (world %.2f s, wall %.3f s): presents held to %d per second",
                !fixed ? "gameplay" : cut60 ? "cutscene at 60 fps" : movie ? "cutscene with a movie" : "cutscene",
-               (double)frame_step_world_us() / 1e6,
-               rt_guest_start_ns ? (kern_now_ns() - rt_guest_start_ns) / 1e9 : 0.0, fixed && !cut60 ? 30 : 60);
-    }
+               (double)frame_step_world_us() / 1e6, wall_s(), fixed && !cut60 ? 30 : 60);
     in_cutscene = fixed;
     cut60_now = cut60;
     movie_now = movie;
@@ -222,6 +234,7 @@ void rt_fps_timer(Cpu *c) {
         run_wall_ms += first ? step * (1000.0 / 30.0) : dt_ms;
         test_hitch();
     }
+    sync_report();
     fps_publish(step);
 }
 
@@ -427,14 +440,14 @@ uint64_t rt_fps_cue_cmp(Cpu *c) {
 }
 
 // The cut clock (main+0x8C2410, one call per clock and frame): time in the current cut += rate * step * speed, where
-// rate (s8) is 1 or 2 by the data's authored frame rate and the cut lasts len = w24 units (x19 = the clock it writes,
-// [x19] the cut, [x19+4] the time; x20 = the clock it read). Past len - rate it shows len - rate once (the hold) and then
-// starts the next cut at 0. At step 1.0 the time lands on len - rate exactly, so every frame of the cut shows once. At
-// step 0.5 the hold would end each cut one 60 fps frame early (1/60 s per cut, the picture pulling ahead of the voices),
-// and after a hitch's larger step the next cut would start at 0 and lose what the step went past the cut's end.
-// While a cutscene runs at 60 (cut60_now) the end test becomes: the cut goes on while its time is below len, and the
-// next cut starts at what the time went past len. At step 1.0 that is the original's sequence. Otherwise the game's own
-// test runs.
+// rate (s8) is 1 or 2 by the data's authored frame rate and the cut lasts len = w24 units (x19 = the clock it
+// writes, [x19] the cut, [x19+4] the time; x20 = the clock it read). Past len - rate it shows len - rate once (the
+// hold) and then starts the next cut at 0. At step 1.0 the time lands on len - rate exactly, so every frame of the cut
+// shows once. At step 0.5 the hold would end each cut one 60 fps frame early (1/60 s per cut, the picture pulling ahead
+// of the voices), and after a hitch's larger step the next cut would start at 0 and lose what the step went past the
+// cut's end. While a cutscene runs at 60 (cut60_now) the end test becomes: the cut goes on while its time is below
+// len, and the next cut starts at what the time went past len. At step 1.0 that is the original's sequence. Otherwise
+// the game's own test runs.
 void rt_cut_hold_s1(Cpu *c) {   // fsub s1, s1, s8 (s1 = len): the time the cut may reach and still go on
     float len = VSF32(1);
     FP_SETS(1, cut60_now ? nextafterf(len, -INFINITY) : len - VSF32(8));
@@ -455,13 +468,14 @@ void rt_cut_next_s1(Cpu *c) {   // fmov s1, wzr: where the next cut starts
 // ---- full-screen movies: the game's Bink player (the class whose open is main+0x9BEFD0) plays both the event movies
 // (movie/ev%04x.bk2: the opening, the chapter movies, the title screen's background) and the effect movies
 // (mv/mv%04x.bk2, textures in the scene). The event movies are 1600x900 or 1280x720 Bink files at 30 fps on Bink's own
-// clock (BinkWait, main+0x7003E0); the game opens most of them from a file handle, so there is no name to tell them by,
-// and their size does: of the effect movies only four short ones (mv0065, mv0504, mv0510, mv0511) are as large, and the
-// rest are 1280x460 or smaller. While one plays in a cutscene, the cutscene keeps the 30 fps hold (rt_fps_timer): Bink
-// shows a new frame 30 times a second, and decoding 1600x900 on the game thread made a third of 60 fps frames late in
-// the opening movie. Outside cutscenes movies are not held (frame_step_cutscene), so the title screen's menus stay at 60.
-// The player's BinkOpen call returns the handle (main+0x9BF058, x0), BinkClose (main+0x9BF26C) and BinkWait (three
-// sites) take it in x0.
+// clock (BinkWait, main+0x7003E0). The game opens most of them from a file handle, so there is no name to tell them
+// by, but their size does: of the effect movies only four short ones (mv0065, mv0504, mv0510, mv0511) are as large,
+// and the rest are 1280x460 or smaller. While one plays in a cutscene, the cutscene keeps the 30 fps hold
+// (rt_fps_timer): Bink shows a new frame 30 times a second, and decoding 1600x900 on the game thread made a third of
+// 60 fps frames late in the opening movie. Outside cutscenes movies are not held (frame_step_cutscene), so the title
+// screen's menus stay at 60. The player's BinkOpen call returns the handle (main+0x9BF058, x0), BinkClose
+// (main+0x9BF26C) and BinkWait (three sites) take it in x0. The sites are a set of their own (patches-v101.txt,
+// movies), on at 30 fps too, so a movie opened before a switch to 60 is known.
 #define MOVIE_SLOTS 4
 #define MOVIE_MIN_PIXELS (1280u * 720u)
 static _Atomic uintptr_t g_movies[MOVIE_SLOTS];   // the open full-screen movies' Bink handles
@@ -477,13 +491,14 @@ void rt_movie_opened(Cpu *c) {
         uintptr_t none = 0;
         if (atomic_compare_exchange_strong(&g_movies[i], &none, h)) {
             rt_log("frame rate: movie opened, %ux%u, %u frames (wall %.3f s); a cutscene holds 30 fps while it plays",
-                   hb[0], hb[1], hb[2], rt_guest_start_ns ? (kern_now_ns() - rt_guest_start_ns) / 1e9 : 0.0);
+                   hb[0], hb[1], hb[2], wall_s());
             return;
         }
     }
 }
 
-// The last full-screen movie closing ends the hold at once; one of two (the opening's logo before the opening) keeps it.
+// The last full-screen movie closing ends the hold at once; closing one of two (the opening's logo, before the
+// opening) keeps it.
 void rt_movie_close(Cpu *c) {
     uintptr_t h = (uintptr_t)c->x[0];
     int closed = 0, open = 0;
@@ -494,7 +509,7 @@ void rt_movie_close(Cpu *c) {
     }
     if (!closed) return;
     if (!open) atomic_store(&g_movie_wait_ns, 0);
-    rt_log("frame rate: movie closed (wall %.3f s)", rt_guest_start_ns ? (kern_now_ns() - rt_guest_start_ns) / 1e9 : 0.0);
+    rt_log("frame rate: movie closed (wall %.3f s)", wall_s());
 }
 
 void rt_movie_wait(Cpu *c) {
