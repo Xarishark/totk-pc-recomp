@@ -97,7 +97,6 @@ static void ts_setup(VkCtx *c) {
     ts_state = 1;
 }
 
-typedef struct { uint32_t pair; } TsRead;
 
 // Completion thread: refresh the GPU tick / CPU clock pair every 250 ms; 0 when there is no calibration. The host
 // domain is the clock plat_now_ns reads (QPC on Windows, CLOCK_MONOTONIC elsewhere), plat_counter_hz ticks a second.
@@ -142,15 +141,16 @@ static void ts_submitted(void) {
     ts_n_unsent = 0;
 }
 
+// arg: the pair's index as a pointer value, so a timed part allocates nothing.
 static void ts_read_cb(void *arg) {   // completion thread, in submission order
-    TsRead *t = arg;
+    uint32_t pair = (uint32_t)(uintptr_t)arg;
     VkCtx *c = vk_ctx();
     uint64_t v[2];
-    if (vkGetQueryPoolResults(c->device, ts_pool, 2 * t->pair, 2, sizeof v, v, sizeof v[0], VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+    if (vkGetQueryPoolResults(c->device, ts_pool, 2 * pair, 2, sizeof v, v, sizeof v[0], VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
         uint64_t s = v[0] & ts_mask, e = v[1] & ts_mask;
         if (e >= s) {
             if (cal_refresh(c)) {
-                int64_t sn = tick_ns(s), en = tick_ns(e), sub = (int64_t)ts_sub_ns[t->pair];
+                int64_t sn = tick_ns(s), en = tick_ns(e), sub = (int64_t)ts_sub_ns[pair];
                 if (ts_last_end_ns && sn > ts_last_end_ns) {
                     int64_t gap = sn - ts_last_end_ns, late = sub - ts_last_end_ns;
                     plat_add64(&ts_idle_ns, gap);
@@ -171,8 +171,7 @@ static void ts_read_cb(void *arg) {   // completion thread, in submission order
             plat_inc64(&ts_parts);
         } else plat_inc64(&ts_missed);   // the counter wrapped
     } else plat_inc64(&ts_missed);
-    __atomic_store_n(&ts_busy[t->pair], 0, __ATOMIC_RELEASE);
-    free(t);
+    __atomic_store_n(&ts_busy[pair], 0, __ATOMIC_RELEASE);
 }
 
 // At the start of a command buffer (sub_lock held): the pair it times, -1 untimed.
@@ -197,10 +196,7 @@ static void ts_close(VkCommandBuffer cb, int pair, uint64_t fence) {
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, ts_pool, 2 * (uint32_t)pair + 1);
     ts_sub_ns[pair] = 0;
     if (ts_n_unsent < 4) ts_unsent[ts_n_unsent++] = pair;
-    TsRead *t = malloc(sizeof *t);
-    if (!t) rt_fatal("vk: out of memory");
-    t->pair = (uint32_t)pair;
-    vk_completion_add(fence, ts_read_cb, t);
+    vk_completion_add(fence, ts_read_cb, (void *)(uintptr_t)pair);
 }
 
 // The pair of the part being recorded.

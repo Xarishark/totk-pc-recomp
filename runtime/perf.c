@@ -11,6 +11,7 @@
 #include "host.h"
 #include "perfmon.h"
 #include "prof.h"
+#include "sysinfo.h"
 #include "platform/platform.h"
 
 volatile uint32_t prof_render_tid, prof_main_tid, prof_replay_tid;
@@ -40,7 +41,23 @@ void perf_gpu_busy(uint64_t ns) { plat_add64(&gpu_busy_total, (int64_t)ns); }
 
 uint64_t perf_gpu_busy_total(void) { return (uint64_t)__atomic_load_n(&gpu_busy_total, __ATOMIC_RELAXED); }
 
+// The machine, once at start with AC_TRACE=perf (the menu's Performance log): a log sent with a performance report
+// names the OS, the CPU and the memory (the GPU and its driver follow in the vk: lines).
+static void machine_log(void) {
+    if (!(rt_trace & RT_TRACE_PERF)) return;
+    char os[128], cpu[64];
+    if (!plat_os_version(os, sizeof os)) snprintf(os, sizeof os, "unknown OS");
+    sysinfo_cpu_name(cpu, sizeof cpu);
+    uint64_t all = 0, one = 0;
+    int cores = plat_cpu_cores(&all, &one);
+    float used = 0, total = 0, proc = 0;
+    plat_mem_info(&used, &total, &proc);
+    rt_log("sys: %s; cpu %s, %d cores, %u logical processors; ram %.1f GB, %.1f GB in use", os, cpu[0] ? cpu : "unknown",
+           cores, plat_cpu_count(), total / 1024, used / 1024);
+}
+
 void prof_start(void) {
+    machine_log();
     flight_init();
     atexit(perf_summary_flush);   // boot.c's _exit path goes through prof_write instead
     perf_base = (rt_trace & RT_TRACE_PERF) || flight_on;
@@ -80,10 +97,14 @@ static volatile int64_t other_wait_ns;     // perf_gpu_wait on threads other tha
 static volatile int64_t render_wait_ns;    // the same on the render thread
 void (*perf_gpu_stats)(PerfGpu *out);
 
+static volatile int64_t ft_other_wait_ns;  // the same as other_wait_ns over the frame-time summary's period (AC_TRACE=perf)
+
 void perf_gpu_wait(uint64_t t0) {
     if (!t0 || !__atomic_load_n(&perf_on, __ATOMIC_RELAXED)) return;
     int64_t d = (int64_t)(kern_now_ns() - t0);
-    plat_add64(plat_thread_id() == prof_render_tid ? &render_wait_ns : &other_wait_ns, d);
+    int render = plat_thread_id() == prof_render_tid;
+    if (!render && (rt_trace & RT_TRACE_PERF)) plat_add64(&ft_other_wait_ns, d);
+    plat_add64(render ? &render_wait_ns : &other_wait_ns, d);
 }
 
 static volatile int64_t replay_ns;         // perf_replay: summed over the window, any thread
@@ -105,12 +126,18 @@ void perf_count(int kind) {
 // ---- Frame-time summary, always on: every 60 s of play and at exit one line of frame count, mean fps, 1% low and the
 // frames over 25/50/100 ms, then the worst frames of the period with the render thread's waits in them. Per frame: a
 // histogram increment, the compare against the worst list, a memset of the wait array. No allocation.
+// With AC_TRACE=perf (the menu's Performance log, what a performance report is asked to switch on) one line between
+// the two splits the period's average frame: the time the game's frame thread was busy (the frame minus its pacing
+// sleep), the waits inside it, the replay thread's time, the GPU's busy time and the fence waits of other threads, and
+// names what held the frame rate: the frame limiter (pacing at least 15% of the period), the GPU (busy for 80% of the
+// frame or more) or the CPU. It is the 60-frame perf lines' verdict over the whole period, in one line to quote.
 #define FT_BINS 1024              // 0.25 ms bins up to 256 ms; slower frames land in the last bin
 #define FT_WORST 5
 #define FT_PERIOD_NS 60000000000ull
 typedef struct { uint64_t frame, ns, wait[PERF_N], replay; } FtWorst;
 static struct {
     uint64_t t0, frames, sum, over25, over50, over100;
+    uint64_t wait[PERF_N], replay, gpu0;   // AC_TRACE=perf: sums over the period; perf_gpu_busy_total at its start
     uint32_t hist[FT_BINS];
     FtWorst worst[FT_WORST];   // slowest first
     int nworst;
@@ -127,6 +154,21 @@ static void ft_report(uint64_t now, const char *tag) {
         rt_log("frametime: %s: %llu frames in %.1f s, mean %.1f fps, 1%% low %.1f fps, over 25 ms %llu, 50 ms %llu, 100 ms %llu",
                tag, (unsigned long long)ft.frames, (now - ft.t0) / 1e9, ft.frames * 1e9 / ft.sum, low ? 1e9 / low : 0.0,
                (unsigned long long)ft.over25, (unsigned long long)ft.over50, (unsigned long long)ft.over100);
+        if (rt_trace & RT_TRACE_PERF) {
+            double n = (double)ft.frames, frame_ms = ft.sum / 1e6 / n, pace_ms = ft.wait[PERF_PACE] / 1e6 / n;
+            uint64_t gpu = perf_gpu_busy_total() - ft.gpu0;
+            double gpu_ms = gpu / 1e6 / n;
+            char gs[32];
+            if (gpu) snprintf(gs, sizeof gs, "%.1f ms", gpu_ms);
+            else snprintf(gs, sizeof gs, "n/a");   // no timestamps on this device, or the null back end
+            rt_log("frametime:   per frame: %.1f ms; game thread busy %.1f (pacing sleep %.1f); waits of the game and replay "
+                   "threads: fence %.1f, replay queue %.1f, pipeline build %.1f, shader translation %.1f, texture upload %.1f; "
+                   "replay thread %.1f; gpu busy %s; fence waits of other threads %.1f; limit: %s",
+                   frame_ms, frame_ms - pace_ms, pace_ms, ft.wait[PERF_FENCE] / 1e6 / n, ft.wait[PERF_DRAIN] / 1e6 / n,
+                   ft.wait[PERF_PIPE] / 1e6 / n, ft.wait[PERF_XLATE] / 1e6 / n, ft.wait[PERF_TEX] / 1e6 / n,
+                   ft.replay / 1e6 / n, gs, plat_xchg64(&ft_other_wait_ns, 0) / 1e6 / n,
+                   pace_ms >= 0.15 * frame_ms ? "frame limiter" : gpu && gpu_ms >= 0.8 * frame_ms ? "gpu" : "cpu");
+        }
         for (int i = 0; i < ft.nworst; i++) {
             const FtWorst *w = &ft.worst[i];
             rt_log("frametime:   worst frame %llu: %.1f ms; shader translation %.1f, pipeline build %.1f, texture upload %.1f (astc %.1f), replay %.1f, fence/present wait %.1f, pacing %.1f",
@@ -137,6 +179,8 @@ static void ft_report(uint64_t now, const char *tag) {
     }
     memset(&ft, 0, sizeof ft);
     ft.t0 = now;
+    ft.gpu0 = perf_gpu_busy_total();
+    plat_xchg64(&ft_other_wait_ns, 0);
 }
 
 __attribute__((weak)) void gfx_exit_log(void) {}
@@ -159,6 +203,10 @@ static uint64_t ft_frame(uint64_t frame, uint64_t now, uint64_t d) {
     }
     ft.frames++;
     ft.sum += d;
+    if (rt_trace & RT_TRACE_PERF) {
+        for (int i = 0; i < PERF_N; i++) ft.wait[i] += __atomic_load_n(&frame_ns[i], __ATOMIC_RELAXED);
+        ft.replay += (uint64_t)rep;
+    }
     uint64_t b = d / 250000ull;
     ft.hist[b < FT_BINS ? b : FT_BINS - 1]++;
     if (d > 25000000ull) ft.over25++;
