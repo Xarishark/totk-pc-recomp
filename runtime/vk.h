@@ -286,6 +286,7 @@ void vk_defer_image(VkImage img, VmaAllocation alloc);   // alloc NULL: vkDestro
 void vk_defer_view(VkImageView view);
 void vk_exec_image_gone(VkImage image);   // destroy_tex, texture lock held: the replay's views of image go with it
 void vk_defer_buffer(VkBuffer buf, VmaAllocation alloc);
+VmaPool vk_scratch_pool(const VkBufferCreateInfo *bi);   // the ASTC decoder's scratch pool for bi; NULL: the default pool
 // ---- ASTC (vk_astc.c). AC_ASTC = auto | gpu | native | cpu | check; see vk_astc.c.
 enum { VK_ASTC_CPU, VK_ASTC_GPU, VK_ASTC_NATIVE, VK_ASTC_CHECK };
 int vk_astc_mode(void);                 // decided once per device (logged); VK_ASTC_CPU before vk_init
@@ -344,7 +345,13 @@ typedef struct {
     float scale;                   // 1, AC_SHADOW_SCALE for a shadow map, or AC_SSAA for a render target made larger
                                    // than the game's (vk_texture.c texture_scale_of): width and height above are the
                                    // larger ones, the game's regions are multiplied by it
+    uint8_t skip;                  // AC_TEX_MIP_SKIP: the game's levels below this one are not in the image (vk_texture.c
+                                   // mip_skip_of). Image level i holds the game's level i + skip; width, height and
+                                   // levels above are the image's.
 } VkTexImage;
+// The image level that holds the game's level `lv` of t; -1 for a level AC_TEX_MIP_SKIP left out of the image.
+static inline int vk_tex_level(const VkTexImage *t, uint32_t lv) { return lv < t->skip ? -1 : (int)(lv - t->skip); }
+int vk_tex_mip_skip(void);                         // AC_TEX_MIP_SKIP: the larger side from which level 0 is left out; 0 off
 // The window texture the backend presents (vk_backend.c): *image and *format become the float picture the game copied
 // into it, when the last draw into it was that copy and the swapchain is HDR10.
 void vk_hdr_present_source(const VkTexImage *win, VkImage *image, VkFormat *format);
@@ -388,8 +395,11 @@ void vk_texture_range_gone(uint64_t lo, uint64_t size, VmaAllocation alloc);   /
 void vk_texture_stats(uint64_t *images, uint64_t *uploads, uint64_t *reuploads);
 // Entries now, live and released (TextureFinalize, kept until sweep_released), with the bytes of their own memory
 // (images not bound into pool memory).
+// astc_*: the live own-memory ASTC 2D textures with two levels or more, by the larger side of level 0 (>= 2048,
+// >= 1024, >= 512): their count and bytes, what dropping level 0 would act on.
 typedef struct { uint64_t live, released, own_live, own_released, bytes_live, bytes_released;
-                 uint64_t cache_budget, cache_dropped; uint32_t cache_drops; } VkTexCensus;
+                 uint64_t cache_budget, cache_dropped; uint32_t cache_drops;
+                 uint32_t astc_n[3]; uint64_t astc_bytes[3]; } VkTexCensus;
 void vk_texture_census(VkTexCensus *s);
 void vk_texture_shutdown(void);                     // vk_mem_shutdown calls it
 void vk_texture_new_submit(void);                   // a queue submit starts: draw bindings check storage again

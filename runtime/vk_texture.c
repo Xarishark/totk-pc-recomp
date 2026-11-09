@@ -390,6 +390,38 @@ static float render_scale_of(const tex_t *t, const TexVkFormat *f, uint32_t samp
     return scale;
 }
 
+// AC_TEX_MIP_SKIP (0 = off, the default; the Steam Deck profile sets 1024): an ASTC texture whose level 0 has that
+// larger side or more is made without its level 0, three quarters of its memory. At the Deck's 1280x800 a material texture
+// of 1024 texels or more is seldom drawn large enough to sample its level 0, so the picture loses little; in the
+// deck profile's measurement those textures held about 370 MiB of the 900 MiB of texture images, and the 512 MiB
+// texture cache, which was dropping and decoding again hundreds of them a minute, holds more of them.
+// The image's level i is the game's level i + 1 (VkTexImage.skip, vk_tex_level). Sampling with derivatives picks the
+// right level by itself, as the image is half the size; views and writes translate the game's levels (vk_exec_draw.c
+// get_view, image_texels_at); integer texel fetches and size queries go through the translator's render scale of the
+// texture, 0.5 (vk_exec_draw.c support_scales), so the game's shaders still see the game's size. Explicit LODs and level
+// fetches above 0 land one level smaller, which is a little softer and the same place in the texture.
+// Only ASTC 2D and 2D-array textures in own memory (not aliasing a pool), two levels or more, single-sampled and not
+// enlarged: the game never renders into ASTC or copies it (vk_exec_xfer.c skips such copies), so their content only
+// comes from storage uploads and WriteTexels.
+int vk_tex_mip_skip(void) {
+    static int side = -1;
+    if (side < 0) {
+        int v = cfg_int("AC_TEX_MIP_SKIP");
+        side = v < 0 ? 0 : v;
+        if (side) rt_log("vk: ASTC textures of %d texels or more on their larger side leave out level 0 (AC_TEX_MIP_SKIP)", side);
+    }
+    return side;
+}
+
+static uint32_t mip_skip_of(const nvn_texdesc *d, uint64_t addr, uint32_t w, uint32_t h, uint32_t levels,
+                            uint32_t samples, float scale) {
+    int side = vk_tex_mip_skip();
+    if (!side || d->format < 0x79 || d->format > 0x94 || levels < 2 || samples > 1 || scale > 1.0f) return 0;
+    if (d->target != NVN_TEXTURE_TARGET_2D && d->target != NVN_TEXTURE_TARGET_2D_ARRAY) return 0;
+    if (nvn_tex_is_linear(d) || nvn_gpu_only(addr) || (w > h ? w : h) < (uint32_t)side) return 0;
+    return 1;
+}
+
 // defer_init: the caller records the image's first transition (init_image or alias_copy).
 static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     static volatile int32_t n_unmapped, n_unsupported, n_failed, n_unbound, n_thick;
@@ -453,6 +485,8 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     for (uint32_t s = umax(umax(w, h), depth); s > 1; s >>= 1) most++;
     if (levels > most) levels = most;
     if (samples > 1) levels = 1;
+    uint32_t skip = mip_skip_of(d, k->addr, w, h, levels, samples, scale);
+    if (skip) w = umax(w >> skip, 1), h = umax(h >> skip, 1), levels -= skip;
     VkFormatFeatureFlags ff = features_of(f.vk);
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     int ds = f.depth || f.stencil;
@@ -567,6 +601,7 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     p->usage = usage;
     p->aspect = aspect_of(&f);
     p->width = w, p->height = h, p->depth = depth, p->levels = levels, p->layers = layers, p->samples = samples;
+    p->skip = (uint8_t)skip;
     p->view_type = type == VK_IMAGE_TYPE_1D ? (d->target == NVN_TEXTURE_TARGET_1D_ARRAY ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D)
                  : type == VK_IMAGE_TYPE_3D ? VK_IMAGE_VIEW_TYPE_3D
                  : d->target == NVN_TEXTURE_TARGET_CUBEMAP && (flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) ? VK_IMAGE_VIEW_TYPE_CUBE
@@ -909,6 +944,7 @@ static void upload(Tex *e) {
         }
     }
     uint32_t levels = linear ? 1 : e->pub.levels, layers = linear ? 1 : e->pub.layers;
+    uint32_t skip = e->pub.skip;   // AC_TEX_MIP_SKIP: image level lv holds the game's level lv + skip
     int astc = e->f.astc_bw != 0, rgb = e->f.expand_rgb;
     int agpu = astc && vk_astc_gpu(), acheck = agpu && vk_astc_mode() == VK_ASTC_CHECK;   // raw blocks to the GPU
     uint32_t n = levels * layers, k = 0;
@@ -917,7 +953,8 @@ static void upload(Tex *e) {
     VkDeviceSize total = 0, decoded = 0;
     for (uint32_t lv = 0; lv < levels; lv++)
         for (uint32_t ly = 0; ly < layers; ly++) {
-            uint32_t w = mip(d->width, lv), h = one_d ? 1 : mip(d->height, lv), sl = is3d ? mip(d->depth, lv) : 1;
+            uint32_t gl = lv + skip;
+            uint32_t w = mip(d->width, gl), h = one_d ? 1 : mip(d->height, gl), sl = is3d ? mip(d->depth, gl) : 1;
             uint64_t texels = (uint64_t)w * h * sl, raw = (uint64_t)(w + bw - 1) / bw * bpb * ((h + bh - 1) / bh) * sl;
             uint64_t out = agpu ? raw : astc ? texels * 4 : rgb ? texels * (uint64_t)bpb / 3 * 4 : raw;
             rg[k++] = (VkBufferImageCopy){.bufferOffset = total, .imageSubresource = {e->pub.aspect, lv, ly, 1},
@@ -947,9 +984,9 @@ static void upload(Tex *e) {
             size_t raw = (size_t)rb * rows * sl;
             rg[k].bufferOffset -= base;
             uint8_t *dst = stg + rg[k].bufferOffset, *tmp = (astc && !agpu) || rgb ? malloc(raw) : NULL;
-            if (nvn_deswizzle(d, lv, ly, t->mem, tmp ? tmp : dst, rb)) {
+            if (nvn_deswizzle(d, lv + skip, ly, t->mem, tmp ? tmp : dst, rb)) {
                 log_limited(&n_bad, "texture %#llx fmt %#x target %d: level %u layer %u has no CPU layout; uploaded as zeros",
-                            (unsigned long long)e->pub.addr, d->format, d->target, lv, ly);
+                            (unsigned long long)e->pub.addr, d->format, d->target, lv + skip, ly);
                 memset(tmp ? tmp : dst, 0, raw);
             }
             if (agpu) {
@@ -1542,7 +1579,11 @@ static int image_texels_at(Tex *e, const Region *g, const NVNcopyRegion *r, uint
         log_limited(&n_ds, "texels of packed depth-stencil format %#x are not copied", e->t.d.format);
         return 0;
     }
-    if (g->level >= e->pub.levels) return 0;
+    // AC_TEX_MIP_SKIP: the game's level g->level is image level il; a write into a level left out of the image has
+    // nowhere to go and nothing samples it (reads of ASTC were refused above).
+    int il = vk_tex_level(&e->pub, g->level);
+    if (il < 0) return write;
+    if ((uint32_t)il >= e->pub.levels) return 0;
     uint32_t w = (uint32_t)r->width, h = (uint32_t)r->height;
     int rgb = e->f.expand_rgb, astc = e->f.astc_bw != 0, agpu = astc && write && vk_astc_gpu();
     size_t texels = (size_t)w * h, ib = agpu ? 0 : astc ? 4 : rgb ? (size_t)g->bpb / 3 * 4 : 0;
@@ -1571,7 +1612,7 @@ static int image_texels_at(Tex *e, const Region *g, const NVNcopyRegion *r, uint
             }
         }
         rg[z] = (VkBufferImageCopy){.bufferOffset = slice * (size_t)z,
-                                    .imageSubresource = {aspect, g->level, g->is3d ? 0 : g->layer0 + (uint32_t)r->zoffset + (uint32_t)z, 1},
+                                    .imageSubresource = {aspect, (uint32_t)il, g->is3d ? 0 : g->layer0 + (uint32_t)r->zoffset + (uint32_t)z, 1},
                                     .imageOffset = {r->xoffset, r->yoffset, g->is3d ? r->zoffset + z : 0},
                                     .imageExtent = {w, h, 1}};
     }
@@ -1762,7 +1803,7 @@ static void write_back(Tex *e) {
     const nvn_texdesc *d = &e->t.d;
     int linear = nvn_tex_is_linear(d), is3d = d->target == NVN_TEXTURE_TARGET_3D;
     uint32_t levels = linear ? 1 : e->pub.levels, layers = linear || is3d ? 1 : e->pub.layers;
-    for (uint32_t lv = 0; lv < levels; lv++)
+    for (uint32_t lv = e->pub.skip; lv < e->pub.skip + levels; lv++)   // the game's levels the image holds
         for (uint32_t ly = 0; ly < layers; ly++) {
             view_t v = {.set_levels = 1, .set_layers = 1, .base_level = (uint8_t)lv, .min_layer = (uint16_t)ly};
             NVNcopyRegion r = {.width = (int)mip(d->width, lv),
@@ -2178,6 +2219,13 @@ void vk_texture_census(VkTexCensus *s) {
         }
         if (e->released) s->released++, s->own_released += e->alloc != NULL, s->bytes_released += bytes;
         else s->live++, s->own_live += e->alloc != NULL, s->bytes_live += bytes;
+        const nvn_texdesc *d = &e->t.d;
+        uint32_t side = d->width > d->height ? d->width : d->height;
+        if (!e->released && bytes && d->format >= 0x79 && d->format <= 0x94 && e->pub.levels >= 2 &&
+            (d->target == NVN_TEXTURE_TARGET_2D || d->target == NVN_TEXTURE_TARGET_2D_ARRAY) && side >= 512) {
+            int k = side >= 2048 ? 0 : side >= 1024 ? 1 : 2;
+            s->astc_n[k]++, s->astc_bytes[k] += bytes;
+        }
     }
     unlock();
 }

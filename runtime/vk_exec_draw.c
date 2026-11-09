@@ -495,10 +495,18 @@ static VkImageView get_view(VkExec *ex, const VkTexImage *img, const view_t *v, 
     default: ok = img->type == VK_IMAGE_TYPE_2D; break;
     }
     if (!ok) return VK_NULL_HANDLE;
+    // The view's levels are the game's; an image AC_TEX_MIP_SKIP made without the game's first `skip` levels holds the
+    // game's level skip + i at its level i (vk_tex_level). A view of the left-out levels alone takes the image's first.
+    uint32_t sk = img->skip, gl = img->levels + sk;
     uint32_t l0 = hv && v->set_levels ? v->base_level : 0;
-    if (l0 >= img->levels) return VK_NULL_HANDLE;
-    uint32_t nl = hv && v->set_levels && v->nlevels ? v->nlevels : img->levels - l0;
-    if (l0 + nl > img->levels) nl = img->levels - l0;
+    if (l0 >= gl) return VK_NULL_HANDLE;
+    uint32_t nl = hv && v->set_levels && v->nlevels ? v->nlevels : gl - l0;
+    if (l0 + nl > gl) nl = gl - l0;
+    if (sk) {
+        uint32_t end = l0 + nl;
+        l0 = l0 > sk ? l0 - sk : 0;
+        nl = end > sk ? end - sk - l0 : 1;
+    }
     if (storage) nl = 1;
     uint32_t y0 = 0, ny = 1;
     if (vt != VK_IMAGE_VIEW_TYPE_3D) {
@@ -1095,7 +1103,9 @@ typedef struct { VkImage image; uint32_t l0, l1, a0, a1; } SubRange;
 
 static SubRange sub_of(const VkTexImage *img, const view_t *v, int hv) {
     SubRange r = {img->image, 0, img->levels, 0, img->layers};
-    if (hv && v->set_levels) r.l0 = v->base_level, r.l1 = v->base_level + (v->nlevels ? v->nlevels : img->levels);
+    // An image AC_TEX_MIP_SKIP shortened keeps its whole level range: its view's levels are the game's, not the image's.
+    if (hv && v->set_levels && !img->skip)
+        r.l0 = v->base_level, r.l1 = v->base_level + (v->nlevels ? v->nlevels : img->levels);
     if (hv && v->set_layers) r.a0 = v->min_layer, r.a1 = v->min_layer + (v->nlayers ? v->nlayers : img->layers);
     return r;
 }
@@ -1558,27 +1568,47 @@ static const float *shadow_spread_params(void) {
 // divide by it, so the game's shaders address an enlarged target as if it had the game's size. Fragment shaders take it
 // negated, which adds gl_FragCoord's place inside the enlarged texel, as Ryujinx does for a texture scaled like the
 // render target. Vertex shaders read theirs after frag_scale_count entries; they stay 1.
+//
+// AC_TEX_MIP_SKIP: a texture made without its level 0 (VkTexImage.skip) is half the game's size, so its entry is 0.5
+// in every stage, vertex shaders included (their entries follow the fragment ones): fetches halve their coordinates and
+// size queries double, and the shader sees the game's size. Positive in fragment shaders too: the fragment bias above
+// is for targets enlarged like the pass, and this one is not.
+static int scale_binding(const VkExec *ex, const VkPipeBinding *b, int stage, const VkTexImage **t) {
+    const GfxShaderRes *r = b->res;
+    *t = NULL;
+    if ((b->kind != GFX_RES_TEX && b->kind != GFX_RES_IMG) || b->stage != stage || !r || r->scale_idx < 0 || r->slot < 0)
+        return 0;
+    if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || b->type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) return 0;
+    int st = nvn_stage_of(b->stage), img = b->kind == GFX_RES_IMG;
+    uint64_t h = img ? (r->slot < 32 ? ex->img[st][r->slot] : 0) : (r->slot < 128 ? ex->tex[st][r->slot] : 0);
+    *t = h ? vk_texture_by_id_locked((int)(h & 0xfffff), NULL, NULL) : NULL;
+    return 1;
+}
+
 static void support_scales(const VkExec *ex, const VkPipeInfo *info, SupScales *o) {
     for (int i = 0; i < SCALES; i++) o->s[i] = 1.0f;
     o->nfs = 0;
-    if (vk_render_scale() <= 1.0f) return;
+    int ssaa = vk_render_scale() > 1.0f, skip = vk_tex_mip_skip() > 0;
+    if (!ssaa && !skip) return;
     int gfx = info->bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS;
     o->s[0] = gfx && ex->pass_scale > 1.0f ? ex->pass_scale : 1.0f;
     int want = gfx ? GFX_STAGE_FS : GFX_STAGE_CS;
     vk_texture_lock();
     for (uint32_t i = 0; i < info->n_bindings; i++) {
-        const VkPipeBinding *b = &info->bindings[i];
-        const GfxShaderRes *r = b->res;
-        if ((b->kind != GFX_RES_TEX && b->kind != GFX_RES_IMG) || b->stage != want || !r || r->scale_idx < 0 || r->slot < 0)
-            continue;
-        if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || b->type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) continue;
-        if (r->scale_idx + 1 > o->nfs && gfx) o->nfs = r->scale_idx + 1;
-        int st = nvn_stage_of(b->stage), img = b->kind == GFX_RES_IMG;
-        uint64_t h = img ? (r->slot < 32 ? ex->img[st][r->slot] : 0) : (r->slot < 128 ? ex->tex[st][r->slot] : 0);
-        const VkTexImage *t = h ? vk_texture_by_id_locked((int)(h & 0xfffff), NULL, NULL) : NULL;
-        if (!t || !(t->scale > 1.0f)) continue;
-        o->s[1 + r->scale_idx] = gfx ? -t->scale : t->scale;
+        const VkTexImage *t;
+        if (!scale_binding(ex, &info->bindings[i], want, &t)) continue;
+        int idx = info->bindings[i].res->scale_idx;
+        if (idx + 1 > o->nfs && gfx) o->nfs = idx + 1;
+        if (t && t->skip) o->s[1 + idx] = 1.0f / (float)(1u << t->skip);
+        else if (t && t->scale > 1.0f) o->s[1 + idx] = gfx ? -t->scale : t->scale;
     }
+    if (gfx && skip)
+        for (uint32_t i = 0; i < info->n_bindings; i++) {
+            const VkTexImage *t;
+            if (!scale_binding(ex, &info->bindings[i], GFX_STAGE_VS, &t) || !t || !t->skip) continue;
+            int at = 1 + o->nfs + info->bindings[i].res->scale_idx;
+            if (at < SCALES) o->s[at] = 1.0f / (float)(1u << t->skip);
+        }
     vk_texture_unlock();
 }
 

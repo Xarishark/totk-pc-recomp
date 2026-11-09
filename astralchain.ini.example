@@ -60,6 +60,10 @@
 # memory, at the cost of blockier gradients and normal maps that lose precision. 1 forces BC3 for every texture.
 # auto: 0 on a discrete GPU with 6 GB of video memory or more, bc1 below it and on integrated GPUs.
 # astc_bc = auto
+# ASTC textures whose larger side is at least this many texels are made without their largest level (level 0):
+# three quarters less memory each, and at 1280x800 the level is seldom drawn. 0 (the default) keeps every level;
+# the Steam Deck profile sets 1024 (about 200 MiB less in play on a save, the picture alike). 0, 1024 or 2048.
+# tex_mip_skip = 0
 # Texture images kept in video memory, in MiB; past it the least recently used are dropped and uploaded again when
 # the game binds them. Empty or 0: an eighth of the device budget, at least 512 MiB and at most 2 GiB, or half of it,
 # at most 8 GiB, when the decoded ASTC textures stay RGBA8; -1: no budget.

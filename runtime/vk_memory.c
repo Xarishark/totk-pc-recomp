@@ -509,6 +509,7 @@ static void shadow_log(uint64_t frame);
 static int dead_pending(void);
 
 static void vram_log(uint64_t frame);
+static void vma_detail_log(void);
 
 void vk_mem_census(uint64_t frame) {
     static uint64_t window_start;
@@ -1872,6 +1873,9 @@ static void vram_log(uint64_t frame) {
            (unsigned long long)t.released, (unsigned long long)t.own_released, t.bytes_released / M, (long long)m_live_n,
            m_live_bytes / M, dead_pending(), (t.bytes_live + t.bytes_released) / M, t.cache_budget / M,
            (unsigned long long)t.cache_drops, t.cache_dropped / M);
+    rt_log("mem:   astc 2D with mips, larger side >= 2048 / 1024 / 512: %u %.0f MiB / %u %.0f MiB / %u %.0f MiB",
+           t.astc_n[0], t.astc_bytes[0] / M, t.astc_n[1], t.astc_bytes[1] / M, t.astc_n[2], t.astc_bytes[2] / M);
+    vma_detail_log();
 }
 
 // Device class: INTEGRATED -> uma; a discrete GPU with a DEVICE_LOCAL heap of 1 GiB or more beside a
@@ -2040,6 +2044,72 @@ void vk_upload_end(void) { plat_rmutex_unlock(&cmd_lock); }
 #define STG_MIN_BLOCKS 2
 static VmaPool stg_pool;
 static int stg_pool_tried;
+
+// The ASTC decoder's scratch buffers (vk_astc.c vk_astc_record: the raw blocks, the decoded texels and the BC blocks of
+// one texture, up to 32 MiB of texels a chunk) live until their upload batch completes. In the default device-local
+// pool they took blocks between the texture images created in the same load and left them full of holes when they
+// went: in the deck profile, in play on a save, 110 MiB of free ranges in the texture images' blocks, 286 MiB once
+// AC_TEX_MIP_SKIP made those images smaller. Their own pool keeps that churn out of the images' blocks. VMA keeps one
+// empty block of a pool for the next use (VmaBlockVector::Free), which is the cost: one SCR_BLOCK. A larger scratch
+// goes to the default pool.
+#define SCR_BLOCK (32ull << 20)
+static VmaPool scr_pool;
+static int scr_pool_tried;
+
+VmaPool vk_scratch_pool(const VkBufferCreateInfo *bi) {
+    VkCtx *c = vk_ctx();
+    if (!__atomic_load_n(&scr_pool_tried, __ATOMIC_ACQUIRE)) {
+        plat_once(&cmd_once, cmd_init, NULL);
+        plat_rmutex_lock(&cmd_lock);
+        if (!scr_pool_tried) {
+            uint32_t type;
+            VmaAllocationCreateInfo aci = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+            VmaPoolCreateInfo pi = {.blockSize = SCR_BLOCK};
+            if (vmaFindMemoryTypeIndexForBufferInfo(c->vma, bi, &aci, &type) == VK_SUCCESS) {
+                pi.memoryTypeIndex = type;
+                if (vmaCreatePool(c->vma, &pi, &scr_pool) != VK_SUCCESS) scr_pool = NULL;
+            }
+            rt_log("vk: ASTC scratch pool %s (blocks of %llu MiB)", scr_pool ? "created" : "unavailable: default pool",
+                   (unsigned long long)(SCR_BLOCK >> 20));
+            __atomic_store_n(&scr_pool_tried, 1, __ATOMIC_RELEASE);
+        }
+        plat_rmutex_unlock(&cmd_lock);
+    }
+    return bi->size <= SCR_BLOCK ? scr_pool : NULL;
+}
+
+// AC_TRACE=perf, with the vram line (vram_log): where VMA's blocks hold memory no allocation uses. One line per memory
+// type with blocks: its blocks and allocations, the free ranges between them and the largest one; then the staging
+// pool, whose blocks are kept even when empty (STG_MIN_BLOCKS). A dedicated allocation counts as a block of its own
+// size, so it adds no slack.
+static void vma_detail_log(void) {
+    VkCtx *c = vk_ctx();
+    static VmaTotalStatistics s;   // large (one entry per memory type and heap); only the census thread calls this
+    vmaCalculateStatistics(c->vma, &s);
+    const double M = 1048576.0;
+    for (uint32_t i = 0; i < c->mem_props.memoryTypeCount && i < VK_MAX_MEMORY_TYPES; i++) {
+        const VmaDetailedStatistics *d = &s.memoryType[i];
+        if (!d->statistics.blockCount) continue;
+        rt_log("mem:   vma type %u (heap %u, flags %#x): %u blocks %.1f MiB, %u allocations %.1f MiB, slack %.1f MiB in %u "
+               "free ranges (largest %.1f MiB)",
+               i, c->mem_props.memoryTypes[i].heapIndex, c->mem_props.memoryTypes[i].propertyFlags, d->statistics.blockCount,
+               d->statistics.blockBytes / M, d->statistics.allocationCount, d->statistics.allocationBytes / M,
+               (d->statistics.blockBytes - d->statistics.allocationBytes) / M, d->unusedRangeCount,
+               d->unusedRangeCount ? d->unusedRangeSizeMax / M : 0.0);
+    }
+    if (stg_pool) {
+        VmaDetailedStatistics p;
+        vmaCalculatePoolStatistics(c->vma, stg_pool, &p);
+        rt_log("mem:   vma staging pool: %u blocks %.1f MiB, %u allocations %.1f MiB", p.statistics.blockCount,
+               p.statistics.blockBytes / M, p.statistics.allocationCount, p.statistics.allocationBytes / M);
+    }
+    if (scr_pool) {
+        VmaDetailedStatistics p;
+        vmaCalculatePoolStatistics(c->vma, scr_pool, &p);
+        rt_log("mem:   vma ASTC scratch pool: %u blocks %.1f MiB, %u allocations %.1f MiB", p.statistics.blockCount,
+               p.statistics.blockBytes / M, p.statistics.allocationCount, p.statistics.allocationBytes / M);
+    }
+}
 
 void *vk_staging(VkDeviceSize size, VkBuffer *buf, VmaAllocation *alloc) {
     VkCtx *c = vk_ctx();
