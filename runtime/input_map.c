@@ -396,6 +396,27 @@ static int chord(int *held, uint64_t *buttons, uint64_t combo) {
     return edge;
 }
 
+// L, R, Minus and Plus held together step the performance overlay as F10 does (a gamepad has no F10: the Steam Deck in
+// Game Mode). Not both stick clicks: those trigger Fusion. While L and R stay held, each new press of Minus and Plus steps
+// it again. *held: 0 idle, 1 all four down (stepped), 2 Minus and Plus released with L or R still down (waiting for the
+// next press); the game sees none of the four while it is set. The caller checks this before the menu's chord, so L and
+// R held first keep Minus and Plus from opening the menu.
+int input_overlay_gate(int *held, uint64_t *buttons) {
+    const uint64_t lr = 1ull << B_L | 1ull << B_R, mp = 1ull << B_MINUS | 1ull << B_PLUS;
+    uint64_t b_lr = *buttons & lr, b_mp = *buttons & mp;
+    int edge = 0;
+    if (*held != 1 && b_lr == lr && b_mp == mp) {
+        *held = 1;
+        edge = 1;
+    } else if (*held == 1 && !b_mp) {
+        *held = b_lr ? 2 : 0;
+    } else if (*held == 2 && !b_lr && !b_mp) {
+        *held = 0;
+    }
+    if (*held) *buttons &= ~(lr | mp);
+    return edge;
+}
+
 int input_menu_gate(int *held, int menu_open, uint64_t *buttons, int32_t sticks[4]) {
     int edge = chord(held, buttons, 1ull << B_MINUS | 1ull << B_PLUS);
     if (menu_open) {
@@ -403,10 +424,4 @@ int input_menu_gate(int *held, int menu_open, uint64_t *buttons, int32_t sticks[
         sticks[0] = sticks[1] = sticks[2] = sticks[3] = 0;
     }
     return edge;
-}
-
-// Both stick clicks held together step the performance overlay as F10 does (a gamepad has no F10: the Steam Deck in
-// Game Mode). The same latch as the menu's above; the game sees neither click while it holds.
-int input_overlay_gate(int *held, uint64_t *buttons) {
-    return chord(held, buttons, 1ull << B_STICK_L | 1ull << B_STICK_R);
 }

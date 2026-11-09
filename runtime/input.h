@@ -16,8 +16,8 @@ void input_menu(int open);
 // The gamepad alone, for the menu: Switch button bits and the left stick (up +y). 0 without a connected gamepad.
 // Minus+Plus combo and the neutral pad while the menu is open (input_map.c, window-system free): *held is the caller's memory
 // of the combo, sticks are lx, ly, rx, ry. Returns 1 in the poll where the combo goes down (toggle the menu once).
+int input_overlay_gate(int *held, uint64_t *buttons);   // L+R+Minus+Plus: 1 in the poll all four go down
 int input_menu_gate(int *held, int menu_open, uint64_t *buttons, int32_t sticks[4]);
-int input_overlay_gate(int *held, uint64_t *buttons);   // L3+R3: 1 in the poll both go down
 int input_pad_read(uint64_t *buttons, int32_t *lx, int32_t *ly);
 // The open gamepad's kind (input_map.h PAD_KIND_*) for the button prompts' auto choice. Any thread.
 int input_pad_kind(void);

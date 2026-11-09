@@ -587,11 +587,11 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
     script_apply(&b, sl, sr);
     rec_apply(b, sl, sr);
     // Minus and Plus held together (gamepad or keys) open or close the menu and never reach the game
-    static int combo_held;
+    static int combo_held, overlay_held;
     int32_t st[4] = {sl[0], sl[1], sr[0], sr[1]};
+    // L+R+Minus+Plus step the performance overlay (F10); checked first, so it takes Minus and Plus from the menu's chord
+    int overlay = combo_held ? 0 : input_overlay_gate(&overlay_held, &b);
     int toggle = input_menu_gate(&combo_held, menu_is_open(), &b, st);
-    static int overlay_held;   // L3+R3 step the performance overlay (F10)
-    int overlay = input_overlay_gate(&overlay_held, &b);
     sl[0] = st[0], sl[1] = st[1], sr[0] = st[2], sr[1] = st[3];
     plat_mutex_unlock(&lock);
     if (toggle) menu_toggle();
