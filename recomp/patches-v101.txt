@@ -198,6 +198,9 @@ site fps60 main 322c3c 71000508 @fnz:rt_fps_hs_w8   # +0x1518 sector timer
 site fps60 main 322c4c 71000508 @fnz:rt_fps_hs_w8   # +0x151C sector timer
 site fps60 main 322c5c 71000508 @fnz:rt_fps_hs_w8   # +0x1520 sector timer
 site fps60 main 322c6c 71000508 @fnz:rt_fps_hs_w8   # +0x1524 sector timer
+# sector stamp: at 60 fps the denser sampling of a back-to-forward sweep stamped more sectors, and the rotation it then
+# read cleared the reversal; stamped on whole-tick frames only, 30 samples a second as at 30 fps
+site fps60 main 322d6c b9150909 @fn:rt_fps_sector_str   # str w9,[x8,#0x1508] -> only with a whole tick
 site fps60 main 322d74 71000508 @fnz:rt_fps_hs_w8   # +0x1528 rotation window
 site fps60 main 322e04 71000508 @fnz:rt_fps_hs_w8   # +0x153C reversal window, after a rotation
 site fps60 main 322e3c 71000508 @fnz:rt_fps_hs_w8   # +0x153C reversal window

@@ -194,6 +194,15 @@ uint64_t rt_fps_hs_w8w9(Cpu *c) {
     c->x[9] = out; return f;
 }
 
+// The stick gesture parser's sector stamp (`str w9, [x8, #0x1508]`, w9 = 12): the sector the stick points at stays live
+// for 12 frames, and 6 live sectors make a rotation, which clears the stick reversal and turns the attack into the
+// rotation attack. At 60 fps the stick is sampled twice as often, so a back-to-forward sweep along the rim stamped more
+// sectors than at 30 and read as a rotation more often. Sectors are stamped only on frames with a whole tick: 30
+// samples a second, as the game was tuned for.
+void rt_fps_sector_str(Cpu *c) {
+    if (rt_fps_ticks()) *(uint32_t volatile *)(uintptr_t)(c->x[8] + 0x1508) = (uint32_t)c->x[9];
+}
+
 // A float countdown of frames (`fmov s1, #-1.0` before `fadd s0, s0, s1`): s1 = minus the game's step, so it counts
 // 30 fps frames of real time.
 void rt_fps_neg_step_s1(Cpu *c) { FP_SETS(1, -rt_fps_step()); }
