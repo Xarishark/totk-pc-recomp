@@ -1535,23 +1535,15 @@ static void mirror_sync(PoolRec *r) {
     r->mgen = gen_now;
     // A span purged before this pass is done: its stamps are at or below the new mgen. One purged since (between the
     // pass and the exclusive lock) stays for the next pass. Exclusive: wb_span_add and wb_purge change the array.
-    // The lock is upgraded only when a span is done: purge_gen is written under the exclusive lock and never changes
-    // once set, so the test under the shared lock stays true, and most syncs have no span to drop.
-    int drop = 0;
-    for (int i = 0; i < r->nwb && !drop; i++) drop = r->wb[i].purge_gen && r->wb[i].purge_gen <= r->mgen;
-    if (!excl && drop) {
+    if (!excl) {
         plat_mutex_unlock_shared(&gen_lock);
         plat_mutex_lock(&gen_lock);
-        excl = 1;
     }
-    if (drop) {
-        int j = 0;
-        for (int i = 0; i < r->nwb; i++)
-            if (!r->wb[i].purge_gen || r->wb[i].purge_gen > r->mgen) r->wb[j++] = r->wb[i];
-        r->nwb = j;
-    }
-    if (excl) plat_mutex_unlock(&gen_lock);
-    else plat_mutex_unlock_shared(&gen_lock);
+    int j = 0;
+    for (int i = 0; i < r->nwb; i++)
+        if (!r->wb[i].purge_gen || r->wb[i].purge_gen > r->mgen) r->wb[j++] = r->wb[i];
+    r->nwb = j;
+    plat_mutex_unlock(&gen_lock);
     if (__atomic_load_n(&r->fl_hi, __ATOMIC_ACQUIRE)) {
         plat_mutex_lock(&flush_lock);
         uint64_t a = r->fl_lo, b = r->fl_hi;
