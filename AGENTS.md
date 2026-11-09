@@ -41,6 +41,7 @@ This repository is public. Game data lives outside it and every derived file sta
   scripts needing `compression.zstd`; this port's extraction runs under `.venv` with the `zstandard` package, so 3.14
   is not required.
 - Generated C is never edited by hand: change the generator (`recomp/`).
+- `build_game.py` never re-lifts: after `recomp/patches-v101.txt` changes (edit, pull, checkout), run `recomp/gen.py` again.
 - Every lifter change passes the differential tests against Unicorn (`docs/building.md`, "Checks"). After changing
   `recomp/jumptables.py`, the jumptables check must report 0 disagreements.
 - `recomp/layout.py` alone decides module bases.
