@@ -288,7 +288,9 @@ int frame_step_cutscene(void);                             // 1 while a cutscene
                                                            // patch (frame_rate.c cutscene_rate); any thread
 int64_t frame_step_world_us(void);                         // game time since the loaded save's first frame, -1 before
                                                            // (AC_FPS, live: 60 fps patch on or off)
-uint64_t frame_step_ticks(void);                           // game time since the first present in 60 Hz ticks (input scripts)
+uint64_t audio_device_clock_ns(void);                      // audio the output device has asked for so far, in ns of
+                                                           // sound; 0 without a device (audio_mixer.c); any thread
+uint64_t frame_step_ticks(void);                         // game time since the first present in 60 Hz ticks (input scripts)
 // In-launch A/B measurement: AC_AB=<seconds> splits the world clock (frame_step_world_us) into blocks of that much
 // game time in the order A B B A (repeated); rt_ab() is 1 in the B blocks, 0 in A blocks, before the world clock and
 // without AC_AB. rt_knob(name, def) reads the switch
