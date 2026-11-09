@@ -75,7 +75,8 @@ void rt_cut_next_s1(Cpu *c);        // cut clock: s1 = the next cut's start (0; 
 void rt_fps_talk_clear(Cpu *c);     // talk command: clear the talking flag, unless the frame is skipped at 60
 void rt_fps_talk_busy_w8(Cpu *c);   // talk command: w8 = its done flag, or 1 on a skipped frame at 60
 void rt_fps_talk_ret_w8(Cpu *c);    // talk command: w8 = 1, or 0 (still running) on a skipped frame at 60
-void rt_fps_line_voice_w8(Cpu *c);  // talk line update: w8 = its voice-end gate, or 0 on a skipped frame at 60
+void rt_fps_voiced_alt_w8(Cpu *c);  // voiced talk command: w8 = its variant switch, or 0 on a skipped frame at 60
+void rt_fps_voiced_state_w8(Cpu *c);  // voiced talk command: w8 = its state, or 4 (returns 0) on a skipped frame
 void rt_fps_msg_state_w8(Cpu *c);  // second talk command: w8 = its state, or 2 (returns 0) on a skipped frame at 60
 void rt_fps_talk_wait_s1(Cpu *c);   // talk command countdowns: s1 = the step, or the whole ticks in a cutscene at 60
 void rt_fps_talk_state_w8(Cpu *c); // talk line state machine: w8 = its state, or 4 (idle) without a tick at 60

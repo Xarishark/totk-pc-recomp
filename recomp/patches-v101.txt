@@ -137,9 +137,12 @@ site fps60 main 443e80 b9402b08 @fn:rt_fps_talk_busy_w8    # ldr w8,[x24,#0x28] 
 site fps60 main 443e88 320003f4 @fn:rt_fps_talk_ret_w8 2a0803f4   # mov w20,#1 -> w8 = 1, or 0 on a skipped frame; mov w20,w8
 site fps60 main 443fa4 bd40d101 @fn:rt_fps_talk_wait_s1    # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
 site fps60 main 4453fc bd40d121 @fn:rt_fps_talk_wait_s1    # ldr s1,[x9,#0xd0] -> the step, or the whole ticks
-# the talk line's update (main+0x615CD0), the end of its voice: only on frames with a whole tick in a cutscene at 60
-site fps60 main 615d20 b940ba68 @fn:rt_fps_line_voice_w8   # ldr w8,[x19,#0xb8] -> 0 on a skipped frame
-site fps60 main 615dfc b940ba68 @fn:rt_fps_line_voice_w8   # ldr w8,[x19,#0xb8] -> 0 on a skipped frame
+# the voiced talk command (main+0x446C40, variant main+0x447600): the same; a state above 3 returns 0 at once
+site fps60 main 446c80 b9404e68 @fn:rt_fps_voiced_alt_w8     # ldr w8,[x19,#0x4c] -> 0 on a skipped frame
+site fps60 main 446ca4 b9402668 @fn:rt_fps_voiced_state_w8   # ldr w8,[x19,#0x24] -> the state, or 4 on a skipped frame
+site fps60 main 4473dc bd40d101 @fn:rt_fps_talk_wait_s1      # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
+site fps60 main 447414 bd40d101 @fn:rt_fps_talk_wait_s1      # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
+site fps60 main 4477fc bd40d101 @fn:rt_fps_talk_wait_s1      # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
 # the other talk command (main+0x446300): the same, through its state (2 returns 0, still running, at once)
 site fps60 main 44631c b9402668 @fn:rt_fps_msg_state_w8    # ldr w8,[x19,#0x24] -> the state, or 2 on a skipped frame
 # time-scale getter (main+0x430DA0): with its flag set it returns channel 3 when that channel is below 1.0, meaning a
