@@ -893,12 +893,23 @@ static int shadow_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size) {
     uint64_t n = r->import_hi - r->import_lo;
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = n, .usage = pool_usage(c),
                              .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
-    // Cached where the device has it: the fence copies read it back on the CPU.
+    // Cached: the fence copies (vk_gpu_written) read it back on the CPU, and reading uncached (write-combined) memory
+    // runs at a few hundred MiB/s. Coherent where a cached type is (AMD, NVIDIA). Intel's integrated GPUs without a
+    // shared LLC (Meteor Lake, Arrow Lake, Lunar Lake) offer cached memory only non-coherent, next to coherent
+    // write-combined memory: requiring coherence there put the shadows in write-combined memory and the write-back
+    // copies held shadow_lock for most of each frame (22-26 fps instead of 60 on Arrow Lake). Non-coherent memory is
+    // flushed after the CPU copies in and invalidated before the CPU reads the GPU's writes; VMA skips both on
+    // coherent memory. Without any cached type: coherent, as before.
     VmaAllocationCreateInfo ai = {.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
-                                  .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                                  .preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT};
+                                  .requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
+                                  .preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
     VmaAllocationInfo info;
     VkResult res = vmaCreateBuffer(c->vma, &bi, &ai, &r->buf, &r->salloc, &info);
+    if (res != VK_SUCCESS) {
+        ai.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        ai.preferredFlags = VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        res = vmaCreateBuffer(c->vma, &bi, &ai, &r->buf, &r->salloc, &info);
+    }
     if (res != VK_SUCCESS) {
         rt_log("vk: pool %#llx+%#llx: shadow allocation failed (%d)", (unsigned long long)addr, (unsigned long long)size,
                (int)res);
@@ -910,6 +921,7 @@ static int shadow_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size) {
     r->sgen = gen_now;   // the copy below holds every write stamped so far; later stamps are copied again
     plat_mutex_unlock(&gen_lock);
     memcpy(r->smap, (const void *)(uintptr_t)r->import_lo, n);
+    vmaFlushAllocation(c->vma, r->salloc, 0, n);
     plat_mutex_lock(&shadow_lock);
     s_live_n++, s_live_bytes += (int64_t)n;
     plat_mutex_unlock(&shadow_lock);
@@ -946,6 +958,7 @@ static void shadow_copy(PoolRec *r, uint64_t a, uint64_t b, int i) {
             return;
         }
     memcpy(r->smap + (a - r->import_lo), (const void *)(uintptr_t)a, b - a);
+    vmaFlushAllocation(vk_ctx()->vma, r->salloc, a - r->import_lo, b - a);   // non-coherent memory only (shadow_pool)
     s_copied += b - a;
 }
 
@@ -1022,6 +1035,8 @@ void vk_gpu_written(uint64_t addr, uint64_t size) {
         plat_mutex_lock(&shadow_lock);
         if (r && r->smap && addr >= r->import_lo && addr + size <= r->import_hi) {
             mem_thaw(addr, size);
+            // Non-coherent memory only (shadow_pool): drop the CPU's cached lines so the GPU's bytes are read.
+            vmaInvalidateAllocation(vk_ctx()->vma, r->salloc, addr - r->import_lo, size);
             memcpy((void *)(uintptr_t)addr, r->smap + (addr - r->import_lo), size);
             s_wb_bytes += size;
         }
