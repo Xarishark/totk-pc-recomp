@@ -12,16 +12,18 @@ application for Windows, built on the pipeline of [TotK Recomp](https://github.c
 > The game is built from your files on your machine, so the result contains the game. It is for your own use. Do not
 > share it.
 
+Special thanks to [@capibawa](https://github.com/capibawa) for their multiple contributions
+
 ## Status
 
-The game is playable from the title screen through the story, including its audio and its save data. The only known issue is the assault attack at 60FPS has bad input timers at 60FPS (long known unresolved issue in Emulation), compiled code is being analyzed to be patched. At 30FPS, the timer is accurate so players can temporarly switch to 30FPS during act 4 to pass the tutorial.
+The game is playable from the title screen through the story, including its audio and its save data. The port has no known gameplay issue, including correct timings at 60FPS (perfect dodge, assault attack, 360 spin and so on) and no known visual issues.
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Features
 
 - Native code, not emulation. It already runs on very old systems; it uses a small amount of RAM and VRAM to run.
-- Externally tested (Reddit, YouTube, ...): playable from intro to credits with no known visual issues.
+- Externally tested (Reddit, YouTube, ...): playable from intro to credits.
 - Base game 1.0.0 with its 1.0.1 update
 - 60 fps by default, with a 30 fps switch and a cutscene speed fix
 - The game's own audio: music, effects and voices
