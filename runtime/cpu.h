@@ -69,6 +69,13 @@ void rt_fps_timer_first(Cpu *c);    // frame timer's first call: the game's step
 void rt_fps_text_rate_s2(Cpu *c);   // dialogue text reveal: s2 = rate * step
 void rt_fps_cue_up_w8(Cpu *c);      // cue scheduler: w8 += whole ticks, keeping the old counter
 uint64_t rt_fps_cue_cmp(Cpu *c);    // cue scheduler: cmp w9,w8 -> Z when the entry's frame is in (old, new]
+void rt_cut_hold_s1(Cpu *c);        // cut clock: s1 = the time a cut may reach (len - rate; just below len at 60)
+void rt_cut_prev_s0(Cpu *c);        // cut clock: s0 = the time before this frame (s1 at 60: no hold)
+void rt_cut_next_s1(Cpu *c);        // cut clock: s1 = the next cut's start (0; the overshoot at 60)
+void rt_movie_name(Cpu *c);         // Bink player open: x2 = the name it was given
+void rt_movie_opened(Cpu *c);       // Bink player open: x0 = BinkOpen's handle, x23 = what it opened
+void rt_movie_close(Cpu *c);        // Bink player: x0 = the handle BinkClose takes
+void rt_movie_wait(Cpu *c);         // Bink player: x0 = the handle BinkWait takes (an event movie is playing)
 void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical angle) *= AC_FOV factor (resolution.c)
 
 
