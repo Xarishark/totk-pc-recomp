@@ -185,6 +185,38 @@ site fps60 main 28783c 71000529 @fnz:rt_fps_hs_w9   # r5 window
 site fps60 main 283a94 7100054a @fnz:rt_fps_hs_w10  # lockout (subs w10,w10,#1)
 site fps60 main 287694 71000549 @fnz:rt_fps_hs_w10w9  # second-tap window, path A
 site fps60 main 287724 71000549 @fnz:rt_fps_hs_w10w9  # second-tap window, path B
+# stick gesture parser (main+0x322BE0, once a frame from the player input update): eight direction-sector timers
+# (12 frames, a 360 motion needs 6 of them live), the rotation window, and the press windows a stick reversal is read
+# from. A push opens a 5-frame window and stores its angle; a second push inside the window whose angle differs enough
+# arms the reversal (+0x153C), the back-to-forward input. At 60 fps the window lasted 83 ms, shorter than a stick takes
+# through neutral, so back-to-forward could not be done on a gamepad (issue #40).
+site fps60 main 322bf8 71000508 @fnz:rt_fps_hs_w8   # +0x1508 sector timer
+site fps60 main 322c10 51000508 @fn:rt_fps_sub_w8   # +0x150C sector timer (sub, after a > 0 test)
+site fps60 main 322c1c 71000508 @fnz:rt_fps_hs_w8   # +0x1510 sector timer
+site fps60 main 322c2c 71000508 @fnz:rt_fps_hs_w8   # +0x1514 sector timer
+site fps60 main 322c3c 71000508 @fnz:rt_fps_hs_w8   # +0x1518 sector timer
+site fps60 main 322c4c 71000508 @fnz:rt_fps_hs_w8   # +0x151C sector timer
+site fps60 main 322c5c 71000508 @fnz:rt_fps_hs_w8   # +0x1520 sector timer
+site fps60 main 322c6c 71000508 @fnz:rt_fps_hs_w8   # +0x1524 sector timer
+site fps60 main 322d74 71000508 @fnz:rt_fps_hs_w8   # +0x1528 rotation window
+site fps60 main 322e04 71000508 @fnz:rt_fps_hs_w8   # +0x153C reversal window, after a rotation
+site fps60 main 322e3c 71000508 @fnz:rt_fps_hs_w8   # +0x153C reversal window
+site fps60 main 322e4c 71000508 @fnz:rt_fps_hs_w8   # +0x1538 turn window
+site fps60 main 322e5c 71000508 @fnz:rt_fps_hs_w8   # +0x1544 push window
+site fps60 main 322e6c 71000508 @fnz:rt_fps_hs_w8   # +0x1548
+site fps60 main 322e7c 71000508 @fnz:rt_fps_hs_w8   # +0x156C right-stick window
+site fps60 main 322e8c 71000508 @fnz:rt_fps_hs_w8   # +0x155C push window
+site fps60 main 322f0c 71000509 @fnz:rt_fps_hs_w8w9  # +0x1568 right-stick push window
+site fps60 main 322f24 71000509 @fnz:rt_fps_hs_w8w9  # +0x1568, other path
+site fps60 main 322fb0 71000508 @fnz:rt_fps_hs_w8   # +0x46B438
+site fps60 main 322fc8 51000508 @fn:rt_fps_sub_w8   # +0x1530 press window (sub, after a > 0 test)
+# player input update (main+0x282870): stick push windows, press-repeat window and a float frame countdown
+site fps60 main 282a48 71000508 @fnz:rt_fps_hs_w8   # +0x46AE80 left-stick push window (3 frames)
+site fps60 main 282a64 71000508 @fnz:rt_fps_hs_w8   # +0x46AE84 right-stick push window (3 frames)
+site fps60 main 282fd0 71000529 @fnz:rt_fps_hs_w9   # +0x46B570
+site fps60 main 282fec 71000529 @fnz:rt_fps_hs_w9   # +0x46B590
+site fps60 main 2832e4 71000529 @fnz:rt_fps_hs_w9   # +0x46AE5C press-repeat window (5 frames)
+site fps60 main 2833a0 1e3e1001 @fn:rt_fps_neg_step_s1   # +0x46ADB4 countdown: fmov s1,#-1.0 -> s1 = -step
 # r2 bank of buffer counters (sub w8,w8,#1, no flags)
 site fps60 main 283044 51000508 @fn:rt_fps_sub_w8
 site fps60 main 283054 51000508 @fn:rt_fps_sub_w8

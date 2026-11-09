@@ -47,6 +47,8 @@ uint64_t rt_fps_hs_w8(Cpu *c);      // subs w8,w8,#1 scaled by whole ticks; retu
 uint64_t rt_fps_hs_w9(Cpu *c);      // subs w9,w9,#1 scaled; returns packed NZCV, updates x9
 uint64_t rt_fps_hs_w10(Cpu *c);     // subs w10,w10,#1 scaled; returns packed NZCV, updates x10
 uint64_t rt_fps_hs_w10w9(Cpu *c);   // subs w9,w10,#1 scaled (r5 second-tap); returns NZCV, updates x9
+uint64_t rt_fps_hs_w8w9(Cpu *c);    // subs w9,w8,#1 scaled; returns NZCV, updates x9
+void rt_fps_neg_step_s1(Cpu *c);    // s1 = -step (a float frame countdown's -1.0)
 void rt_fps_sub_w8(Cpu *c);         // sub w8,w8,#1 scaled (no flags), r2 bank of buffer counters
 void rt_fps_up_w9(Cpu *c);          // add w9,w9,#1 scaled (no flags), pad auto-repeat count
 void rt_fps_up_w8(Cpu *c);          // add w8,w8,#1 scaled (no flags), hitstop freeze phase count

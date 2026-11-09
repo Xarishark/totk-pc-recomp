@@ -188,6 +188,16 @@ uint64_t rt_fps_hs_w10w9(Cpu *c) {
     c->x[9] = out; return f;
 }
 
+// `subs w9, w8, #1`: the scaled decrement of w8, written to w9 (the stick gesture parser's press windows).
+uint64_t rt_fps_hs_w8w9(Cpu *c) {
+    uint32_t out; uint64_t f = fps_hs((uint32_t)c->x[8], rt_fps_ticks(), &out);
+    c->x[9] = out; return f;
+}
+
+// A float countdown of frames (`fmov s1, #-1.0` before `fadd s0, s0, s1`): s1 = minus the game's step, so it counts
+// 30 fps frames of real time.
+void rt_fps_neg_step_s1(Cpu *c) { FP_SETS(1, -rt_fps_step()); }
+
 // `sub w8, w8, #1` (no flags), the r2 bank of tap/buffer counters: max(w8 - ticks, 0).
 void rt_fps_sub_w8(Cpu *c) {
     uint32_t w = (uint32_t)c->x[8], t = rt_fps_ticks(), r = w - t;
