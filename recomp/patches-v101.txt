@@ -105,23 +105,37 @@ site fov main 998b5c bd014260 @fn:rt_fov_s0 bd014260   # str s0,[x19,#0x140] -> 
 site fov main 998f90 bd014260 @fn:rt_fov_s0 bd014260   # str s0,[x19,#0x140] -> s0 *= factor; the same store
 
 # Dynamic frame rate for the 60 fps mode (the menu's AC_FPS: 30 = shipping 30 fps, 60 = 60 fps with the fix).
-# This replaces the community static 60 fps patch (MrComputerRevo's IPS, whose offsets count the 0x100-byte NSO header)
-# with the Dynamic mod v1.1.1's fixes for its two 60 fps bugs: the frame accumulator's low clamp drops to 1/16 (the
-# high clamp stays the original 2.0) so the floating step tracks real time; every input/action frame counter is scaled
-# by the whole-tick count (runtime/frame_rate.c) so its window lasts wall-clock time instead of whole 60 fps frames;
-# and the camera's per-frame smoothing blend becomes 1 - powf(1 - a, clamp(step, 0, 4)) so it converges at the same
-# rate whatever the frame rate. The frame call's second-vsync wait is still cleared; the present pacer (nvn_api_obj.c)
-# holds 60 fps. AC_FPS=30 runs the original instructions (the game's shipping 30 fps).
+# The game's frame timer (main+0x91DBB0) clamps its step to [1, 2] frames of 1/30 s, so at 60 fps everything runs at
+# twice its speed. The set replaces the timer's step with the frame's real time (runtime/frame_rate.c rt_fps_timer,
+# which also keeps the whole 30 fps ticks the steps add up to), and fixes what counts frames instead of reading the
+# step: every input/action/hitstop/rumble frame counter is scaled by the whole ticks so its window lasts wall-clock time
+# instead of whole 60 fps frames; the camera's per-frame smoothing blend becomes 1 - powf(1 - a, clamp(step, 0, 4)); the
+# dialogue text reveal, the time-scale channel test and the frame-counted cue scheduler follow the step. Cutscenes keep
+# the game's fixed step and are held to 30 presents per second (frame_rate.c cutscene_rate). Sites from the
+# AstralChain-Dynamic-FPS mod v1.1.1 are marked so. AC_FPS=30 runs the original instructions (the shipping 30 fps).
 set  fps60 FPS60 1
-site fps60 main 3e39d0 320003e0 52800001   # orr w0, wzr, #1 -> mov w1, #0 (frame call's vsync-wait argument)
-# frame accumulator low clamp 1.0 -> 1/16 (the high clamp is already the original 2.0)
-site fps60 main 91dc94 1e2e1001 52a7b008 1e270101   # fmov s1,#1.0 -> mov w8,#0x3d800000; fmov s1,w8
-site fps60 main 91dca0 1e2e1001 52a7b008 1e270101   # fmov s1,#1.0 -> mov w8,#0x3d800000; fmov s1,w8
-site fps60 main 91dcac 32091be8 52a7b008           # mov w8,#1.0f -> #1/16 (stored low clamp)
+# frame call: request mode 0 (present interval 1) instead of mode 1 (interval 2, 30 fps); the present pacer
+# (nvn_api_obj.c) holds 60 fps, and 30 in a cutscene
+site fps60 main 3e39d0 320003e0 52800000   # orr w0, wzr, #1 -> mov w0, #0
+# frame timer: the first call (no previous tick) publishes the game's step as the first ticks; every later call takes
+# its step from rt_fps_timer and goes on at the tick store
+site fps60 main 91dbdc b40006c8 @fn:rt_fps_timer_first b40006c8   # cbz x8,0x91dcb4; first: the same branch
+site fps60 main 91dc10 340001d5 @fn:rt_fps_timer 14000029        # cbz w21,0x91dc48 -> step; b 0x91dcb4
 # camera smoothing: the per-frame blend a becomes 1 - powf(1 - a, clamp(step, 0, 4))
 site fps60 main 3a2d40 1e2a5808 @fn:rt_fps_cam_s0
 site fps60 main 3a2d80 1e2a5828 @fn:rt_fps_cam_s1
 site fps60 main 3a2dc0 1e29cd48 @fn:rt_fps_cam_fcsel
+# dialogue text reveal: adds a fixed amount per frame; a talk line ends once its text and its voice are both done
+site fps60 main 61600c bd40ae62 bd40ae62 @fn:rt_fps_text_rate_s2   # ldr s2,[x19,#0xac]; then s2 = that rate * step
+# time-scale getter (main+0x430DA0): with its flag set it returns channel 3 when that channel is below 1.0, meaning a
+# slow-down scale is active. Channel 3 is the step times the channel scales, so at 60 fps (step 0.5) the test always
+# held. It now compares against the step itself (x0 = the timer object after main+0x91D660), the same at 30 fps.
+site fps60 main 430dd0 1e2e1001 bd40d001   # fmov s1,#1.0 -> ldr s1,[x0,#0xd0]
+# frame-counted cue scheduler (main+0x6A3EC0): the counter adds the whole ticks and an entry fires when its frame is in
+# (old counter, new counter] instead of equal to the counter
+site fps60 main 6a3f28 11000508 @fn:rt_fps_cue_up_w8   # add w8,w8,#1 -> w8 += ticks
+site fps60 main 6a3f38 6b08013f @fnz:rt_fps_cue_cmp    # cmp w9,w8 -> Z = entry due
+site fps60 main 6a3f54 6b08013f @fnz:rt_fps_cue_cmp    # cmp w9,w8 -> Z = entry due (next entries)
 # step -> integer frame-count readers (fcvtzs/fcvtzu): read the whole-tick count instead of floor(step)
 site fps60 main 48be14 1e380008 @fn:rt_fps_ticks_w8   # fcvtzs w8,s0 -> w8 = whole ticks
 site fps60 main 57e7dc bd40d300 @fn:rt_fps_ticks_w8   # ldr s0,[x24,#0xd0] -> w8 = whole ticks

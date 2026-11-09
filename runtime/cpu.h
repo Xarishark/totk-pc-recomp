@@ -61,6 +61,11 @@ uint64_t rt_fps_duration_w16(Cpu *c); // w16 minus the ticks with its real flags
 void rt_fps_cam_s0(Cpu *c);         // camera: s8 = 1-powf(1-min(s0,s10), step)
 void rt_fps_cam_s1(Cpu *c);         // camera: s8 = 1-powf(1-min(s1,s10), step)
 void rt_fps_cam_fcsel(Cpu *c);      // camera: entry3 fcsel with the smoothed s9
+void rt_fps_timer(Cpu *c);          // frame timer: the real-time step, the whole ticks, the cutscene flag
+void rt_fps_timer_first(Cpu *c);    // frame timer's first call: the game's step as the first ticks
+void rt_fps_text_rate_s2(Cpu *c);   // dialogue text reveal: s2 = rate * step
+void rt_fps_cue_up_w8(Cpu *c);      // cue scheduler: w8 += whole ticks, keeping the old counter
+uint64_t rt_fps_cue_cmp(Cpu *c);    // cue scheduler: cmp w9,w8 -> Z when the entry's frame is in (old, new]
 void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical angle) *= AC_FOV factor (resolution.c)
 
 

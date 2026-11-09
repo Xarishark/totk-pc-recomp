@@ -1,12 +1,12 @@
 // Frame rate: the game's 60 fps patch (recomp/patches-v101.txt, set fps60) is on by default, and the menu's frame
-// rate row switches it off for the game's shipping 30 fps. The set turns the game's frame accumulator into a real-time
-// step (low clamp 1/16) and clears the frame call's wait argument; this file switches the set while the game runs,
-// computes the whole-tick count and the floating step each present, caps the host's present rate at 60 or 30, and
-// keeps the world clock for scripted input. The whole ticks and the step are what make the input/action timers and
-// the camera smoothing frame-rate independent (the Dynamic mod v1.1.1 fixes for the 60 fps patch's two bugs).
+// rate row switches it off for the game's shipping 30 fps. The set replaces the game's frame timer with a real-time step
+// (rt_fps_timer) and asks the frame call for present interval 1; this file switches the set while the game runs, keeps
+// the step and the whole 30 fps ticks it adds up to, caps the host's present rate at 60 or 30, and keeps the world clock
+// for scripted input. The whole ticks and the step make the game's per-frame counters and blends frame-rate independent
+// (the input/action timers, hitstop, rumble, the camera smoothing, the dialogue text reveal, the cue scheduler).
 //
-// The 60 fps patch leaves the game's cutscenes at 30 (cutscene_rate below): without that they play twice as fast as
-// their animation data.
+// The 60 fps patch leaves the game's cutscenes at 30 (cutscene_rate below): the game steps them by a fixed frame, and
+// without the hold they play twice as fast as their animation data.
 //
 // What remains:
 //   - the frame limit (AC_FPS): 60 fps by default, 30 fps when the patch is off. The pacer (nvn_api_obj.c) holds
@@ -34,11 +34,15 @@
 static double step_now;   // the step the game used this frame (whole vsyncs: interval / 60)
 static uint64_t last_ns;
 
-// ---- dynamic frame rate: whole 30 fps ticks (for the input/action counters) and the floating step (for the camera).
-// Computed from the real frame time at each present; the guest counter sites read them through the helpers below.
-static _Atomic uint32_t g_fps_ticks;      // whole ticks for the guest counters
-static _Atomic uint32_t g_fps_step_bits;  // the floating step (30 fps units), for the camera
-static double g_fps_rem;                  // fractional whole-tick remainder (present thread only)
+// ---- dynamic frame rate: the game's frame step (30 fps units) and the whole 30 fps ticks it adds up to.
+// Both come from the game's own frame timer (main+0x91DBB0, rt_fps_timer below), once per game frame on the thread that
+// steps the game, so every counter site of a frame sees the same ticks and the ticks add up to exactly the step the game
+// moved by. The guest counter sites read them through the helpers below.
+static _Atomic uint32_t g_fps_ticks;      // whole ticks of this game frame
+static _Atomic uint32_t g_fps_step_bits;  // the game's step this frame (30 fps units, a float)
+static double g_fps_rem;                  // what the whole ticks left of the steps (game thread only)
+static double g_fps_debt_ms;              // frame time not yet handed out as whole present periods (game thread only)
+static volatile int in_cutscene;          // the game's fixed-step flag at the last timer call
 
 static int fps60_on = -1, fps_hz;
 static unsigned fps_seen;
@@ -51,6 +55,91 @@ void frame_step_init(void) {
 }
 
 int frame_step_realtime(void) { return 0; }
+
+// The game's frame timer, main+0x91DBB0 (one call per game frame, from the main loop at main+0x3E39CC; x19 = the timer
+// object, x21 = 0 while the flag of main+0x42FE60 asks for a fixed step, which the game sets while a cutscene plays).
+// Fields: +0xC8 the previous tick, +0xD0 the step in 30 fps frames (what about 120 sites read), +0xD4 the carry,
+// +0xD8 / +0xE4 the frame-time sum and frame count it averages, +0xDC 30/1000, +0xE0 this frame's time in ms.
+// The original clamps the step to [1, 2] and turns a shorter frame into carry, so at 60 fps every frame steps a full
+// 1/30 s; it also takes the audio-sync override (main+0x8A9570, -1 when unset; written by the cutscene player at
+// main+0x8B9F0C and main+0x8C2F5C as a 1 +- correction, clamped to [0.5, 2]) as the whole step.
+//
+// rt_fps_timer replaces everything after the frame time store (site main+0x91DC10; the site branches to the tick store
+// at main+0x91DCB4 next):
+//   - fixed step (a cutscene): 1.0, as the original. The present pacer holds cutscenes to 30 presents per second
+//     (nvn_api_obj.c present_period, frame_step_cutscene), so 1.0 is their real time.
+//   - otherwise the frame time, on the present grid (frame_paced_ms), times 30/1000, times the override when it is set:
+//     the override is a speed relative to one 30 fps frame, so it scales the measured step instead of replacing it.
+//   - clamped to [1/16, 2]: 2 is the original's high clamp (a slower frame slows the game); 1/16 keeps the step away
+//     from 0 for the few readers that divide by it. No carry: the step is the frame's real time.
+// The averaging fields and the carry are cleared, so the original takes over cleanly when the set is switched off.
+static double frame_paced_ms(double dt_ms);
+
+static void fps_publish(float step) {
+    uint32_t bits; memcpy(&bits, &step, 4);
+    atomic_store_explicit(&g_fps_step_bits, bits, memory_order_relaxed);
+    g_fps_rem += step;
+    uint32_t ticks = (uint32_t)g_fps_rem;
+    g_fps_rem -= (double)ticks;
+    atomic_store_explicit(&g_fps_ticks, ticks, memory_order_relaxed);
+}
+
+void rt_fps_timer(Cpu *c) {
+    uint8_t *t = (uint8_t *)(uintptr_t)c->x[19];
+    int fixed = (uint32_t)c->x[21] == 0;
+    float step;
+    if (fixed) {
+        step = 1.0f;
+        g_fps_debt_ms = 0;
+    } else {
+        double dt_ms = *(float volatile *)(t + 0xE0);
+        double s = frame_paced_ms(dt_ms) * *(float volatile *)(t + 0xDC);
+        float *ov = *(float *volatile *)((uintptr_t)MOD_MAIN_BASE + 0xDC0F10ull);   // main+0x8A9570's float
+        if (ov && *ov > 0.0f) s *= *ov;
+        step = s > 2.0 ? 2.0f : s < 1.0 / 16.0 ? 1.0f / 16.0f : (float)s;
+    }
+    *(float volatile *)(t + 0xD0) = step;
+    *(uint32_t volatile *)(t + 0xD4) = 0;
+    *(uint32_t volatile *)(t + 0xD8) = 0;
+    *(uint32_t volatile *)(t + 0xE4) = 0;
+    if (in_cutscene != fixed) {
+        in_cutscene = fixed;
+        rt_log("frame rate: %s (world %.2f s): presents held to %d per second", fixed ? "cutscene" : "gameplay",
+               (double)frame_step_world_us() / 1e6, fixed ? 30 : 60);
+    }
+    fps_publish(step);
+}
+
+// The timer's first call (no previous tick, site main+0x91DBDC): the game keeps the step it has, which is one whole
+// frame for the counters.
+void rt_fps_timer_first(Cpu *c) {
+    if (c->x[8]) return;
+    g_fps_rem = 0;
+    g_fps_debt_ms = 0;
+    uint8_t *t = (uint8_t *)(uintptr_t)c->x[19];
+    float step = *(float volatile *)(t + 0xD0);
+    fps_publish(step > 0.0f ? step : 1.0f);
+}
+
+// The frame time on the present grid. The game loop waits for its swapchain image (nvn_api_obj.c), so on average a
+// frame lasts whole present periods, but the time the timer measures jitters by a millisecond or two around them. A
+// step that follows the jitter moves objects by uneven amounts between evenly shown frames (judder). So the time is
+// handed out in whole periods, and what rounding leaves is carried to the next frame: the sum stays the wall time.
+// A frame outside a quarter to four and a half periods (a load, a debugger, a menu that does not present) is used as
+// measured and drops the carry.
+static double frame_paced_ms(double dt_ms) {
+    double period = 1000.0 / (fps_hz ? fps_hz : 60);
+    if (!(dt_ms >= 0.25 * period && dt_ms <= 4.5 * period)) {
+        g_fps_debt_ms = 0;
+        return dt_ms;
+    }
+    double d = g_fps_debt_ms + dt_ms;
+    int n = (int)floor(d / period + 0.5);
+    if (n < 1) n = 1;
+    g_fps_debt_ms = d - n * period;
+    if (g_fps_debt_ms < -period || g_fps_debt_ms > period) g_fps_debt_ms = 0;
+    return n * period;
+}
 
 // ---- dynamic frame-rate guest helpers (called by @fn/@fnz patch sites in the lifted game code)
 
@@ -180,6 +269,29 @@ void rt_fps_cam_fcsel(Cpu *c) {
     FP_SETS(8, t > 0.0f ? s10 : VSF32(9));
 }
 
+// The dialogue text reveal (main+0x615FFC): [x19+0xA8] += [x19+0xAC] a frame, and a character shows each time it
+// passes 1. A talk line ends 0.5 s after both its text and its voice are done, so at 60 fps the text ran twice as fast
+// and lines whose text outlasts the voice ended early, in gameplay as well as cutscenes. s2 = the rate times the game's
+// step (1.0 in a cutscene, where the pacer holds 30 presents per second).
+void rt_fps_text_rate_s2(Cpu *c) { FP_SETS(2, VSF32(2) * rt_fps_step()); }
+
+// The frame-counted cue scheduler (main+0x6A3EC0, run while the mode word at GOT main+0xDBF4A0 is 1; mode 2 schedules
+// by the music time instead). Each call adds 1 to a frame counter and fires every table entry whose frame equals it,
+// so at 60 calls per second the cues come twice as fast. The counter now adds the whole ticks, and an entry fires when
+// its frame is in (old counter, new counter]: a frame without a tick fires nothing (an equal compare would fire the
+// same cues again) and a frame of 2 ticks fires the frame it skipped.
+static int32_t g_cue_prev;   // the counter before this call's ticks (game thread only)
+
+void rt_fps_cue_up_w8(Cpu *c) {
+    g_cue_prev = (int32_t)(uint32_t)c->x[8];
+    c->x[8] = (uint32_t)((uint32_t)c->x[8] + rt_fps_ticks());
+}
+// `cmp w9, w8` (w9 = the entry's frame, w8 = the counter), read by b.ne: Z when the entry is due this call.
+uint64_t rt_fps_cue_cmp(Cpu *c) {
+    int32_t f = (int32_t)(uint32_t)c->x[9], now = (int32_t)(uint32_t)c->x[8];
+    return MKFLAGS(0, f > g_cue_prev && f <= now, 1, 0);
+}
+
 
 // The frame rate (menu, AC_FPS60): 60 fps runs the game's 60 fps patch, 30 fps switches it off. Read live: the patch
 // set is switched in frame_limit_live, so the generated C picks the patched or the original instructions from the next
@@ -206,30 +318,19 @@ uint64_t frame_step_cap_ns(void) {
 // The frame rate the limit gives, for the performance overlay: 60 or 30; 0 before the first frame read the setting.
 double frame_step_limit_hz(void) { return fps_hz; }
 
-// The community cutscene fix for the 60 fps patch: the game's cutscene speed variable (main+0xCCA6764) is 1/30 in a
-// cutscene and 1/60 in gameplay, and the game's frame-rate object takes 2 (30 fps) in a cutscene and 1 (60 fps) in
-// gameplay at +0xF14 of the object the pointer chain below reaches. The selector is written each frame, as the cheat
-// engine's code does. The patch also clears the frame call's second-vsync wait, so the game keeps presenting at
-// interval 1 while it steps 1/30 s a frame: the present pacer (nvn_api_obj.c present_period) holds those frames to 30
-// per second while frame_step_cutscene says so, or the cutscene plays at twice its speed.
-static volatile int in_cutscene;
-
-int frame_step_cutscene(void) { return in_cutscene; }
+// Cutscenes stay at 30: the game steps a cutscene by a fixed 1.0 a frame (rt_fps_timer), and the patch clears the
+// frame call's second-vsync wait, so the game keeps presenting at interval 1 while it steps 1/30 s a frame. The present
+// pacer (nvn_api_obj.c present_period) holds those frames to 30 per second while frame_step_cutscene says so, or the
+// cutscene plays at twice its speed. The flag is the game's own, taken by the frame timer each game frame.
+//
+// The community cutscene fix also writes the game's frame-rate selector: 2 (30 fps) in a cutscene and 1 (60 fps) in
+// gameplay at +0xF14 of the object the pointer chain below reaches, each frame, as the cheat engine's code does.
+int frame_step_cutscene(void) { return fps60_on && in_cutscene; }
 
 static void cutscene_rate(void) {
-    if (!fps60_on) {
-        in_cutscene = 0;
-        return;
-    }
+    if (!fps60_on) return;
     uintptr_t base = (uintptr_t)MOD_MAIN_BASE;
-    uint32_t speed = *(uint32_t volatile *)(base + 0xCCA6764ull);
-    uint32_t want = speed == 0x3D088889u ? 2u : speed < 0x3D088889u ? 1u : 0u;   // other values: a fractional frame
-    if (!want) return;
-    if (in_cutscene != (want == 2)) {
-        in_cutscene = want == 2;
-        rt_log("frame rate: %s (speed 0x%08x, world %.2f s): presents held to %d per second", in_cutscene ? "cutscene" : "gameplay", speed, (double)frame_step_world_us() / 1e6,
-               in_cutscene ? 30 : 60);
-    }
+    uint32_t want = in_cutscene ? 2u : 1u;
     void *volatile *slot = (void *volatile *)(base + 0xCCB7B08ull);
     void *obj = *slot;
     if (!obj) return;
@@ -289,21 +390,12 @@ void frame_step_present(uint64_t display_ns, int interval) {
     double dt = last_ns ? (double)(display_ns - last_ns) * 1e-9 : 0;
     if (interval > 0) step_now = interval / 60.0;
     last_ns = display_ns;
-    // Dynamic frame rate: whole 30 fps ticks from the real frame time, for the input/action counters and the camera.
-    double step = dt * 30.0;
-    if (step > 2.0) step = 2.0;
-    else if (step < 1.0 / 16.0) step = 1.0 / 16.0;
-    g_fps_rem += step;
-    uint32_t ticks = (uint32_t)g_fps_rem;
-    g_fps_rem -= (double)ticks;
-    atomic_store_explicit(&g_fps_ticks, ticks, memory_order_relaxed);
-    float fs = (float)step;
-    uint32_t bits; memcpy(&bits, &fs, 4);
-    atomic_store_explicit(&g_fps_step_bits, bits, memory_order_relaxed);
     // The game clock of untimed script lines: what the game stepped this frame, whole vsyncs.
     double game = step_now;
     atomic_store_explicit(&game_us, atomic_load_explicit(&game_us, memory_order_relaxed) + (uint64_t)(game * 1e6 + 0.5),
                           memory_order_relaxed);
     world_clock(dt, game);
-    if (rt_trace & RT_TRACE_PERF) speed_report(display_ns, game, interval);
+    // The speed line adds the game's own step under the 60 fps patch (the last game frame's, 30 fps units), so its
+    // speed is game time against wall time: 1.000 when the frame-rate fix holds.
+    if (rt_trace & RT_TRACE_PERF) speed_report(display_ns, fps60_on ? rt_fps_step() / 30.0 : game, interval);
 }
