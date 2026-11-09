@@ -16,7 +16,7 @@ Special thanks to [@capibawa](https://github.com/capibawa) for their multiple co
 
 ## Status
 
-The game is playable from the title screen through the story, including its audio and its save data. The port has no known gameplay issue, including correct timings at 60FPS (perfect dodge, assault attack, 360 spin and so on) and no known visual issues.
+The game is playable from the title screen to credits. The port has no known gameplay issue, including correct timings at 60FPS (perfect dodge, assault attack, 360 spin and so on) and no known visual issues.
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
