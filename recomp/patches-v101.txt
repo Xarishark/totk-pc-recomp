@@ -68,10 +68,9 @@ site res1062 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0
 # and AC_SSAA=1440p made it 1707x1440, which lost the device on an RTX 5070 Ti (issue #51). 40f1d8 takes the scene
 # target's width (w0) instead, as level 0 does, so the level is 1920x1080 docked and keeps 800x720 in handheld.
 # res1062 gets the same site.
-# 1920x1080 is the engine's maximum (on
-# 1.0.0, 2048x1152 crashed its render-context setup). On by default: AC_SSAA's 1440p and 2160p are then exactly 4/3
-# and 2, the render-target sizes the Intel Arc 140T played for hours (other enlarged sizes, such as 1888x1062 x 4/3 =
-# 2517x1416, lost the device on entering play).
+# 1920x1080 is the engine's maximum (on 1.0.0, 2048x1152 crashed its render-context setup). On by default: AC_SSAA's
+# 1440p and 2160p are then exactly 4/3 and 2, the render-target sizes the Intel Arc 140T played for hours (other
+# enlarged sizes, such as 1888x1062 x 4/3 = 2517x1416, lost the device on entering play).
 set  res1080 AC_RES1080 1
 site res1080 main 4328c0 5280c808 5280f008   # mov w8, #1600 -> #1920 (render width)
 site res1080 main 4328c8 52807088 52808708   # mov w8, #900 -> #1080 (render height)
