@@ -520,11 +520,12 @@ void rt_fps_talk_wait_s1(Cpu *c) {   // ldr s1, [x8|x9, #0xd0] (the step) at a c
 void rt_fps_text_rate_s2(Cpu *c) {
     FP_SETS(2, VSF32(2) * (cut60_now ? (float)rt_fps_ticks() : rt_fps_step()));
     // AC_TRACE=perf: the start of each line's text in a cutscene ([x19+0xA0] the characters shown, +0xA4 its length)
+    if (!(rt_trace & RT_TRACE_PERF)) return;
     static uintptr_t line_obj;
     static uint32_t line_shown, line_n;
     uintptr_t obj = (uintptr_t)c->x[19];
     uint32_t shown = *(uint32_t volatile *)(obj + 0xA0), len = *(uint32_t volatile *)(obj + 0xA4);
-    if ((rt_trace & RT_TRACE_PERF) && in_cutscene && (obj != line_obj || shown < line_shown))
+    if (in_cutscene && (obj != line_obj || shown < line_shown))
         rt_log("frame rate: line %u (%u characters) starts at %.3f s stepped, wall %.3f s", ++line_n, len,
                run_game_ms / 1000.0, wall_s());
     line_obj = obj, line_shown = shown;
