@@ -35,8 +35,11 @@
 #include <zstd.h>
 
 #include "cfg.h"
+#include "cpu.h"
 #include "gfx.h"
 #include "host.h"
+#include "layout.h"
+#include "simd.h"
 
 #define BASE_W 1600
 #define BASE_H 900
@@ -351,12 +354,26 @@ int res_wants_wide_overlay(const unsigned out[2]) {
     return !res_is_16x9(out[0], out[1]) && rt_patch_set("aspect") >= 0;
 }
 
-// Field of view (AC_FOV, percent of the game's own, 70..140, live): the camera's vertical view angle times the
-// factor on page +60 (recomp/patches-v143.txt, set fov). The horizontal angle follows through the aspect ratio. 100
-// switches the set off, so the camera code is the game's own. Runs on a settings change (gfx_present.c
-// window_settings_live), the first time at the first present.
+// Field of view (AC_FOV, percent of the game's own, 70..140, live): the camera lens's vertical view angle times the
+// factor on page +60 where the projection matrix is built from it, and where the scene setup copies it for its
+// screen-size work (recomp/patches-v101.txt, set fov: rt_fov_s0). The horizontal angle follows through the aspect
+// ratio. Cutscenes keep their authored framing: while the game's cutscene flag is set (frame_step_cutscene) the angle
+// passes unscaled, and the lens it builds then is the cutscene camera's. 100 switches the set off, so the camera code
+// is the game's own. Runs on a settings change (gfx_present.c window_settings_live), the first time at the first
+// present.
 #define FOV_MIN 70
 #define FOV_MAX 140
+
+void rt_fov_s0(Cpu *c) {
+    // The game's own cutscene flag (bit 30 of the word at main+0xDB8398), not frame_step_cutscene, which only follows
+    // it while the 60 fps patch is on.
+    uint32_t volatile *flags = *(uint32_t volatile *volatile *)((uintptr_t)MOD_MAIN_BASE + 0xDB8398ull);
+    if (flags && (*flags >> 30 & 1)) return;   // the shot's own framing
+    float k;
+    memcpy(&k, (const uint8_t *)rt_patch_page() + 60, sizeof k);
+    FP_SETS(0, VSF32(0) * k);
+}
+
 void res_fov_live(void) {
     static int set = -2, shown = 100;
     if (set == -2) set = rt_patch_set("fov");
