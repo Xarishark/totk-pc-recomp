@@ -72,7 +72,15 @@ uint64_t rt_fps_cue_cmp(Cpu *c);    // cue scheduler: cmp w9,w8 -> Z when the en
 void rt_cut_hold_s1(Cpu *c);        // cut clock: s1 = the time a cut may reach (len - rate; just below len at 60)
 void rt_cut_prev_s0(Cpu *c);        // cut clock: s0 = the time before this frame (s1 at 60: no hold)
 void rt_cut_next_s1(Cpu *c);        // cut clock: s1 = the next cut's start (0; the overshoot at 60)
-void rt_cut_drift_s0(Cpu *c);       // cutscene voice sync: records s0 = track position - picture (seconds)
+void rt_fps_talk_clear(Cpu *c);     // talk command: clear the talking flag, unless the frame is skipped at 60
+void rt_fps_talk_busy_w8(Cpu *c);   // talk command: w8 = its done flag, or 1 on a skipped frame at 60
+void rt_fps_talk_ret_w8(Cpu *c);    // talk command: w8 = 1, or 0 (still running) on a skipped frame at 60
+void rt_fps_line_voice_w8(Cpu *c);  // talk line update: w8 = its voice-end gate, or 0 on a skipped frame at 60
+void rt_fps_msg_state_w8(Cpu *c);  // second talk command: w8 = its state, or 2 (returns 0) on a skipped frame at 60
+void rt_fps_talk_wait_s1(Cpu *c);   // talk command countdowns: s1 = the step, or the whole ticks in a cutscene at 60
+void rt_fps_talk_state_w8(Cpu *c); // talk line state machine: w8 = its state, or 4 (idle) without a tick at 60
+void rt_cut_state(Cpu *c);         // diagnostics: the scene clock after its commit (AC_TRACE=perf)
+void rt_cut_drift_s0(Cpu *c);      // cutscene voice sync: records s0 = track position - picture (seconds)
 void rt_movie_opened(Cpu *c);       // Bink player open: x0 = BinkOpen's handle (full-screen by its size)
 void rt_movie_close(Cpu *c);        // Bink player: x0 = the handle BinkClose takes
 void rt_movie_wait(Cpu *c);         // Bink player: x0 = the handle BinkWait takes (a full-screen movie is playing)

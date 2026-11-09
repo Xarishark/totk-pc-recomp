@@ -127,6 +127,21 @@ site fps60 main 3a2d80 1e2a5828 @fn:rt_fps_cam_s1
 site fps60 main 3a2dc0 1e29cd48 @fn:rt_fps_cam_fcsel
 # dialogue text reveal: adds a fixed amount per frame; a talk line ends once its text and its voice are both done
 site fps60 main 61600c bd40ae62 bd40ae62 @fn:rt_fps_text_rate_s2   # ldr s2,[x19,#0xac]; then s2 = that rate * step
+# talk line state machine (main+0x6161D0): in a cutscene at 60 it runs only on frames with a whole 30 fps tick, so a
+# line's state changes take a 30 fps frame each, as at 30
+site fps60 main 6161e0 b940b268 @fn:rt_fps_talk_state_w8   # ldr w8,[x19,#0xb0] -> the state, or 4 (returns)
+# event script, the talk command (main+0x443E50): in a cutscene at 60 it runs only on frames with a whole 30 fps tick
+# and its countdowns take whole ticks, so its waits and reactions take the time they take at 30
+site fps60 main 443e7c b909f11f @fn:rt_fps_talk_clear      # str wzr,[x8,#0x9f0] -> not on a skipped frame
+site fps60 main 443e80 b9402b08 @fn:rt_fps_talk_busy_w8    # ldr w8,[x24,#0x28] -> 1 on a skipped frame
+site fps60 main 443e88 320003f4 @fn:rt_fps_talk_ret_w8 2a0803f4   # mov w20,#1 -> w8 = 1, or 0 on a skipped frame; mov w20,w8
+site fps60 main 443fa4 bd40d101 @fn:rt_fps_talk_wait_s1    # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
+site fps60 main 4453fc bd40d121 @fn:rt_fps_talk_wait_s1    # ldr s1,[x9,#0xd0] -> the step, or the whole ticks
+# the talk line's update (main+0x615CD0), the end of its voice: only on frames with a whole tick in a cutscene at 60
+site fps60 main 615d20 b940ba68 @fn:rt_fps_line_voice_w8   # ldr w8,[x19,#0xb8] -> 0 on a skipped frame
+site fps60 main 615dfc b940ba68 @fn:rt_fps_line_voice_w8   # ldr w8,[x19,#0xb8] -> 0 on a skipped frame
+# the other talk command (main+0x446300): the same, through its state (2 returns 0, still running, at once)
+site fps60 main 44631c b9402668 @fn:rt_fps_msg_state_w8    # ldr w8,[x19,#0x24] -> the state, or 2 on a skipped frame
 # time-scale getter (main+0x430DA0): with its flag set it returns channel 3 when that channel is below 1.0, meaning a
 # slow-down scale is active. Channel 3 is the step times the channel scales, so at 60 fps (step 0.5) the test always
 # held. It now compares against the step itself (x0 = the timer object after main+0x91D660), the same at 30 fps.
@@ -141,6 +156,8 @@ site fps60 main 6a3f54 6b08013f @fnz:rt_fps_cue_cmp    # cmp w9,w8 -> Z = entry 
 site fps60 main 8c2550 1e283821 @fn:rt_cut_hold_s1   # fsub s1,s1,s8 -> len - rate, or just below len
 site fps60 main 8c255c bd400680 @fn:rt_cut_prev_s0   # ldr s0,[x20,#4] -> the old time, or s1 (no hold)
 site fps60 main 8c2568 1e2703e1 @fn:rt_cut_next_s1   # fmov s1,wzr -> 0, or the overshoot
+# diagnostics (AC_TRACE=perf): the scene clock the event kept, after its update (main+0x8B7C60)
+site fps60 main 8b7cb0 b9402a68 b9402a68 @fn:rt_cut_state   # ldr w8,[x19,#0x28]; then log cut changes and stops
 # the game's audio sync of an event with a voice track (main+0x8B9DC0, twin main+0x8C2E10): s0 = the track's position
 # minus the picture's, in seconds, recorded for the log (frame_rate.c rt_cut_drift_s0); no change to what it does
 site fps60 main 8b9eac 1e202820 1e202820 @fn:rt_cut_drift_s0   # fadd s0,s1,s0; then record s0

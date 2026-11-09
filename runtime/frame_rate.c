@@ -110,10 +110,16 @@ static void fps_publish(float step) {
 }
 
 // The cutscene step of one frame at 60 (30 fps units): the frame's time plus the debt, in whole vsyncs, 1 to 4. The
-// first frame of a run starts without debt and counts one to two vsyncs, whatever came before it (a load, a movie).
+// first frame of a run starts without debt and counts one to two vsyncs, whatever came before it (a load, a movie),
+// and restarts the whole-tick remainder at 1/2, so the first frame and every other one after it have a tick. A 30 fps
+// frame runs its logic at the start of its 1/30 s; of the two 60 fps frames in that 1/30 s, the first starts at the
+// same time. The tick-gated talk logic (rt_fps_talk_*, rt_fps_line_voice_w8) then polls the voice, which plays on the
+// wall clock, at the times it polls it at 30. On the second frame it polled 17 ms later, and a voice that ended in
+// those 17 ms was seen a 30 fps frame sooner: half the voice-bound lines ended 33 ms early.
 static float cutscene_step(double dt_ms, int first) {
     if (first) {
         g_cut_debt_ms = 0;
+        g_fps_rem = 0.5;   // a whole tick on the first frame and every other one after it (see above)
         dt_ms = dt_ms < CUT_VSYNC_MS ? CUT_VSYNC_MS : dt_ms > 2 * CUT_VSYNC_MS ? 2 * CUT_VSYNC_MS : dt_ms;
     }
     if (!(dt_ms >= 0.0)) dt_ms = CUT_VSYNC_MS;
@@ -197,6 +203,8 @@ static void test_hitch(void) {
 }
 
 static int movie_now;   // a full-screen movie held the last cutscene frame (game thread, for the log)
+static uintptr_t g_talk_obj;   // the last talk line whose text was revealing (diagnostics, rt_fps_text_rate_s2)
+static void talk_poll(void);
 
 void rt_fps_timer(Cpu *c) {
     uint8_t *t = (uint8_t *)(uintptr_t)c->x[19];
@@ -233,6 +241,7 @@ void rt_fps_timer(Cpu *c) {
         run_game_ms += step * (1000.0 / 30.0);
         run_wall_ms += first ? step * (1000.0 / 30.0) : dt_ms;
         test_hitch();
+        if (rt_trace & RT_TRACE_PERF) talk_poll();
     }
     sync_report();
     fps_publish(step);
@@ -420,7 +429,87 @@ void rt_fps_cam_fcsel(Cpu *c) {
 // passes 1. A talk line ends 0.5 s after both its text and its voice are done, so at 60 fps the text ran twice as fast
 // and lines whose text outlasts the voice ended early, in gameplay as well as cutscenes. s2 = the rate times the game's
 // step (1.0 in a cutscene held to 30 presents per second, the real time in one at 60).
-void rt_fps_text_rate_s2(Cpu *c) { FP_SETS(2, VSF32(2) * rt_fps_step()); }
+// The talk line's state machine (main+0x6161D0, [x19+0xB0] = 0..3, anything above returns at once), run every frame by
+// the line's update. It times nothing itself: it polls what is timed (the voice, the text box's layout animations,
+// which follow the step) and moves on a frame after it sees a change. At 30 fps each of a line's three changes takes a
+// 33 ms frame; in a cutscene at 60 it took 17 ms, so every line and the cut change that waits for it came about 50 ms
+// sooner, 1.3 s over a 124 s scene. In a cutscene at 60 the machine now runs only on frames with a whole 30 fps tick:
+// w8 = 4 (nothing to do) on the others, so it sees the changes 30 times a second, as the game was built for.
+void rt_fps_talk_state_w8(Cpu *c) {
+    c->x[8] = cut60_now && !rt_fps_ticks() ? 4u : *(uint32_t volatile *)(uintptr_t)(c->x[19] + 0xB0);
+}
+
+// The event script's talk command (main+0x443E50, an entry of the event command table at main+0xAB2720): the script
+// calls it every frame until it returns 1. It polls the line (voice done, text box state) and moves on a frame after
+// it sees a change, and its waits are countdowns: [x19+0x84], 0.5 s after a line, adds step * -1/30 a call (at 30 fps
+// -1/30 rounds to -0.033333335 in single precision, so 0.5 is still 2e-8 after 15 frames and the wait lasts 16 frames,
+// 0.533 s), and [x19+0x7C] adds scale * -1/30 a call, whatever the step. At 60 the command ran twice as often: each
+// line's waits and reactions came sooner, and a 124 s scene ended 1.3 s early. In a cutscene at 60 it runs only on
+// frames with a whole 30 fps tick, and its step-based countdowns take the whole ticks: the same calls, decrements and
+// rounding as at 30. On the other frames it returns 0 (still running) at once and leaves the scene's per-frame talking
+// flag ([[x19+8]+0x9F0], which it clears on entry and sets while a line plays) as the last run left it.
+static int talk_skip(void) { return cut60_now && !rt_fps_ticks(); }
+
+void rt_fps_talk_clear(Cpu *c) {   // str wzr, [x8, #0x9f0]: the talking flag, cleared on a run
+    if (!talk_skip()) *(uint32_t volatile *)(uintptr_t)(c->x[8] + 0x9F0) = 0;
+}
+void rt_fps_talk_busy_w8(Cpu *c) {   // ldr w8, [x24, #0x28]: nonzero returns at once; 1 on a skipped frame
+    c->x[8] = talk_skip() ? 1u : *(uint32_t volatile *)(uintptr_t)(c->x[24] + 0x28);
+}
+// mov w20, #1: that return's value, 0 (still running) on a skipped frame. A helper may only change caller-saved
+// registers, so it sets w8 (dead on the way out) and the site's `mov w20, w8` copies it.
+void rt_fps_talk_ret_w8(Cpu *c) { c->x[8] = talk_skip() ? 0u : 1u; }
+// The talk line's own update (main+0x615CD0) handles the end of its voice between two reads of [x19+0xB8] (0x615D20,
+// 0x615DFC), both branching past it on 0: once the voice (main+0x8DE860) stops and the text is done, it starts the
+// box's close and sets the flags the talk command waits for. At 60 it saw the voice stop up to a 60 fps frame sooner,
+// and the tick-gated talk command then ended the line a 30 fps frame sooner. In a cutscene at 60 it reads 0 on frames
+// without a whole tick, so the end of a voice is seen on the frames it is seen at 30.
+void rt_fps_line_voice_w8(Cpu *c) {
+    c->x[8] = talk_skip() ? 0u : *(uint32_t volatile *)(uintptr_t)(c->x[19] + 0xB8);
+}
+
+// The other talk command (main+0x446300): [x19+0x24] = 0 starts the line (main+0x615000), 1 polls the text box and
+// the voice until the line is over and returns 1; any other state returns 0 (still running) at once. In a cutscene at
+// 60 it reads 2 on frames without a whole 30 fps tick, so it starts and ends lines on the frames it would at 30.
+void rt_fps_msg_state_w8(Cpu *c) {
+    c->x[8] = talk_skip() ? 2u : *(uint32_t volatile *)(uintptr_t)(c->x[19] + 0x24);
+}
+
+void rt_fps_talk_wait_s1(Cpu *c) {   // ldr s1, [x8|x9, #0xd0] (the step) at a countdown: the whole ticks at 60
+    FP_SETS(1, cut60_now ? (float)rt_fps_ticks() : rt_fps_step());
+}
+
+// In a cutscene at 60 the rate is times the whole 30 fps ticks instead: the same additions as at 30, so a line's text
+// finishes on the same 30 fps frame (rate * 0.5 rounds differently, and some lines finished a frame early).
+void rt_fps_text_rate_s2(Cpu *c) {
+    FP_SETS(2, VSF32(2) * (cut60_now ? (float)rt_fps_ticks() : rt_fps_step()));
+    // AC_TRACE=perf: the start of each line's text in a cutscene ([x19+0xA0] the characters shown, +0xA4 its length)
+    static uintptr_t line_obj;
+    static uint32_t line_shown, line_n;
+    uintptr_t obj = (uintptr_t)c->x[19];
+    uint32_t shown = *(uint32_t volatile *)(obj + 0xA0), len = *(uint32_t volatile *)(obj + 0xA4);
+    if ((rt_trace & RT_TRACE_PERF) && in_cutscene && (obj != line_obj || shown < line_shown))
+        rt_log("frame rate: line %u (%u characters) starts at %.3f s stepped, wall %.3f s", ++line_n, len,
+               run_game_ms / 1000.0, wall_s());
+    line_obj = obj, line_shown = shown;
+    g_talk_obj = obj;
+}
+
+// AC_TRACE=perf, diagnostics: the last revealing talk line's state words, read once a cutscene frame (rt_fps_timer)
+// and logged when one changes: +0xB0 its state (main+0x6161D0), +0xB4, +0x94 / +0x98 / +0xCC / +0xD0 / +0xD8 its box,
+// voice and end flags.
+static void talk_poll(void) {
+    static uint32_t last[7];
+    static const unsigned offs[7] = {0xB0, 0xB4, 0x94, 0x98, 0xCC, 0xD0, 0xD8};
+    if (!g_talk_obj) return;
+    uint32_t now[7];
+    for (int i = 0; i < 7; i++) now[i] = *(uint32_t volatile *)(g_talk_obj + offs[i]);
+    if (!memcmp(now, last, sizeof now)) return;
+    rt_log("frame rate: talk %06llx b0 %u b4 %u 94 %u 98 %u cc %u d0 %u d8 %u at %.3f s stepped, wall %.3f s",
+           (unsigned long long)(g_talk_obj & 0xFFFFFF), now[0], now[1], now[2], now[3], now[4], now[5], now[6],
+           run_game_ms / 1000.0, wall_s());
+    memcpy(last, now, sizeof now);
+}
 
 // The frame-counted cue scheduler (main+0x6A3EC0, run while the mode word at GOT main+0xDBF4A0 is 1; mode 2 schedules
 // by the music time instead). Each call adds 1 to a frame counter and fires every table entry whose frame equals it,
@@ -463,6 +552,38 @@ void rt_cut_next_s1(Cpu *c) {   // fmov s1, wzr: where the next cut starts
         start = over > 0.0f ? (over < most ? over : most) : 0.0f;
     }
     FP_SETS(1, start);
+}
+
+// AC_TRACE=perf, diagnostics: the scene clock after its update and the event's commit (main+0x8B7CB0, x19 = the event
+// object, +0x20 the cut and time it kept, +0x28 the cut before). Logs each committed cut change and each stretch the
+// clock stood still (a stop point waiting for a line), with where it stood. The event's commit (main+0x8C2590) applies
+// the stop points, not the cut clock's end test: in the scene measured both modes stood at the same cut times, and at
+// 60 every line and cut came one 30 fps frame minus one 60 fps frame sooner per line state (about 50 ms a line).
+void rt_cut_state(Cpu *c) {
+    if (!(rt_trace & RT_TRACE_PERF) || !in_cutscene) return;
+    static struct { uintptr_t obj; int32_t idx; float t; unsigned still; double since; } k[4];
+    uintptr_t obj = (uintptr_t)c->x[19];
+    int32_t idx = *(int32_t volatile *)(obj + 0x20);
+    float t = *(float volatile *)(obj + 0x24);
+    int i = 0;
+    while (i < 4 && k[i].obj && k[i].obj != obj) i++;
+    if (i == 4) return;
+    if (!k[i].obj) {
+        k[i].obj = obj, k[i].idx = idx, k[i].t = t;
+        return;
+    }
+    if (idx == k[i].idx && t == k[i].t) {
+        if (!k[i].still++) k[i].since = run_game_ms / 1000.0;
+        return;
+    }
+    if (k[i].still)
+        rt_log("frame rate: scene %06llx stood at cut %d, %.2f for %u frames (%.3f s) from %.3f s stepped",
+               (unsigned long long)(obj & 0xFFFFFF), k[i].idx, k[i].t, k[i].still, run_game_ms / 1000.0 - k[i].since,
+               k[i].since);
+    if (idx != k[i].idx)
+        rt_log("frame rate: scene %06llx cut %d (%.2f) -> cut %d (%.2f) at %.3f s stepped, wall %.3f s",
+               (unsigned long long)(obj & 0xFFFFFF), k[i].idx, k[i].t, idx, t, run_game_ms / 1000.0, wall_s());
+    k[i].idx = idx, k[i].t = t, k[i].still = 0;
 }
 
 // ---- full-screen movies: the game's Bink player (the class whose open is main+0x9BEFD0) plays both the event movies
