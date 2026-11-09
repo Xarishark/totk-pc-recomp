@@ -267,7 +267,6 @@ void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene
                                                            // until res_init switched the sets on)
 int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 (the test res_init and romfs.c share)
 int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game version with the camera aspect patch
-int frame_step_cutscene(void);                             // 1 while a cutscene runs under the 60 fps patch (frame_rate.c)
 void res_wanted(unsigned out[2]);                          // the output size AC_OUTPUT_RES asks for
 void res_game_size(unsigned out[2]);                       // the size the game renders in: 1920x1080 with the res1080
                                                            // set, 1888x1062 with res1062, else res_sizes' output
@@ -285,7 +284,8 @@ void frame_step_init(void);                                // after rt_patches_i
 int frame_step_realtime(void);                             // the real-time step is on: presents ignore the interval
 uint64_t frame_step_cap_ns(void);                          // with the real-time step: the shortest frame in ns
 double frame_step_limit_hz(void);                         // the frame rate the limit gives (overlay); 0 unknown
-int frame_step_cutscene(void);                             // the game's cutscene flag is set (frame_rate.c); any thread
+int frame_step_cutscene(void);                             // 1 while a cutscene runs under the 60 fps patch (frame_rate.c
+                                                           // cutscene_rate: the game's cutscene speed); any thread
 int64_t frame_step_world_us(void);                         // game time since the loaded save's first frame, -1 before
                                                            // (AC_FPS, live: 60 fps patch on or off)
 uint64_t frame_step_ticks(void);                           // game time since the first present in 60 Hz ticks (input scripts)

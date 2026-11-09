@@ -173,7 +173,9 @@ static uint64_t ck_reads, ck_diff, ck_diff_unexplained, ck_diff_idle;
 int vk_replay_async(void) {
     static int on = -1;
     if (on < 0) {
-        on = cfg_bool("AC_REPLAY_ASYNC");   // on by default: A/B on the dev machine showed identical throughput (docs), 0 turns it off
+        // On by default: an A/B run on the dev machine showed identical throughput (docs/architecture.md). The cost
+        // is up to one frame of latency, as the game may run that far ahead of the replay. 0 turns it off.
+        on = cfg_bool("AC_REPLAY_ASYNC");
         rt_log("vk: replay %s (AC_REPLAY_ASYNC=%d)",
                on ? "on its own thread, at most one frame behind the game" : "on the submitting thread", on);
     }
