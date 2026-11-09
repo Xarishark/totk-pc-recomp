@@ -47,6 +47,9 @@ uint64_t rt_fps_hs_w8(Cpu *c);      // subs w8,w8,#1 scaled by whole ticks; retu
 uint64_t rt_fps_hs_w9(Cpu *c);      // subs w9,w9,#1 scaled; returns packed NZCV, updates x9
 uint64_t rt_fps_hs_w10(Cpu *c);     // subs w10,w10,#1 scaled; returns packed NZCV, updates x10
 uint64_t rt_fps_hs_w10w9(Cpu *c);   // subs w9,w10,#1 scaled (r5 second-tap); returns NZCV, updates x9
+uint64_t rt_fps_hs_w8w9(Cpu *c);    // subs w9,w8,#1 scaled; returns NZCV, updates x9
+void rt_fps_sector_str(Cpu *c);     // stick gesture sector stamp, only on frames with a whole tick
+void rt_fps_neg_step_s1(Cpu *c);    // s1 = -step (a float frame countdown's -1.0)
 void rt_fps_sub_w8(Cpu *c);         // sub w8,w8,#1 scaled (no flags), r2 bank of buffer counters
 void rt_fps_up_w9(Cpu *c);          // add w9,w9,#1 scaled (no flags), pad auto-repeat count
 void rt_fps_up_w8(Cpu *c);          // add w8,w8,#1 scaled (no flags), hitstop freeze phase count
@@ -61,6 +64,11 @@ uint64_t rt_fps_duration_w16(Cpu *c); // w16 minus the ticks with its real flags
 void rt_fps_cam_s0(Cpu *c);         // camera: s8 = 1-powf(1-min(s0,s10), step)
 void rt_fps_cam_s1(Cpu *c);         // camera: s8 = 1-powf(1-min(s1,s10), step)
 void rt_fps_cam_fcsel(Cpu *c);      // camera: entry3 fcsel with the smoothed s9
+void rt_fps_timer(Cpu *c);          // frame timer: the real-time step, the whole ticks, the cutscene flag
+void rt_fps_timer_first(Cpu *c);    // frame timer's first call: the game's step as the first ticks
+void rt_fps_text_rate_s2(Cpu *c);   // dialogue text reveal: s2 = rate * step
+void rt_fps_cue_up_w8(Cpu *c);      // cue scheduler: w8 += whole ticks, keeping the old counter
+uint64_t rt_fps_cue_cmp(Cpu *c);    // cue scheduler: cmp w9,w8 -> Z when the entry's frame is in (old, new]
 void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical angle) *= AC_FOV factor (resolution.c)
 
 
