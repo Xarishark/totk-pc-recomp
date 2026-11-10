@@ -16,13 +16,13 @@ Special thanks to [@capibawa](https://github.com/capibawa) for their multiple co
 
 ## Status
 
-The game is playable from the title screen to credits. The port has no known gameplay issue, including correct timings at 60FPS (perfect dodge, assault attack, 360 spin and so on) and no known visual issues.
+The game is playable from the title screen to credits. The port has no known gameplay issue, including correct timings at 60FPS (perfect dodge, assault attack, 360 spin and so on) and no known visual issues. People enjoy this port for it's stutter-free experience and good performances on Windows. The project goal is to make people discover this hidden gem from Platinum Games.
 
 Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Features
 
-- Native code, not emulation. It already runs on very old systems; it uses a small amount of RAM and VRAM to run.
+- Native code, not emulation. It already runs on very old systems;
 - Externally tested (Reddit, YouTube, ...): playable from intro to credits.
 - Base game 1.0.0 with its 1.0.1 update
 - 60 fps by default, with a 30 fps switch and a cutscene speed fix
