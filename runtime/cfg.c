@@ -272,13 +272,16 @@ int cfg_load(const char *path) {
 // drops at 70%,
 // no automatic anisotropic boost; shadows: fixed 512 sun map (stable, no heap growth past 960), scale 1, range 100,
 // no contact shadows or PCSS; handheld operation mode, as the Deck is a handheld: the game gets the handheld
-// controller and takes its handheld render-target sizes and performance mode (ov_system.c ov_handheld).
+// controller and takes its handheld render-target sizes and performance mode (ov_system.c ov_handheld);
+// no CPU boost (platform/linux.c plat_cpu_boost): the CPU and the GPU share one power limit (15 W) there, and a 1.6.0
+// session in the headquarters showed the CPU drawing 9.1 W against the GPU's 2.3 W with the GPU 83% busy at 25 fps:
+// the GPU ran out of power, not the CPU of frequency, and the boost would move more of the budget to the CPU.
 static const struct { const char *key, *value; } DECK[] = {
     {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"OUTPUT_RES", "1280x800"}, {"RENDER_SCALE", "game"},
     {"VK_PRESENT", "fifo"}, {"FPS", "30"}, {"OPERATION_MODE", "handheld"},
     {"ASTC_BC", "bc1"}, {"TEX_MIP_SKIP", "1024"}, {"TEX_CACHE_MB", "512"}, {"TEX_VRAM_PRESSURE", "70"}, {"ANISO", "game"},
     {"SHADOW_RES", "512"}, {"SHADOW_SCALE", "1"}, {"SHADOW_RANGE", "100"}, {"CONTACT_SHADOWS", "0"}, {"PCSS", "0"},
-    {"LIB_PREBUILD_KEEP", "0"},
+    {"LIB_PREBUILD_KEEP", "0"}, {"CPU_BOOST", "0"},
 };
 static int profile = -1;   // 0 none, 1 Steam Deck
 

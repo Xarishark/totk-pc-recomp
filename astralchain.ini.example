@@ -35,7 +35,7 @@
 # (utilization clamp) and, where the processor still picks its frequency itself (intel_pstate and amd-pstate
 # "powersave", ondemand), lets waiting threads poll up to 1 ms before they sleep so their cores stay awake.
 # 1 = poll whatever the governor, 0 = all of it off (lower CPU use and power; lower and uneven frame rate where the
-# cores then stay at a low frequency).
+# cores then stay at a low frequency). Off by default on the Steam Deck, whose CPU and GPU share one power limit.
 # cpu_boost = auto
 
 # Shaders and pipelines.

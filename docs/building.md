@@ -217,9 +217,12 @@ governor, `0` turns all three off. Measured on the 285H, in play, same spot:
 | clamp and polling (no profile daemon) | 60 | 33-42 | 2-144 | 1.7 cores | 4.0-4.6 GHz |
 | performance profile held | 60 | 41-47 | 4 | 1.5 cores | 4.2-4.7 GHz |
 
-Limited to 4 of its fast cores the game holds 60 with the clamp and polling as well. Only that machine is measured:
-the `schedutil` path (the Steam Deck's governor, with no profile daemon in Game Mode) follows the kernel's
-documentation, not a run. The log says at start what was arranged (`cpu:` lines, the second one once the daemon has
+Limited to 4 of its fast cores the game holds 60 with the clamp and polling as well. Only that machine is measured.
+
+The Steam Deck profile turns `cpu_boost` off: its CPU and GPU share one 15 W limit, and a 1.6.0 session in the
+headquarters (the heaviest area) showed 25 fps with the CPU drawing 9.1 W and the GPU 2.3 W while 83% busy. There the
+GPU runs out of power, and running the CPU faster would take more of it away. `cpu_boost = auto` in `astralchain.ini`
+turns it back on for a comparison. The log says at start what was arranged (`cpu:` lines, the second one once the daemon has
 answered) and `AC_TRACE=perf` adds, every 60 frames, the frequency of the cores under the render and replay threads
 (`cpu frequency under the render thread`), which is what to compare between `cpu_boost = 0` and the default on
 another machine.
