@@ -145,11 +145,15 @@
 # Which GPU to use: its index in the log, or part of its name. Default: the first discrete GPU with Vulkan 1.3.
 # gpu_index = 0
 # gpu_name = NVIDIA
-# 3D render scale (AC_SSAA): the game renders at 1920x1080 (the res1080 patch set; res1062 = 1 for the community 1062p
-# instead) and its render targets are made larger to a screen size, the emulator-style resolution scale: off (the
-# default), 1440p (2560x1440) or 2160p (3840x2160). The game keeps its logical size and the window shows the larger
-# picture. A factor from an older version (1.333, 2) is taken as the screen size it was for. Read at start.
-# ssaa = off
+# Game resolution: the size the game draws its picture and interface in, its render targets and effects included, as
+# <width>x<height>: 1920x1080 by default, any 16:9 size of 32n x 18n from 1280x720 (for weak GPUs) up to 3840x2160, the
+# most the application pool leaves room for (1600x900, 2560x1440 and 3200x1800 among them); another size keeps
+# 1920x1080, as other shapes and sizes off that grid lose the GPU device. Above 1920x1080's pixel count the game's
+# render-target budget grows with the pixels (310 MiB up to 1920x1080, 545 MiB at 2560x1440, 1100 MiB at 3840x2160) and
+# the application pool with it. It replaces the former ssaa setting, which enlarged the
+# game's 1080p render targets from outside the game; an ssaa = 1440p or 2160p line is read as output_res = 2560x1440 or
+# 3840x2160. Read at start.
+# output_res = 1920x1080
 # Scaling to the window when it is larger than the game resolution: fsr (AMD FSR 1) or bilinear, and FSR's sharpening
 # from 0 (off) to 100. Changes while the game runs take effect at once.
 # upscaler = fsr
@@ -162,8 +166,8 @@
 # Field of view, in percent of the game's own: 70 to 140, 100 (the default) leaves the camera as it is. Higher shows
 # more of the world around Link. Game version 1.4.3 only. Changes while the game runs take effect at once.
 # fov = 100
-# Anisotropic filtering of surface textures: auto (the default: 16x at ssaa = 1440p, twice the game's level at
-# ssaa = 2160p, as emulators do at 2x, the game's level without ssaa), game (the level the game asks for, as on the
+# Anisotropic filtering of surface textures: auto (the default: 16x at output_res = 2560x1440, twice the game's level
+# at 3840x2160, as emulators do at 2x, the game's level at 1920x1080 and below), game (the level the game asks for, as on the
 # Switch, which is 1: none) or 2, 4, 8, 16. Keeps ground, roads and walls seen at a shallow
 # angle sharp into the distance. Only filtered, mipmapped textures that tile are raised; shadow maps, data maps and
 # screen-sized buffers keep the game's setting. Read at start.

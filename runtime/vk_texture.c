@@ -338,58 +338,6 @@ static int shadow_scale_of(const nvn_texdesc *d, const TexVkFormat *f, uint32_t 
     return d->width * (uint32_t)scale <= most ? scale : 1;
 }
 
-// AC_SSAA (off, 1440p or 2160p): emulator-style resolution scaling to a screen height. The game renders at its own size
-// (res_game_size: 1920x1080 with the res1080 set); a texture it uses as a render target or as the window is made
-// 1440 or 2160 divided by the game's height larger on each side, so 1080p becomes exactly 2560x1440 or 3840x2160. The
-// setting names a screen size rather than a factor because the factor alone gave sizes Intel's Arc 140T driver cannot
-// take: 1888x1062 x 4/3 = 2517x1416 (and 2480x1395, 2832x1593...) lost the device in one plain draw on entering play,
-// the viewport's size being the trigger, while 2560x1440 and 3840x2160 played for hours. The replay multiplies the
-// game's viewports, scissors, clears and copies by the same factor (vk_exec.c pass_scale, vk_exec_xfer.c), and shaders
-// sample it with normalised coordinates, so the game sees its own logical resolution while the picture is rendered at
-// the larger one. The present then hands that larger image to the window (vk_backend.c). Textures sampled only,
-// uploaded from guest memory, CPU-written (mirrored), linear, multisampled, 1D or 3D keep their size, as their texels
-// must match the guest layout.
-static float render_scale(void) {
-    static float scale = -1;
-    if (scale < 0) {
-        const char *e = cfg_value("AC_SSAA");
-        unsigned game[2], target = 0;
-        res_game_size(game);
-        if (!strcmp(e, "1440p")) target = 1440;
-        else if (!strcmp(e, "2160p")) target = 2160;
-        else if (strcmp(e, "off")) {   // a factor from 0.2.x/0.3.0 (1, 1.333, 1.5, 2): the screen size it was for
-            double v = atof(e);
-            target = v > 1.01 ? (v < 1.75 ? 1440 : 2160) : 0;
-            rt_log("resolution: AC_SSAA=%s is a factor; taken as %s", e, target == 1440 ? "1440p" : target ? "2160p" : "off");
-        }
-        scale = target > game[1] && game[1] ? (float)target / (float)game[1] : 1.0f;
-        if (scale > 1.0f)
-            rt_log("vk: render targets %ux%u, %.4gx the game's %ux%u (AC_SSAA=%up)",
-                   (unsigned)lroundf((float)game[0] * scale), target, scale, game[0], game[1], target);
-    }
-    return scale;
-}
-
-float vk_render_scale(void) { return render_scale(); }
-
-static float render_scale_of(const tex_t *t, const TexVkFormat *f, uint32_t samples, int mirrored) {
-    const nvn_texdesc *d = &t->d;
-    float scale = render_scale();
-    if (scale <= 1.0f || mirrored || samples > 1) return 1.0f;
-    // Colour: the IMAGE or DISPLAY flag marks the game's render targets and its window. Depth and stencil textures are
-    // only ever rendered into, so they follow without a flag, as an emulator scales every depth target it binds
-    // (Eglantine, video_core/texture_cache/image_info.cpp, ImageInfo from the zeta registers): a 2048x2048 D24S8 target
-    // flagged COMPRESSIBLE alone kept the game's size.
-    if (!f->depth && !f->stencil && !(d->flags & (NVN_TEXTURE_FLAGS_IMAGE | NVN_TEXTURE_FLAGS_DISPLAY))) return 1.0f;
-    if (d->flags & (NVN_TEXTURE_FLAGS_LINEAR | NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)) return 1.0f;
-    if (d->target != NVN_TEXTURE_TARGET_2D && d->target != NVN_TEXTURE_TARGET_2D_ARRAY) return 1.0f;
-    const VkPhysicalDeviceLimits *l = &vk_ctx()->props.limits;
-    if ((float)d->width * scale > (float)l->maxImageDimension2D ||
-        (float)d->height * scale > (float)l->maxImageDimension2D)
-        return 1.0f;
-    return scale;
-}
-
 // AC_TEX_MIP_SKIP (0 = off, the default; the Steam Deck profile sets 1024): an ASTC texture whose level 0 has that
 // larger side or more is made without its level 0, three quarters of its memory. At the Deck's 1280x800 a material texture
 // of 1024 texels or more is seldom drawn large enough to sample its level 0, so the picture loses little; in the
@@ -478,9 +426,7 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     }
     int shadow = shadow_scale_of(d, &f, samples, tex_mirrored(t));
     float scale = (float)shadow;
-    float rs = render_scale_of(t, &f, samples, tex_mirrored(t));
-    if (rs > 1.0f) scale = scale > 1.0f ? scale * rs : rs;
-    w = (uint32_t)lroundf((float)w * scale), h = (uint32_t)lroundf((float)h * scale);
+    w =(uint32_t)lroundf((float)w * scale), h = (uint32_t)lroundf((float)h * scale);
     uint32_t levels = umax(d->levels, 1), most = 1;
     for (uint32_t s = umax(umax(w, h), depth); s > 1; s >>= 1) most++;
     if (levels > most) levels = most;
@@ -1673,10 +1619,10 @@ static int image_texels_at(Tex *e, const Region *g, const NVNcopyRegion *r, uint
     return 1;
 }
 
-// Image <-> caller rows, the region in the game's texels. A texture AC_SSAA enlarged (render_scale_of) holds about k
-// texels for each of the game's on a side: the game's region maps to the enlarged one, a read takes the enlarged texel
-// nearest each of the game's centres and a write repeats each of the game's texels over those it covers. Otherwise
-// ReadTexels of a render target, and --shot, got the enlarged picture's top-left corner.
+// Image <-> caller rows, the region in the game's texels. A texture made larger (a shadow map by AC_SHADOW_SCALE)
+// holds about k texels for each of the game's on a side: the game's region maps to the enlarged one, a read takes the
+// enlarged texel nearest each of the game's centres and a write repeats each of the game's texels over those it covers.
+// Otherwise ReadTexels of such a texture got its top-left corner.
 static int image_texels(Tex *e, const Region *g, const NVNcopyRegion *r, uint8_t *mem, int write) {
     float k = e->pub.scale;
     if (!(k > 1.0f) || g->bw != 1 || g->bh != 1 || e->f.expand_rgb || e->f.astc_bw) return image_texels_at(e, g, r, mem, write);
@@ -2003,21 +1949,24 @@ static void sampler_features(VkCtx *c) {
     sf.mirror_clamp_edge = f12.samplerMirrorClampToEdge;
     sf.minmax = f12.samplerFilterMinmax;
     sf.border_no_format = c->has_custom_border_color && cbf.customBorderColors && cbf.customBorderColorWithoutFormat;
-    // AC_ANISO=auto (the default). At AC_SSAA=2160p it follows the emulators' automatic mode (Eglantine,
-    // video_core/textures/texture.cpp, TSCEntry::MaxAnisotropy): one doubling of the game's level per whole step of
-    // the scale above 1, so twice the game's level. At 1440p that rule adds nothing (the scale is 4/3), and the game
-    // asks for no anisotropy on its surfaces (level 1 on all 312 repeating trilinear samplers of a gameplay frame
-    // dump), while 4/3 supersampling does little for ground seen at a shallow angle: four doublings, 16x (the device's
-    // limit applies). 2160p keeps the doubling: its 2x supersampling already sharpens those surfaces, and it is the
-    // setting where the GPU has the least time left. Without AC_SSAA it is the same as game.
+    // AC_ANISO=auto (the default) follows the game resolution's factor over 1080p (resolution.c res_game_size, output_res).
+    // At 2160p it follows the emulators' automatic mode (Eglantine, video_core/textures/texture.cpp,
+    // TSCEntry::MaxAnisotropy): one doubling of the game's level per whole step of the factor above 1, so twice the
+    // game's level. At 1440p that rule adds nothing (the factor is 4/3), and the game asks for no anisotropy on its
+    // surfaces (level 1 on all 312 repeating trilinear samplers of a gameplay frame dump), while 4/3 more pixels do
+    // little for ground seen at a shallow angle: four doublings, 16x (the device's limit applies). 2160p keeps the
+    // doubling: its pixels already sharpen those surfaces, and it is the setting where the GPU has the least time left.
+    // At 1080p and below it is the same as game.
     const char *an = cfg_value("AC_ANISO");
     int is_auto = !strcmp(an, "auto");
     sf.aniso = is_auto || !strcmp(an, "game") ? 0 : (float)atoi(an);
-    float rs = vk_render_scale();
+    unsigned g[2];
+    res_game_size(g);
+    float rs = (float)g[1] / 1080.0f;
     sf.aniso_add = !is_auto || rs <= 1.0f ? 0 : rs < 2.0f ? 4 : (int)floorf(rs) - 1;
     if (sf.aniso_add < 0) sf.aniso_add = 0;
     if (sf.aniso > 1) rt_log("vk: anisotropic filtering: %s", an);
-    else if (sf.aniso_add) rt_log("vk: anisotropic filtering: the game's level times %d (AC_ANISO=auto, AC_SSAA)", 1 << sf.aniso_add);
+    else if (sf.aniso_add) rt_log("vk: anisotropic filtering: the game's level times %d (AC_ANISO=auto, output_res)", 1 << sf.aniso_add);
     else rt_log("vk: anisotropic filtering: the game's");
     sf.init = 1;
 }

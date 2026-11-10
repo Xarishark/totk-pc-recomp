@@ -52,11 +52,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     // printf format of the overlay line in FPS mode: the frame rate
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Picture",
-    [UI_MENU_RENDER_SCALE] = "3D render scale",
-    [UI_MENU_RENDER_SCALE_DESC] = "Renders the game's 1080p picture at a higher resolution (emulator-style resolution "
-                                  "scale): 1440p draws it at 2560 x 1440, 2160p at 3840 x 2160. The game keeps its "
-                                  "logical size and the window shows the larger picture.",
-    [UI_MENU_RENDER_SCALE_GAME] = "Game (83 %)",
+    [UI_MENU_OUTPUT_RES] = "Game resolution",
+    [UI_MENU_OUTPUT_RES_DESC] = "The size the game draws its picture and interface in. 1280 x 720 is the lightest, for "
+                                "weaker GPUs. Above 1920 x 1080 the game needs more memory (about 240 MB more at "
+                                "2560 x 1440, 790 MB at 3840 x 2160) and GPU time. Takes effect after a restart.",
     [UI_MENU_UPSCALER] = "Scaling to the window",
     [UI_MENU_UPSCALER_DESC] = "How the picture is scaled to the window. FSR keeps edges and detail sharper than "
                               "bilinear, and sharpens the picture even when it already fits the window.",
@@ -433,11 +432,10 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OFF] = "Выкл.", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Полный",
     [UI_PERF_LINE_FPS] = "%.0f к/с",
     [UI_MENU_GRAPHICS] = "Изображение",
-    [UI_MENU_RENDER_SCALE] = "Масштаб 3D-отрисовки",
-    [UI_MENU_RENDER_SCALE_DESC] = "Отрисовывает картинку игры 1080p в более высоком разрешении (масштабирование как в "
-                                  "эмуляторах): 1440p — 2560 × 1440, 2160p — 3840 × 2160. Игра сохраняет свой "
-                                  "логический размер.",
-    [UI_MENU_RENDER_SCALE_GAME] = "Как в игре (83 %)",
+    [UI_MENU_OUTPUT_RES] = "Разрешение игры",
+    [UI_MENU_OUTPUT_RES_DESC] = "Размер, в котором игра рисует картинку и интерфейс. 1280 × 720 — самый лёгкий, для "
+                                "слабых видеокарт. Выше 1920 × 1080 игре нужно больше памяти (примерно на 240 МБ при "
+                                "2560 × 1440 и на 790 МБ при 3840 × 2160) и времени GPU. Действует после перезапуска.",
     [UI_MENU_UPSCALER] = "Масштабирование под окно",
     [UI_MENU_UPSCALER_DESC] = "Как картинка подгоняется под окно. FSR сохраняет края и детали чётче билинейного и "
                               "повышает резкость, даже когда картинка уже совпадает с окном.",
@@ -842,11 +840,11 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PERF_OFF] = "Desligado", [UI_MENU_PERF_FPS] = "FPS", [UI_MENU_PERF_FULL] = "Completo",
     [UI_PERF_LINE_FPS] = "%.0f fps",
     [UI_MENU_GRAPHICS] = "Imagem",
-    [UI_MENU_RENDER_SCALE] = "Escala da renderização 3D",
-    [UI_MENU_RENDER_SCALE_DESC] = "Renderiza a imagem 1080p do jogo numa resolução maior (escala de resolução como nos "
-                                  "emuladores): 1440p a desenha em 2560 × 1440, 2160p em 3840 × 2160. O jogo mantém o "
-                                  "tamanho lógico.",
-    [UI_MENU_RENDER_SCALE_GAME] = "Jogo (83 %)",
+    [UI_MENU_OUTPUT_RES] = "Resolução do jogo",
+    [UI_MENU_OUTPUT_RES_DESC] = "O tamanho em que o jogo desenha a imagem e a interface. 1280 × 720 é o mais leve, "
+                                "para GPUs mais fracas. Acima de 1920 × 1080 o jogo precisa de mais memória (cerca de "
+                                "240 MB a mais em 2560 × 1440, 790 MB em 3840 × 2160) e tempo de GPU. Vale após "
+                                "reiniciar.",
     [UI_MENU_UPSCALER] = "Escala para a janela",
     [UI_MENU_UPSCALER_DESC] = "Como a imagem é ajustada à janela. O FSR mantém bordas e detalhes mais nítidos que o "
                               "bilinear e aumenta a nitidez mesmo quando a imagem já tem o tamanho da janela.",
@@ -1267,10 +1265,10 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_PERF_LINE_FPS] = "%.0f fps",
 
     [UI_MENU_GRAPHICS] = "画面",
-    [UI_MENU_RENDER_SCALE] = "3D 渲染比例",
-    [UI_MENU_RENDER_SCALE_DESC] = "以更高的分辨率渲染游戏的 1080p 画面（模拟器式分辨率缩放）："
-                                  "1440p 为 2560 × 1440，2160p 为 3840 × 2160。游戏保持其逻辑尺寸。",
-    [UI_MENU_RENDER_SCALE_GAME] = "游戏（83%）",
+    [UI_MENU_OUTPUT_RES] = "游戏分辨率",
+    [UI_MENU_OUTPUT_RES_DESC] = "游戏绘制画面和界面的尺寸。1280 × 720 负担最轻，适合较弱的 GPU。高于 1920 × 1080 时，"
+                                "游戏需要更多内存（2560 × 1440 约多 240 MB，3840 × 2160 约多 790 MB）和 GPU 时间。"
+                                "重启后生效。",
     [UI_MENU_UPSCALER] = "放大到窗口",
     [UI_MENU_UPSCALER_DESC] = "画面缩放到窗口的方式。"
                               "FSR 比双线性更能保留边缘和细节，即使画面已与窗口同样大小也会锐化。",

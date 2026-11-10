@@ -1,5 +1,5 @@
 // Area downscale of the game's output to the swapchain size (runtime/vk_fsr.c), for a picture larger than the window
-// (AC_SSAA above the window's size). Each output pixel covers a rectangle of the source; it takes the average of the
+// (output_res above the window's size). Each output pixel covers a rectangle of the source; it takes the average of the
 // texels under it, each weighted by the part of it the rectangle covers, so every rendered texel counts. A bilinear blit
 // reads only the 2x2 texels around the pixel's centre: at 3840 -> 2560 it skips texels and thin edges shimmer.
 // Same bindings and push constants as fsr_easu.comp.

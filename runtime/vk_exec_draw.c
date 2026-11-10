@@ -1527,10 +1527,9 @@ static VkDescriptorSet alloc_set(VkExec *ex, VkDescriptorSetLayout layout) {
 }
 
 static void support_in(const VkExec *ex, float in[3]) {   // what support_fill reads: viewport size, point size
-    // With AC_SSAA the shaders work in the game's pixels (support_scales divides gl_FragCoord by the pass scale), so the
-    // viewport stays the game's: viewport_inverse maps pixel positions to clip space and viewport_size flips
-    // gl_FragCoord.y. Without it, a larger shadow map's pass sees its own pixels.
-    float k = ex->pass_scale > 1 && vk_render_scale() <= 1.0f ? (float)ex->pass_scale : 1.0f;
+    // A larger shadow map's pass (AC_SHADOW_SCALE) sees its own pixels: viewport_inverse maps pixel positions to clip
+    // space and viewport_size flips gl_FragCoord.y in the enlarged pass.
+    float k = ex->pass_scale > 1 ? (float)ex->pass_scale : 1.0f;
     in[0] = ex->in_pass && ex->has_vp ? ex->vp[0][2] * k : (float)ex->pass_w;
     in[1] = ex->in_pass && ex->has_vp ? ex->vp[0][3] * k : (float)ex->pass_h;
     in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
@@ -1566,19 +1565,19 @@ static const float *shadow_spread_params(void) {
     if (p[0] == 0) {
         int scale = cfg_int("AC_SHADOW_SCALE");
         scale = scale < 1 ? 1 : scale > 4 ? 4 : scale;
-        p[0] = 1.0f / ((float)scale * vk_render_scale());
+        p[0] = 1.0f / (float)scale;
     }
     return p;
 }
 
-// AC_SSAA: the support buffer's frag_scale_count and render_scale array, which the translator reads (Ryujinx
-// InstEmitAttribute, TexturePass and HelperFunctionManager TexelFetchScale / TextureSizeUnscale). Entry 0 is the render
-// target's scale: fragment shaders divide gl_FragCoord.xy by it, so code that indexes buffers or texels by pixel (tiled
-// lighting, for one) keeps the game's coordinates. Entry 1 + i is the scale of the stage's texture or image i
-// (GfxShaderRes.scale_idx): integer texel fetches and image loads multiply their coordinates by it and size queries
-// divide by it, so the game's shaders address an enlarged target as if it had the game's size. Fragment shaders take it
-// negated, which adds gl_FragCoord's place inside the enlarged texel, as Ryujinx does for a texture scaled like the
-// render target. Vertex shaders read theirs after frag_scale_count entries; they stay 1.
+// The support buffer's frag_scale_count and render_scale array, which the translator reads (Ryujinx InstEmitAttribute,
+// TexturePass and HelperFunctionManager TexelFetchScale / TextureSizeUnscale), filled while AC_TEX_MIP_SKIP is on.
+// Entry 0 is the render target's scale: fragment shaders divide gl_FragCoord.xy by it. Entry 1 + i is the scale of the
+// stage's texture or image i (GfxShaderRes.scale_idx): integer texel fetches and image loads multiply their coordinates
+// by it and size queries divide by it, so the game's shaders address a texture of another size (a shadow map
+// AC_SHADOW_SCALE made larger, a level 0 left out) as if it had the game's size. Fragment shaders take an enlarged
+// texture's entry negated, which adds gl_FragCoord's place inside the enlarged texel, as Ryujinx does for a texture
+// scaled like the render target. Vertex shaders read theirs after frag_scale_count entries.
 //
 // AC_TEX_MIP_SKIP: a texture made without its level 0 (VkTexImage.skip) is half the game's size, so its entry is 0.5
 // in every stage, vertex shaders included (their entries follow the fragment ones): fetches halve their coordinates and
@@ -1599,8 +1598,8 @@ static int scale_binding(const VkExec *ex, const VkPipeBinding *b, int stage, co
 static void support_scales(const VkExec *ex, const VkPipeInfo *info, SupScales *o) {
     for (int i = 0; i < SCALES; i++) o->s[i] = 1.0f;
     o->nfs = 0;
-    int ssaa = vk_render_scale() > 1.0f, skip = vk_tex_mip_skip() > 0;
-    if (!ssaa && !skip) return;
+    int skip = vk_tex_mip_skip() > 0;
+    if (!skip) return;
     int gfx = info->bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS;
     o->s[0] = gfx && ex->pass_scale > 1.0f ? ex->pass_scale : 1.0f;
     int want = gfx ? GFX_STAGE_FS : GFX_STAGE_CS;

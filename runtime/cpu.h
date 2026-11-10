@@ -70,6 +70,11 @@ void rt_fps_text_rate_s2(Cpu *c);   // dialogue text reveal: s2 = rate * step
 void rt_fps_cue_up_w8(Cpu *c);      // cue scheduler: w8 += whole ticks, keeping the old counter
 uint64_t rt_fps_cue_cmp(Cpu *c);    // cue scheduler: cmp w9,w8 -> Z when the entry's frame is in (old, new]
 void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical angle) *= AC_FOV factor (resolution.c)
+// game resolution (resolution.c, set res): the output width or height from the patch page into a register, the
+// ladder's cmp w0 against the width (returns packed NZCV), and the render-target budget for that size into w8
+void rt_res_w8(Cpu *c), rt_res_h8(Cpu *c), rt_res_w9(Cpu *c), rt_res_h9(Cpu *c), rt_res_h22(Cpu *c);
+uint64_t rt_res_cmp_w0(Cpu *c);
+void rt_res_budget_w8(Cpu *c);
 
 
 #if defined(__aarch64__)
