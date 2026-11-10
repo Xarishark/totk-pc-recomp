@@ -201,10 +201,15 @@ def build_llvm(out):
     lib.mkdir(exist_ok=True)
     bundle_closure(lib, full_sysroot() / 'usr' / 'lib' / 'x86_64-linux-gnu', 'libxml2.so.2')
     strip(dst / 'bin', dst / 'bin' / 'llvm-strip')
-    r = subprocess.run([str(dst / 'bin' / 'clang'), '--version'], capture_output=True, text=True)
-    if r.returncode:
-        sys.exit(f'{dst / "bin" / "clang"} does not start:\n{r.stderr}')
-    print(r.stdout.splitlines()[0])
+    # lld's RUNPATH ($ORIGIN/../lib) finds the bundled libxml2, but the loader does not apply it to libxml2's own
+    # NEEDED entries: ICU is found only through LD_LIBRARY_PATH, as AppRun sets it for the player. The release's own
+    # links (hactool, the runtime library, --prove) run the same lld, so this process sets it the same way.
+    os.environ['LD_LIBRARY_PATH'] = os.pathsep.join(filter(None, [str(lib), os.environ.get('LD_LIBRARY_PATH')]))
+    for tool in ('clang', 'ld.lld'):
+        r = subprocess.run([str(dst / 'bin' / tool), '--version'], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f'{dst / "bin" / tool} does not start:\n{r.stderr}')
+        print(r.stdout.splitlines()[0])
     return dst
 
 
@@ -618,7 +623,9 @@ def prove(out, cpu='v3'):
     gen = MAIN_ROOT / 'generated' / version
     ext = MAIN_ROOT / 'build' / 'extracted' / version
     chk = CHECK / 'game'
-    env = dict(os.environ, PATH=os.pathsep.join([str(out / 'llvm' / 'bin'), str(out / 'bin'), '/usr/bin', '/bin']))
+    env = dict(os.environ, PATH=os.pathsep.join([str(out / 'llvm' / 'bin'), str(out / 'bin'), '/usr/bin', '/bin']),
+               LD_LIBRARY_PATH=os.pathsep.join(filter(None, [str(out / 'llvm' / 'lib'),
+                                                             os.environ.get('LD_LIBRARY_PATH')])))   # as AppRun (build_llvm)
     t0 = time.time()
     run([out / 'python' / 'bin' / 'python3', out / 'tools' / 'build_game.py', '--toolchain', out / 'llvm', '--cpu', cpu,
          '--sysroot', out / 'llvm' / 'sysroot', '--deps', out / 'runtime' / 'deps', '--runtime', out / 'runtime',
