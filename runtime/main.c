@@ -534,6 +534,7 @@ int main(int argc, char **argv) {
     log_open(!mode);
     if (!mode) {
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
+        hostfn_count_calls((rt_trace & RT_TRACE_HOSTCALL) != 0);   // per function only for the AC_TRACE=host report
         rt_boot();
         return 0;
     }

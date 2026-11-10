@@ -2,8 +2,8 @@
 // Host functions at synthetic guest addresses: the HOST_OVERRIDE / HOST_OBSERVER
 // linker tables, the registry behind them, and the calls between host and guest (rt_call, rt_original).
 //
-// Every registered function dispatches through hostfn_entry, which counts the call, traces the first one
-// (AC_TRACE=host) and tail-calls the real function. The registry is fixed by hostfn_seal, which builds the dispatch
+// Every registered function dispatches through hostfn_entry, which counts the call (hostfn_count_calls), traces the
+// first one (AC_TRACE=host) and tail-calls the real function. The registry is fixed by hostfn_seal, which builds the dispatch
 // table; guest threads start after that, so lookups need no lock.
 #include <stdio.h>
 #include <stdlib.h>
@@ -142,14 +142,32 @@ __attribute__((noinline)) static void hostfn_blocking(Cpu *c, GuestFn fn) {
     kern_core_back(&away);
 }
 
+// The count per function feeds the probes' statistics and the AC_TRACE=host report; a game run only prints the total
+// at the end of a --seconds run and turns the per-function counting off (main.c). That counting is a locked increment
+// of a word every guest thread shares: in play the game's threads call the same NVN functions thousands of times a
+// frame, the word's cache line moved between their cores on every call, and 4.3% of the process's cycles went into
+// this one instruction. With it off each thread counts its own calls and adds them to the total CALL_BATCH at a
+// time, so the total then lags by less than CALL_BATCH per thread.
+#define CALL_BATCH 4096
+static int counting = 1;
+static uint64_t batched;                  // calls counted per thread and handed over, CALL_BATCH at a time
+static _Thread_local uint32_t own_calls;
+
+void hostfn_count_calls(int on) { counting = on; }
+
 static void hostfn_entry(Cpu *c) {
     uint64_t i = (c->pc - RT_HOSTFN_BASE) >> 4;
     if (__builtin_expect((c->pc & 15) || i >= (uint64_t)nslots, 0)) bad_entry(c);
     Slot *s = &slots[i];
-    uint64_t n = __atomic_fetch_add(&s->calls, 1, __ATOMIC_RELAXED);
-    if (__builtin_expect(!n && (rt_trace & RT_TRACE_HOSTCALL), 0)) {
-        char lr[96];
-        rt_log("host call %s from %s", s->name, ldr_describe(c->x[30] - 4, lr, sizeof lr));
+    if (__builtin_expect(counting, 0)) {
+        uint64_t n = __atomic_fetch_add(&s->calls, 1, __ATOMIC_RELAXED);
+        if (__builtin_expect(!n && (rt_trace & RT_TRACE_HOSTCALL), 0)) {
+            char lr[96];
+            rt_log("host call %s from %s", s->name, ldr_describe(c->x[30] - 4, lr, sizeof lr));
+        }
+    } else if (__builtin_expect(++own_calls == CALL_BATCH, 0)) {
+        own_calls = 0;
+        __atomic_fetch_add(&batched, CALL_BATCH, __ATOMIC_RELAXED);
     }
     if (s->blocking) {
         hostfn_blocking(c, s->fn);
@@ -178,7 +196,7 @@ void hostfn_seal(void) {
 }
 
 uint64_t hostfn_calls(void) {
-    uint64_t n = 0;
+    uint64_t n = __atomic_load_n(&batched, __ATOMIC_RELAXED);
     for (int i = 0; i < nslots; i++) n += __atomic_load_n(&slots[i].calls, __ATOMIC_RELAXED);
     return n;
 }

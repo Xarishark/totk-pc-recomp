@@ -122,6 +122,7 @@ void hostfn_seal(void);                                    // build the dispatch
                                                            // linked module); idempotent; registration ends here
 uint64_t hostfn_calls(void);                               // host-function calls so far, all threads
 void hostfn_report(void);                                  // call count per host function to stderr, busiest first
+void hostfn_count_calls(int on);                           // count per function (on at start) or only the total
 int hostfn_table_size(int observers);                      // linked HOST_OVERRIDE (0) / HOST_OBSERVER (1) entries
 const char *hostfn_table_name(int observers, int i);       // symbol of linked entry i, NULL past the end
 uint64_t rt_original(Cpu *c);                              // inside an observer: call the guest definition with the
