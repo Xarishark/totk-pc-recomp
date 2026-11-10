@@ -30,6 +30,11 @@
 # free_cores = 0
 # Windows timer resolution of 1 ms for steadier frame pacing (0 = the Windows default).
 # timer_1ms = 1
+# Linux: asks the kernel to run the game's threads at full CPU speed (utilization clamp) and, where the processor
+# picks its frequency itself (intel_pstate and amd-pstate "powersave", ondemand), lets waiting threads poll up to 1 ms
+# before they sleep so their cores stay awake. auto = what the frequency governor needs, 1 = poll whatever the
+# governor, 0 = off (lower CPU use and power, lower frame rate where the cores then stay at a low frequency).
+# cpu_boost = auto
 
 # Shaders and pipelines.
 # Draws whose pipeline is still building: default waits on a reserved worker; draw is the previous scheduling.

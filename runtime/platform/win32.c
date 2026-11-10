@@ -296,6 +296,14 @@ int plat_thread_priority_get(void) { return GetThreadPriority(GetCurrentThread()
 
 void plat_yield(void) { SwitchToThread(); }
 
+// Windows raises the frequency of the cores a foreground game uses and keeps its threads on the fast ones itself.
+void plat_cpu_boost(int mode, uint64_t spin_ns, char *out, size_t cap) {
+    (void)mode, (void)spin_ns;
+    snprintf(out, cap, "left to Windows");
+}
+
+uint32_t plat_cpu_mhz(void) { return 0; }
+
 // ---- time
 
 static uint64_t qpc_freq(void) {

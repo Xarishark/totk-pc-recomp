@@ -89,11 +89,24 @@ void perf_gpu_wait(uint64_t t0) {
 static volatile int64_t replay_ns;         // perf_replay: summed over the window, any thread
 static volatile int64_t frame_replay_ns;   // the same since the previous present (frame-time summary)
 
+// AC_TRACE=perf: the frequency of the processor under the render thread (at each present) and under the thread that
+// replays (at the end of each replay), summed over the window. A game held back by the CPU on cores far below their
+// top frequency is what plat_cpu_boost is for (platform/linux.c); the line shows whether it took.
+static volatile int64_t mhz_sum[2], mhz_n[2];   // 0 render, 1 replay
+
+static void perf_cpu_sample(int who) {
+    uint32_t mhz = plat_cpu_mhz();
+    if (!mhz) return;
+    plat_add64(&mhz_sum[who], mhz);
+    plat_inc64(&mhz_n[who]);
+}
+
 void perf_replay(uint64_t t0) {
     if (!t0) return;
     int64_t d = (int64_t)(kern_now_ns() - t0);
     plat_add64(&frame_replay_ns, d);
     if (__atomic_load_n(&perf_on, __ATOMIC_RELAXED)) plat_add64(&replay_ns, d);
+    if (rt_trace & RT_TRACE_PERF) perf_cpu_sample(1);
 }
 
 static volatile int64_t counts[PERF_CNT_N];   // running totals: the perf log and the flight recorder take differences
@@ -293,6 +306,7 @@ void perf_present(uint64_t frame) {
     }
     memset(frame_ns, 0, sizeof frame_ns);
     last = now;
+    perf_cpu_sample(0);
     if (!win_start) win_start = now;
     if (frame % 60) return;
     uint64_t span = now - win_start;
@@ -319,6 +333,11 @@ void perf_present(uint64_t frame) {
                (span > wait_ns[PERF_PACE] ? span - wait_ns[PERF_PACE] : 0) / 1e6 / n,
                plat_xchg64(&replay_ns, 0) / 1e6 / n, (unsigned long long)ab_b, (unsigned long long)n, frame_step_world_us() / 1e6);
     if (n && span) perf_gpu_line(frame, sum / 1e6 / n, (double)wait_ns[PERF_PACE] / span, n);
+    int64_t fs[2], fn[2];
+    for (int i = 0; i < 2; i++) fs[i] = plat_xchg64(&mhz_sum[i], 0), fn[i] = plat_xchg64(&mhz_n[i], 0);
+    if (fn[0])
+        rt_log("perf: frame %llu: cpu frequency under the render thread avg %.2f GHz, under the replay %.2f GHz",
+               (unsigned long long)frame, fs[0] / 1e3 / fn[0], fn[1] ? fs[1] / 1e3 / fn[1] : 0.0);
     sum = max = n = ab_b = 0;
     memset(wait_ns, 0, sizeof wait_ns);
     win_start = now;

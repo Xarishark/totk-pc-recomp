@@ -491,6 +491,15 @@ int main(int argc, char **argv) {
     // Timed guest waits (kernel.c block_inner) sleep in whole milliseconds; at the default 15.6 ms tick a 1 ms wait
     // costs a full tick. AC_TIMER_1MS=0 keeps the default for comparison.
     if (cfg_bool("AC_TIMER_1MS")) plat_timer_1ms();
+    // Before any other thread starts: they inherit it. AC_CPU_BOOST: auto (what the frequency governor needs), 1 (the
+    // wait polling whatever the governor), 0 (off). AC_CPU_BOOST_SPIN_US: the longest poll of one wait.
+    {
+        const char *b = cfg_get("AC_CPU_BOOST"), *us = cfg_get("AC_CPU_BOOST_SPIN_US");
+        char line[192];
+        plat_cpu_boost(b && !strcmp(b, "0") ? 0 : b && !strcmp(b, "1") ? 2 : 1,
+                       (uint64_t)(us && atoi(us) >= 0 ? atoi(us) : 1000) * 1000u, line, sizeof line);
+        rt_log("cpu: %s", line);
+    }
     cfg = (RtConfig){.exefs = rt_default_exefs, .romfs = rt_default_romfs, .profile = rt_default_profile,
                      .gpu = cfg_get("AC_GPU")};
     portable_paths(&cfg);   // command-line paths below still win

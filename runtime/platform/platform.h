@@ -88,6 +88,14 @@ void plat_thread_priority(int prio);
 void plat_thread_set_priority(PlatThread *t, int prio);
 int plat_thread_priority_get(void);       // the calling thread's level
 void plat_yield(void);                    // gives the rest of the time slice to another ready thread
+// Asks the OS to run the game's threads at full CPU speed, where it does not on its own (linux.c says how and why;
+// Windows does). Call once at start, before other threads exist: the threads started afterwards inherit it, and a
+// thread set below normal priority gives it up. mode 0: off; 1: what the machine's frequency governor needs; 2: all of
+// it whatever the governor. spin_ns: the longest time a condition-variable wait may poll before it sleeps. Writes a
+// line for the log into out.
+void plat_cpu_boost(int mode, uint64_t spin_ns, char *out, size_t cap);
+// The frequency in MHz of the processor the calling thread is on, as the OS reports it now; 0 when unknown.
+uint32_t plat_cpu_mhz(void);
 static inline void plat_pause(void) {     // spin-wait hint
 #if defined(__x86_64__) || defined(_M_X64)
     _mm_pause();

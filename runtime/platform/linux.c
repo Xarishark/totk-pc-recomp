@@ -440,12 +440,112 @@ static int may_renice(int nice) {
     return lowest <= 0 && nice >= lowest;
 }
 
+// ---- CPU performance (plat_cpu_boost). Linux picks a core's frequency from how busy that one core has been, and puts
+// a thread that wakes up on whichever core is idle. The game's threads hand work to each other thousands of times a
+// second and sleep in between, so each core looks lightly loaded: on a Core Ultra 285H (intel_pstate, 6 P, 8 E and
+// 2 low-power cores) they ran at 1.3-1.8 GHz on cores that hold 5 GHz, a third of the time on the low-power cores, and
+// the game showed 21 fps where the same machine shows 60 under Windows. Two measures, neither needing a privilege:
+//
+// - Utilization clamp (sched_setattr, Linux 5.3): a minimum of 1024 says the thread needs a CPU's full capacity. The
+//   schedutil governor then asks for the highest frequency whenever the thread runs, and on processors with cores of
+//   different speeds the scheduler looks for the fastest idle one first. Threads inherit it from their creator.
+// - Wait polling (cond_spin): where the processor chooses the frequency itself from each core's time awake
+//   (intel_pstate and amd-pstate in their active modes) or the governor samples it (ondemand, conservative), the clamp
+//   does not reach the frequency, and the cores have to stay awake across the short gaps between bursts of work.
+//
+// With both, the same scene holds 60 fps with those cores above 4 GHz. Threads below normal priority (shader and
+// pipeline workers) drop the clamp and never poll, so they leave the fast cores to the game.
+struct uclamp_attr {   // struct sched_attr; glibc 2.41 declares one of its own, older ones none
+    uint32_t size, policy;
+    uint64_t flags;
+    int32_t nice;
+    uint32_t prio;
+    uint64_t runtime, deadline, period;
+    uint32_t util_min, util_max;
+};
+#define UCLAMP_KEEP_ALL 0x18u   // SCHED_FLAG_KEEP_POLICY | SCHED_FLAG_KEEP_PARAMS
+#define UCLAMP_SET_MIN 0x20u    // SCHED_FLAG_UTIL_CLAMP_MIN
+static int boost_on;            // plat_cpu_boost set the clamp: priority changes move it with them
+static uint64_t spin_cap_ns;    // the longest poll of a wait (cond_spin); 0: every wait sleeps at once
+
+static int uclamp_min(pid_t tid, uint32_t min) {
+    struct uclamp_attr a = {.size = sizeof a, .flags = UCLAMP_KEEP_ALL | UCLAMP_SET_MIN, .util_min = min};
+    return !syscall(SYS_sched_setattr, tid, &a, 0);
+}
+
+static int read_word_file(const char *path, char *out, size_t cap) {
+    FILE *f = fopen(path, "r");
+    out[0] = 0;
+    if (!f) return 0;
+    if (!fgets(out, (int)cap, f)) out[0] = 0;
+    fclose(f);
+    out[strcspn(out, " \t\r\n")] = 0;
+    return out[0] != 0;
+}
+
+void plat_cpu_boost(int mode, uint64_t spin_ns, char *out, size_t cap) {
+    char gov[32], drv[32];
+    if (!mode) {
+        snprintf(out, cap, "performance hints off");
+        return;
+    }
+    int clamp = uclamp_min(0, 1024);
+    __atomic_store_n(&boost_on, clamp, __ATOMIC_RELAXED);
+    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", gov, sizeof gov);
+    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver", drv, sizeof drv);
+    // Who decides the frequency from a core's time awake: the processor itself under the pstate drivers' active modes
+    // (their "powersave" is that mode, not a fixed frequency), and the sampling governors. schedutil follows the clamp,
+    // unless the kernel has none; performance is at the top already; anything else keeps a fixed frequency.
+    int hw = !strcmp(gov, "powersave") && (!strcmp(drv, "intel_pstate") || !strcmp(drv, "amd-pstate-epp"));
+    int poll = mode > 1 || hw || !strcmp(gov, "ondemand") || !strcmp(gov, "conservative") ||
+               (!strcmp(gov, "schedutil") && !clamp);
+    __atomic_store_n(&spin_cap_ns, poll ? spin_ns : 0, __ATOMIC_RELAXED);
+    snprintf(out, cap, "utilization clamp %s; waits %s (governor %s, driver %s)",
+             clamp ? "at the maximum for the game's threads" : "refused by the kernel",
+             poll && spin_ns ? "poll before they sleep" : "sleep at once", gov[0] ? gov : "unknown", drv[0] ? drv : "unknown");
+}
+
+// cpufreq's scaling_cur_freq of the processor the caller is on (kHz; the pstate drivers derive it from the cycles the
+// core ran over the last tick). One descriptor per processor, opened at its first use and kept.
+uint32_t plat_cpu_mhz(void) {
+    static int fds[256];   // 0: not tried, -1: no such file, else the descriptor + 1
+    int cpu = sched_getcpu();
+    if (cpu < 0 || cpu >= (int)(sizeof fds / sizeof fds[0])) return 0;
+    int fd = __atomic_load_n(&fds[cpu], __ATOMIC_ACQUIRE);
+    if (!fd) {
+        char path[80];
+        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", cpu);
+        int o = open(path, O_RDONLY | O_CLOEXEC), want = 0;
+        fd = o < 0 ? -1 : o + 1;
+        if (!__atomic_compare_exchange_n(&fds[cpu], &want, fd, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            if (o >= 0) close(o);   // another thread opened it first
+            fd = want;
+        }
+    }
+    char b[24];
+    ssize_t n = fd > 0 ? pread(fd - 1, b, sizeof b - 1, 0) : 0;
+    if (n <= 0) return 0;
+    b[n] = 0;
+    return (uint32_t)(strtoul(b, NULL, 10) / 1000);
+}
+
+// The clamp and the polling follow the priority: below normal a thread is background work.
+static void boost_for(pid_t tid, int prio) {
+    if (tid > 0 && __atomic_load_n(&boost_on, __ATOMIC_RELAXED)) uclamp_min(tid, prio < PLAT_PRIO_NORMAL ? 0 : 1024);
+}
+
 static void renice(pid_t tid, int prio) {
     int nice = nice_of(prio);
     if (tid > 0 && may_renice(nice)) setpriority(PRIO_PROCESS, (id_t)tid, nice);
+    boost_for(tid, prio);
 }
 
-void plat_thread_priority(int prio) { renice((pid_t)syscall(SYS_gettid), prio); }
+static __thread int8_t spin_off;   // set while the calling thread is below normal priority: its waits never poll
+
+void plat_thread_priority(int prio) {
+    spin_off = prio < PLAT_PRIO_NORMAL;
+    renice((pid_t)syscall(SYS_gettid), prio);
+}
 
 void plat_thread_set_priority(PlatThread *t, int prio) { renice(__atomic_load_n(&t->tid, __ATOMIC_ACQUIRE), prio); }
 
@@ -590,17 +690,66 @@ static inline volatile uint32_t *cv(PlatCond *c) { return (volatile uint32_t *)&
 
 void plat_cond_init(PlatCond *c) { c->p = 0; }
 
+// Wait polling (plat_cpu_boost says when and why): before a wait sleeps in the kernel, the thread polls the sequence
+// word for SPIN_PER_WORK times the CPU time it used since its previous wait began, up to spin_cap_ns. A thread that
+// works in bursts keeps its core awake across the gaps, so the core's frequency stays up and the wake-up costs no trip
+// through the scheduler; a thread that mostly sleeps (a 1 ms poller, an idle worker) has little work to its name and
+// sleeps almost at once. Measured on the Core Ultra 285H in play, cap 1 ms: factor 2 gave 51 fps, 4 gave 53, 16 gave
+// 60 (as polling the full cap on every wait did), for 1.7 cores of CPU time where 21 fps without polling took 1.0.
+// Every SPIN_YIELD rounds (about 20 us) the poller offers its core to a thread queued behind it, which costs nothing
+// when none is: on a machine with fewer cores than busy threads a poller must not hold one against real work.
+#define SPIN_PER_WORK 16
+#define SPIN_MIN_NS 2000u   // a shorter poll is not worth the two clock reads
+#define SPIN_YIELD 32
+static __thread uint64_t spin_cpu, spin_spent;   // thread CPU time at the previous wait, and what that wait polled
+
+// Returns the time polled, with *changed set when the word moved on from seq. limit_ns: the wait's own timeout.
+static uint64_t cond_spin(volatile uint32_t *w, uint32_t seq, uint64_t limit_ns, int *changed) {
+    *changed = 0;
+    uint64_t cap = __atomic_load_n(&spin_cap_ns, __ATOMIC_RELAXED);
+    if (!cap || spin_off) return 0;
+    struct timespec ct;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ct);
+    uint64_t cpu = (uint64_t)ct.tv_sec * 1000000000u + (uint64_t)ct.tv_nsec, used = cpu - spin_cpu;
+    uint64_t work = used > spin_spent ? used - spin_spent : 0;   // polling is CPU time too, but not work
+    spin_cpu = cpu;
+    spin_spent = 0;
+    uint64_t budget = work < cap / SPIN_PER_WORK ? work * SPIN_PER_WORK : cap;
+    if (budget > limit_ns) budget = limit_ns;
+    if (budget < SPIN_MIN_NS) return 0;
+    uint64_t t0 = plat_now_ns(), now = t0;
+    for (unsigned round = 1; now - t0 < budget && !*changed; round++) {
+        for (int i = 0; i < 16 && !*changed; i++) {
+            if (__atomic_load_n(w, __ATOMIC_ACQUIRE) != seq) *changed = 1;
+            else plat_pause();
+        }
+        if (!*changed && round % SPIN_YIELD == 0) sched_yield();
+        now = plat_now_ns();
+    }
+    spin_spent = now - t0;
+    return spin_spent;
+}
+
 void plat_cond_wait(PlatCond *c, PlatMutex *m) {
     uint32_t seq = __atomic_load_n(cv(c), __ATOMIC_RELAXED);
+    int changed;
     plat_mutex_unlock(m);
-    futex(cv(c), FUTEX_WAIT, seq, NULL);
+    cond_spin(cv(c), seq, UINT64_MAX, &changed);
+    if (!changed) futex(cv(c), FUTEX_WAIT, seq, NULL);
     plat_mutex_lock(m);
 }
 
 int plat_cond_wait_ns(PlatCond *c, PlatMutex *m, uint64_t ns) {
     uint32_t seq = __atomic_load_n(cv(c), __ATOMIC_RELAXED);
-    struct timespec ts = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)};
+    int changed;
     plat_mutex_unlock(m);
+    uint64_t spun = cond_spin(cv(c), seq, ns, &changed);
+    if (changed || spun >= ns) {
+        plat_mutex_lock(m);
+        return changed;
+    }
+    ns -= spun;
+    struct timespec ts = {(time_t)(ns / 1000000000u), (long)(ns % 1000000000u)};
     long r = futex(cv(c), FUTEX_WAIT, seq, &ts);
     int timed_out = r == -1 && errno == ETIMEDOUT;
     plat_mutex_lock(m);

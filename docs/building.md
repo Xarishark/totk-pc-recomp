@@ -187,6 +187,30 @@ well: the shadow copies are chosen for the measured cost above, not for a missin
 The Deck's GPU (Van Gogh) has no native ASTC, so its textures go through the compute decoder (`runtime/vk_astc.c`,
 `AC_ASTC`) as on desktop AMD GPUs without it; frame times measured there include it.
 
+CPU frequency: Linux picks a core's frequency from how busy that one core has been and wakes a thread on whichever
+core is idle. The game's threads hand work to each other thousands of times a second and sleep in between, so every
+core looks lightly loaded and stays slow: on a Core Ultra 285H (16 cores, `intel_pstate`) they ran at 1.3-1.8 GHz on
+cores that hold 5 GHz, a third of the time on the low-power cores, and a scene Windows shows at 60 fps ran at 21. The
+logs of a Steam Deck and of a GTX 1080 Ti in issue #8 show the same picture (the render thread busy for the whole
+frame, the GPU waiting for the next submission most of it). `cpu_boost` (`AC_CPU_BOOST`, `plat_cpu_boost` in
+`runtime/platform/linux.c`) answers with two things that need no privilege:
+
+- a utilization clamp at the maximum for the game's threads (`sched_setattr`, Linux 5.3): the `schedutil` governor
+  then runs them at the top frequency, and on processors with cores of different speeds the scheduler tries the fast
+  ones first;
+- where the processor chooses the frequency itself (`intel_pstate` and `amd-pstate-epp` under their `powersave`
+  governor) or the governor samples each core's idle time (`ondemand`, `conservative`), a thread about to wait polls
+  for up to 1 ms first, in proportion to the work it just did, so the core stays awake across the gap.
+
+`auto`, the default, uses the clamp always and the polling only under those governors (and under `schedutil` on a
+kernel without the clamp); `1` polls whatever the governor, `0` turns both off. On the 285H `auto` holds 60 fps at
+4.0-4.6 GHz and uses 1.7 cores of CPU time where the 21 fps used 1.0; limited to 4 of its fast cores it holds 60 as
+well. Only that machine is measured: the `schedutil` path (the Steam Deck's governor) follows the kernel's
+documentation, not a run.
+`AC_TRACE=perf` logs the governor at start (`cpu:`) and, every 60 frames, the frequency of the cores under the render
+and replay threads (`cpu frequency under the render thread`), which is what to compare between `cpu_boost = 0` and
+the default on another machine.
+
 ## Checks
 
 Before a commit:
