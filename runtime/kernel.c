@@ -1541,12 +1541,16 @@ void kern_run_on_guest_main(void (*fn)(Cpu *c)) {
 }
 
 // The OS timer ends a wait late by up to PLAT_WAIT_LATE_NS (Windows' high-resolution waitable timer: 0.3-0.5 ms; the
-// SDK's 20 us polling sleeps, main thread and job workers, about 1.5 per frame each, took 460-515 us). Sleeps up to
-// twice that spin on the clock instead (1 ms on Windows, 120 us on Linux); the virtual core is already given up.
+// SDK's 20 us polling sleeps, main thread and job workers, about 1.5 per frame each, took 460-515 us). Sleeps
+// shorter than twice that spin on the clock instead (under 1 ms on Windows, 120 us on Linux); the virtual core is
+// already given up. A sleep of exactly twice the lateness takes the timer and ends up to half its length late: on
+// Windows that is the 1 ms the game's four polling threads sleep between passes (main+0x541f80, +0x9aa200, +0x9aa370,
+// +0x9c03b0, priority 59, no work in play). While the bound included it, each spun through 80 to 94% of a host core,
+// 3.4 cores in all, more than the rest of the process together.
 #define SLEEP_SPIN_NS (2 * PLAT_WAIT_LATE_NS)
 static void sleep_ns(RtThread *t, int64_t ns) {
     (void)t;
-    if (ns <= SLEEP_SPIN_NS) {
+    if (ns < SLEEP_SPIN_NS) {
         uint64_t end = kern_now_ns() + (uint64_t)ns;
         while (kern_now_ns() < end) plat_pause();
         return;
