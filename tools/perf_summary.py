@@ -2,7 +2,7 @@
 
     python tools/perf_summary.py build/v121/logs/fight.log 1560 2600
 
-`mem: dirty` lines (vk_memory.c dirty census) are summarised per pool class (CPU_CACHED, CPU_UNCACHED, other): what
+`mem: dirty` lines (vk_memory.c dirty census, logged with AC_TRACE=perf,dirty) are summarised per pool class (CPU_CACHED, CPU_UNCACHED, other): what
 a device-local mirror of buffer-bound pools would upload per frame and per submit, FlushMappedRange use, mirror size.
 """
 import re

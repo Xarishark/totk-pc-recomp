@@ -50,7 +50,7 @@ typedef struct PoolRec {
     VPage *pt;                         // POOL_VIRT: size / 64 KiB entries
     uint64_t npages;
     volatile int32_t used;                // resolved at least once: the GPU may still read it at finalize
-    // AC_TRACE=perf dirty census (vk_mem_dirty_submit), replay thread under the submit lock only:
+    // AC_TRACE=dirty census (vk_mem_dirty_submit), replay thread under the submit lock only:
     uint32_t bound_sub;                // last submit that bound it as a buffer (dirty_sub), 0 never
     uint32_t synced_gen;               // page generation its lazy-mirror count covers; DIRTY_UNSYNCED until scanned
     uint8_t bufbound;                  // ever bound as a vertex, index, uniform, storage or indirect buffer
@@ -514,7 +514,7 @@ static void vma_detail_log(void);
 void vk_mem_census(uint64_t frame) {
     static uint64_t window_start;
     if ((rt_trace & RT_TRACE_PERF) && frame % 600 == 0) vram_log(frame);
-    if ((rt_trace & RT_TRACE_PERF) && !vk_mirror_on) dirty_frame(frame);
+    if ((rt_trace & RT_TRACE_DIRTY) && !vk_mirror_on) dirty_frame(frame);
     if ((rt_trace & RT_TRACE_PERF) ? frame % 60 == 0 : frame == 600 || frame == 1800)
         mirror_log(frame), shadow_log(frame);   // mirror_log also logs the write-watch line
     if (frame == 1200) {   // loading is over: the first window starts here
@@ -813,7 +813,10 @@ void vk_mem_snap_stats(uint64_t *checks, uint64_t *calls, uint64_t *untracked) {
     *untracked = __atomic_exchange_n(&n_snap_untracked, 0, __ATOMIC_RELAXED);
 }
 
-// ---------------------------------------------------------------- dirty census (AC_TRACE=perf)
+// ---------------------------------------------------------------- dirty census (AC_TRACE=dirty)
+// A trace item of its own, not part of AC_TRACE=perf: its queries walk every buffer-bound pool at each submit, which
+// under Linux's write watch reads all of their page table entries (9.8 ms a frame on an Arrow Lake GPU, 15.5 ms on a
+// Steam Deck), so a perf log taken with it measured the census as much as the game.
 // What a device-local mirror of the buffer-bound pools would upload. The replay notes every
 // imported pool it binds as a vertex, index, uniform, storage or indirect buffer (vk_mem_bound_note). At the start of
 // each submit one write-watch query per run of such pools stamps the pages written since with a new generation, in the
@@ -1109,7 +1112,7 @@ static void shadow_log(uint64_t frame) {
 }
 
 void vk_mem_dirty_submit(void) {
-    if (!(rt_trace & RT_TRACE_PERF) || vk_mirror_on) return;   // the mirror's own line replaces the census
+    if (!(rt_trace & RT_TRACE_DIRTY) || vk_mirror_on) return;   // the mirror's own line replaces the census
     uint64_t t0 = kern_now_ns();
     uint32_t prev = dirty_sub;   // the submit whose replay noted the bindings
     dirty_sub = prev + 1 ? prev + 1 : 1;

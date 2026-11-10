@@ -211,6 +211,9 @@ documentation, not a run.
 and replay threads (`cpu frequency under the render thread`), which is what to compare between `cpu_boost = 0` and
 the default on another machine.
 
+The dirty census (`mem: dirty` lines, `tools/perf_summary.py`) is the trace item `dirty`, not part of `perf`: its
+write-watch queries read every page table entry of the buffer-bound pools at each submit, 15 ms a frame on the Deck.
+
 ## Checks
 
 Before a commit:
