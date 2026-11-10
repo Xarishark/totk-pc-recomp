@@ -1766,6 +1766,7 @@ static int page_dirty(uint64_t a, uint32_t mgen) {
 
 static void verify_cb(void *arg) {   // completion thread
     VJob *j = arg;
+    vmaInvalidateAllocation(vk_ctx()->vma, j->alloc, 0, VK_WHOLE_SIZE);   // non-coherent memory only
     static volatile int32_t logged;
     uint64_t pages = 0, skipped = 0, bad = 0;
     for (int i = 0; i < j->n; i++) {
