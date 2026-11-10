@@ -182,7 +182,7 @@ def build(work, emitted, jobs, cflags):
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    flags = ['-O2', '-fno-strict-aliasing', '-Wno-return-type', '-Wno-unused-label', '-I', str(ROOT / 'runtime')]   # as build_game.py GEN_FLAGS
+    flags = ['-O1', '-fno-strict-aliasing', '-Wno-return-type', '-Wno-unused-label', '-I', str(ROOT / 'runtime')]
     flags += cflags.split()
     groups = {}
     for name, entry, end, emitter in emitted:
