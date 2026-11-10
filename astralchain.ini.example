@@ -7,6 +7,9 @@
 # Frame rate: 60 runs the game's community 60 fps patch (the default), 30 switches it off for the game's own rate.
 # Changes while the game runs take effect at once; the cutscene fix follows the patch.
 # fps = 60
+# Experimental: in-engine cutscenes at 60 fps instead of 30, on the real-time clock so they keep to the voices and
+# music. Movies stay at 30. Needs fps = 60. Changes take effect at once.
+# cutscene60 = 0
 # Real-time frame step: game speed follows the clock instead of the frame count.
 # realtime = 1
 # Cloth simulation on the real-time clock. Needs realtime = 1.

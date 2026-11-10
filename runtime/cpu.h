@@ -69,6 +69,22 @@ void rt_fps_timer_first(Cpu *c);    // frame timer's first call: the game's step
 void rt_fps_text_rate_s2(Cpu *c);   // dialogue text reveal: s2 = rate * step
 void rt_fps_cue_up_w8(Cpu *c);      // cue scheduler: w8 += whole ticks, keeping the old counter
 uint64_t rt_fps_cue_cmp(Cpu *c);    // cue scheduler: cmp w9,w8 -> Z when the entry's frame is in (old, new]
+void rt_cut_hold_s1(Cpu *c);        // cut clock: s1 = the time a cut may reach (len - rate; just below len at 60)
+void rt_cut_prev_s0(Cpu *c);        // cut clock: s0 = the time before this frame (s1 at 60: no hold)
+void rt_cut_next_s1(Cpu *c);        // cut clock: s1 = the next cut's start (0; the overshoot at 60)
+void rt_fps_talk_clear(Cpu *c);     // talk command: clear the talking flag, unless the frame is skipped at 60
+void rt_fps_talk_busy_w8(Cpu *c);   // talk command: w8 = its done flag, or 1 on a skipped frame at 60
+void rt_fps_talk_ret_w8(Cpu *c);    // talk command: w8 = 1, or 0 (still running) on a skipped frame at 60
+void rt_fps_voiced_alt_w8(Cpu *c);  // voiced talk command: w8 = its variant switch, or 0 on a skipped frame at 60
+void rt_fps_voiced_state_w8(Cpu *c);  // voiced talk command: w8 = its state, or 4 (returns 0) on a skipped frame
+void rt_fps_msg_state_w8(Cpu *c);  // second talk command: w8 = its state, or 2 (returns 0) on a skipped frame at 60
+void rt_fps_talk_wait_s1(Cpu *c);   // talk command countdowns: s1 = the step, or the whole ticks in a cutscene at 60
+void rt_fps_talk_state_w8(Cpu *c); // talk line state machine: w8 = its state, or 4 (idle) without a tick at 60
+void rt_cut_state(Cpu *c);         // diagnostics: the scene clock after its commit (AC_TRACE=perf)
+void rt_cut_drift_s0(Cpu *c);      // cutscene voice sync: records s0 = track position - picture (seconds)
+void rt_movie_opened(Cpu *c);       // Bink player open: x0 = BinkOpen's handle (full-screen by its size)
+void rt_movie_close(Cpu *c);        // Bink player: x0 = the handle BinkClose takes
+void rt_movie_wait(Cpu *c);         // Bink player: x0 = the handle BinkWait takes (a full-screen movie is playing)
 void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical angle) *= AC_FOV factor (resolution.c)
 // game resolution (resolution.c, set res): the output width or height from the patch page into a register, the
 // ladder's cmp w0 against the width (returns packed NZCV), and the render-target budget for that size into w8

@@ -70,6 +70,13 @@ static _Atomic float device_volume = 1.0f;
 
 float audio_device_volume(void) { return atomic_load(&device_volume); }
 
+// The output device's clock: the sound it has asked for since it opened, in ns (sdl_pull adds each request, whether the
+// ring had samples for it or not). It stands still while the device does: a suspended process, a debugger break. The
+// 60 fps cutscene step (frame_rate.c cutscene_stall) reads it to tell such a stall from one of the game thread alone.
+static _Atomic uint64_t device_clock_ns;
+
+uint64_t audio_device_clock_ns(void) { return atomic_load_explicit(&device_clock_ns, memory_order_relaxed); }
+
 // AC_VOLUME: the player's volume in percent (0..100) on top of the game's own; a live setting (the
 // menu), parsed again when cfg_version changes. Render thread only.
 static float host_volume(void) {
@@ -166,6 +173,8 @@ static void SDLCALL sdl_pull(void *user, SDL_AudioStream *stream, int additional
         if (!frames) break;
         if (frames > 1024) frames = 1024;
         ring_pull(m, tmp, frames);
+        if (m->rate > 0)
+            atomic_fetch_add_explicit(&device_clock_ns, frames * 1000000000ull / (uint64_t)m->rate, memory_order_relaxed);
         if (!SDL_PutAudioStreamData(stream, tmp, (int)(frames * 2 * sizeof(float)))) break;
         additional -= (int)(frames * 2 * sizeof(float));
     }
