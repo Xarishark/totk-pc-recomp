@@ -486,7 +486,7 @@ static void row_window_size(void) {
 
 // AC_OUTPUT_RES (resolution.c res_pick): the size the game renders itself, as in the TotK Recomp's menu: its 16:9 sizes
 // up to 3840x2160, the most the process heap leaves room for, 1280x720 for weak GPUs (resolution.c res_size takes 16:9
-// sizes of 32n x 18n only). Another size from the ini (the Steam Deck profile's 1280x800) shows as it is. Read at
+// sizes of 32n x 18n only; the Steam Deck profile's default is 1280x720). Another size from the ini shows as it is. Read at
 // start; the row says "after restart" while the stored value differs from the size this run renders.
 static void row_output_res(void) {
     static const char *const vals[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3200x1800", "3840x2160"};

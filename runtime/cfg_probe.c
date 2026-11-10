@@ -461,6 +461,49 @@ int probe_cfg(void) {
     CHECK(plat_file_write(path, old_layout_own, sizeof old_layout_own - 1) && cfg_load(path) == 1 &&
               EQ(cfg_get("AC_PAD_LAYOUT"), "nintendo") && EQ(cfg_get("AC_PROMPTS"), "nintendo"),
           "a prompts line of the file's own wins over 0.1.9's pad_layout = xbox_prompts");
+    // The Steam Deck's one-time move from a stored 1080p output_res to the profile's 1280x720 (cfg.c cfg_migrate_deck_res)
+    plat_setenv("AC_OUTPUT_RES", NULL);
+    static const char deck_1080[] = "[display]\noutput_res = 1920x1080\n";
+    static const char deck_done[] = "[display]\ndeck_res_migrated = 1\n";
+    CHECK(plat_file_write(path, deck_1080, sizeof deck_1080 - 1) && cfg_load(path) == 1 && cfg_migrate_deck_res(0) == 0 &&
+              EQ(cfg_get("AC_OUTPUT_RES"), "1920x1080") && cfg_save_to(path) == 1,
+          "deck migration: off the Deck nothing runs");
+    got = plat_file_read(path, &got_n);
+    CHECK(got && got_n == sizeof deck_1080 - 1 && !memcmp(got, deck_1080, got_n), "deck migration: off the Deck the file stays");
+    free(got);
+    CHECK(cfg_load(path) == 1 && cfg_migrate_deck_res(1) == 2 && !cfg_is_set("AC_OUTPUT_RES") && cfg_save_to(path) == 1,
+          "deck migration: a stored 1920x1080 is reset on a Deck");
+    got = plat_file_read(path, &got_n);
+    CHECK(got && got_n == sizeof deck_done - 1 && !memcmp(got, deck_done, got_n),
+          "deck migration: the output_res line leaves the file, the marker comes in");
+    if (got && (got_n != sizeof deck_done - 1 || memcmp(got, deck_done, got_n))) fprintf(stderr, "---- saved:\n%s\n----\n", got);
+    free(got);
+    CHECK(cfg_load(path) == 1 && cfg_migrate_deck_res(1) == 0, "deck migration: runs once");
+    cfg_set("AC_OUTPUT_RES", "1920x1080");   // a docked Deck picks 1080p again
+    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && cfg_migrate_deck_res(1) == 0 &&
+              EQ(cfg_get("AC_OUTPUT_RES"), "1920x1080"),
+          "deck migration: 1920x1080 picked after the move stays");
+    static const char deck_1440[] = "[display]\noutput_res = 2560x1440\n";
+    CHECK(plat_file_write(path, deck_1440, sizeof deck_1440 - 1) && cfg_load(path) == 1 && cfg_migrate_deck_res(1) == 1 &&
+              EQ(cfg_get("AC_OUTPUT_RES"), "2560x1440"),
+          "deck migration: another stored size stays, only the marker is set");
+    static const char deck_800[] = "[display]\noutput_res = 1280x800\n";
+    CHECK(plat_file_write(path, deck_800, sizeof deck_800 - 1) && cfg_load(path) == 1 && cfg_migrate_deck_res(1) == 2 &&
+              !cfg_is_set("AC_OUTPUT_RES"),
+          "deck migration: a size off the res set's grid (rendered as 1920x1080) is reset too");
+    static const char deck_fresh[] = "[display]\n# output_res = 1920x1080\n";
+    static const char deck_fresh_done[] = "[display]\n# output_res = 1920x1080\ndeck_res_migrated = 1\n";
+    plat_setenv("AC_OUTPUT_RES", "1920x1080");
+    CHECK(plat_file_write(path, deck_fresh, sizeof deck_fresh - 1) && cfg_load(path) == 1 && cfg_migrate_deck_res(1) == 1 &&
+              EQ(cfg_get("AC_OUTPUT_RES"), "1920x1080") && cfg_save_to(path) == 1,
+          "deck migration: a fresh file gets the marker only, the environment's output_res is left alone");
+    plat_setenv("AC_OUTPUT_RES", NULL);
+    got = plat_file_read(path, &got_n);
+    CHECK(got && got_n == sizeof deck_fresh_done - 1 && !memcmp(got, deck_fresh_done, got_n),
+          "deck migration: a fresh file keeps its lines and gains the marker");
+    if (got && (got_n != sizeof deck_fresh_done - 1 || memcmp(got, deck_fresh_done, got_n)))
+        fprintf(stderr, "---- saved:\n%s\n----\n", got);
+    free(got);
     plat_file_delete(path);
     cfg_load("cfg-probe-missing.ini");
     int listed = 0;

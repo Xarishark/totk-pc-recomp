@@ -25,6 +25,10 @@ int cfg_from_env(const char *name);
 int cfg_is_set(const char *name);
 // The device profile in use, "deck" or "desktop" (AC_DEVICE_PROFILE, else what the machine is).
 const char *cfg_device_profile(void);
+// The one-time Steam Deck move from a stored 1080p output_res to the profile's 1280x720 (cfg.c; cfg_init runs it with
+// the profile and saves). deck = 0 does nothing. Marks astralchain.ini with deck_res_migrated = 1. Returns 0 when
+// nothing ran, 1 when only the marker was set, 2 when output_res was reset too. Not thread-safe against cfg_load.
+int cfg_migrate_deck_res(int deck);
 // Writes the keys cfg_set changed since the last save into astralchain.ini next to astralchain.exe (cfg_save_to: the file at path).
 // Only those lines change: the last line of a changed key gets the new value, a missing key goes under its section
 // (after the commented example line of the key when the section has one; the section is added at the end of the file

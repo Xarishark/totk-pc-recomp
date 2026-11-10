@@ -291,17 +291,24 @@ static int output_set(void) { return rt_patch_set("output") >= 0; }
 // in the temporal-upscaling work), and in handheld, where the scene targets are 1280x720, a 1280-wide output makes the
 // ladder's cmp take the docked entries for them, so a level's target is never made and loading a save reads through
 // its null texture in main+0x9d0df0 (as issues #25 and #38). On the grid the only 1280-wide size is 1280x720 itself.
+// res_output_grid is that rule alone, also for cfg.c's Steam Deck migration (cfg_migrate_deck_res), which has to know
+// which stored values end up as 1920x1080.
+int res_output_grid(const char *o, unsigned *w, unsigned *h) {
+    unsigned a = 0, b = 0;
+    char tail;
+    if (!o || sscanf(o, "%ux%u%c", &a, &b, &tail) != 2 || a % 32 || b % 18 || a / 32 != b / 18 || a < 1280 ||
+        (uint64_t)a * b > RES_PIXELS_MAX)
+        return 0;
+    *w = a, *h = b;
+    return 1;
+}
+
 static void res_size(unsigned *w, unsigned *h) {
     static unsigned sw, sh;
     if (!sw) {
         const char *o = cfg_value("AC_OUTPUT_RES");
-        unsigned a = 0, b = 0;
-        char tail;
         sw = 1920, sh = 1080;
-        if (sscanf(o, "%ux%u%c", &a, &b, &tail) == 2 && a % 32 == 0 && b % 18 == 0 && a / 32 == b / 18 &&
-            a >= 1280 && (uint64_t)a * b <= RES_PIXELS_MAX)
-            sw = a, sh = b;
-        else if (strcmp(o, "1920x1080"))
+        if (!res_output_grid(o, &sw, &sh) && strcmp(o, "1920x1080"))
             rt_log("resolution: output_res = %s is not a 16:9 size of 32n x 18n from 1280x720 to 3840x2160; "
                    "1920x1080", o);
     }

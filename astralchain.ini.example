@@ -48,9 +48,9 @@
 # the CPU threads).
 # lib_prebuild = 1
 # lib_prebuild_threads = 4
-# Recorded graphics variants whose stage libraries are kept from the boot prebuild (0 to 4096; default: 512, 0 on
+# Recorded graphics variants whose stage libraries are kept from the boot prebuild (0 to 4096; default: 1024, 512 on
 # Steam Deck): each kept library costs process memory but never rebuilds, even with a cold driver cache.
-# lib_prebuild_keep = 512
+# lib_prebuild_keep = 1024
 # Build known pipelines ahead of time.
 # pipe_prebuild = 1
 # Threads that translate known shaders at start (1 to 64; default: half the CPU threads, at most 16).
@@ -122,11 +122,18 @@
 # vk_subgroup_pin = 1
 
 [display]
-# Device profile: auto (the Steam Deck when this is one), desktop or deck. On a Steam Deck the keys this file does not
-# set default to fullscreen = 1, window_size = 1280x800, output_res = 1280x800, render_scale = game, vk_present = fifo,
+# Device profile: auto (the Steam Deck when this is one: SteamDeck=1, which Steam sets, or Valve's Jupiter / Galileo
+# board), desktop or deck. On a Steam Deck the keys this file does not set default to fullscreen = 1,
+# window_size = 1280x800, output_res = 1280x720 (shown on the 1280x800 screen with bars of 40 rows above and below;
+# set output_res = 1920x1080 here or in the menu for a docked Deck on a 1080p display), render_scale = game, vk_present = fifo,
 # fps = 30, operation_mode = handheld, astc_bc = bc1, tex_cache_mb = 512, tex_vram_pressure = 70, aniso = game,
 # shadow_res = 512, shadow_scale = 1, shadow_range = 100, contact_shadows = 0, pcss = 0. Read at start.
 # device_profile = auto
+# Written by the game on a Steam Deck, not a setting: up to 1.7.1 a Deck rendered 1920x1080, and the first start of a
+# later version removes an output_res line here that renders 1920x1080 (1920x1080 itself, or a size the game does not
+# take, such as 1280x800), so the Deck's 1280x720 applies; other sizes stay. deck_res_migrated = 1 records that this
+# ran, so a 1920x1080 picked afterwards (a docked Deck) is kept. Never written off the Deck.
+# deck_res_migrated = 1
 # Presentation mode: mailbox (default when the driver offers it, vsync otherwise), fifo (vsync) or immediate.
 # vk_present = mailbox
 # Window client area in screen pixels (640x360 to 7680x4320), and borderless fullscreen (on by default). Windows
@@ -146,7 +153,7 @@
 # gpu_index = 0
 # gpu_name = NVIDIA
 # Game resolution: the size the game draws its picture and interface in, its render targets and effects included, as
-# <width>x<height>: 1920x1080 by default, any 16:9 size of 32n x 18n from 1280x720 (for weak GPUs) up to 3840x2160, the
+# <width>x<height>: 1920x1080 by default (1280x720 on a Steam Deck), any 16:9 size of 32n x 18n from 1280x720 (for weak GPUs) up to 3840x2160, the
 # most the application pool leaves room for (1600x900, 2560x1440 and 3200x1800 among them); another size keeps
 # 1920x1080, as other shapes and sizes off that grid lose the GPU device. Above 1920x1080's pixel count the game's
 # render-target budget grows with the pixels (310 MiB up to 1920x1080, 545 MiB at 2560x1440, 1100 MiB at 3840x2160) and

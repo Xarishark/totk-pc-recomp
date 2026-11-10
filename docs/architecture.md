@@ -99,7 +99,11 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   sites that hold the game's render size (`resolution.c` `res_pick`, `rt_res_*`), reading `output_res` from the patch
   page: any 16:9 size of 32n x 18n from 1280x720 to 3840x2160 (1920x1080 by default; `res_size`). 1280x800 lost the
   device, and crashed in handheld, where a 1280-wide output makes the ladder take the docked entries for the 1280x720
-  targets. The game's render targets and window
+  targets; a size off the grid falls back to 1920x1080. The Steam Deck profile (`cfg.c` `DECK`) therefore defaults to
+  1280x720, which the present fits into the 1280x800 screen with 40-row bars (`gfx_fit_rect`); the selection happens
+  at start, in one exe for desktop and Deck. Decks that rendered 1080p before keep no stored 1080p:
+  `cfg_migrate_deck_res` removes, once, an ini `output_res` that renders 1920x1080 and marks the file with
+  `deck_res_migrated = 1`. The game's render targets and window
   textures come from one budget the graphics configuration sets (main+0x40e0b0: 310 MiB, of which 1080p uses 304),
   carved from the process heap; above 1080p's pixel count `rt_res_budget_w8` raises it with the pixels (`res_budget`:
   the measured 87 MiB and 110 bytes a pixel, 15 % to spare) and `res_heap_extra_bytes` grows the application pool by

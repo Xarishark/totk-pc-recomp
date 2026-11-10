@@ -282,6 +282,8 @@ int res_wants_wide_overlay(const unsigned out[2]);         // not 16:9 on a game
 void res_wanted(unsigned out[2]);                          // the output size AC_OUTPUT_RES asks for
 void res_game_size(unsigned out[2]);                       // the size the game renders in: output_res with the res
                                                            // set, 1888x1062 with res1062, else res_sizes' output
+int res_output_grid(const char *o, unsigned *w, unsigned *h);   // o is a size the 1.0.1 res set takes (16:9, 32n x
+                                                           // 18n, 1280x720..3840x2160): 1 and the size; else 0
 void res_fov_live(void);                                   // AC_FOV to the camera (set fov); on a settings change
 // ---- code patches (patches.c) and the frame step (frame_rate.c)
 void rt_patches_init(void);                                // after ldr_load: switches from the environment, the patch

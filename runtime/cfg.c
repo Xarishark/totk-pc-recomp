@@ -37,7 +37,7 @@ static const char *const known[] = {
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
     "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA",
     "COLOR_PRESET", "COLOR_SATURATION", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CPU_BOOST", "CPU_BOOST_SPIN_US", "CRIT", "CRIT_OUT",
-    "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLSS", "DUMP", "DUMP_AUTO", "DUMP_BUF", "DUMP_DIR", "DUMP_DRAWS",
+    "DECK_RES_MIGRATED", "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLSS", "DUMP", "DUMP_AUTO", "DUMP_BUF", "DUMP_DIR", "DUMP_DRAWS",
     "DUMP_LOG", "DUMP_N", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES",
     "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH", "FPS", "FREEZE_IDLE", "FREE_CORES",
     "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "GPU_PASSES", "HDR", "HDR_GAME_NITS",
@@ -71,7 +71,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"SHADOW_RES", "display"},
     {"DLAA", "display"}, {"DLSS", "display"}, {"FXAA", "display"},
-    {"DEVICE_PROFILE", "display"}, {"ASSUME_FOCUS", "display"},
+    {"DEVICE_PROFILE", "display"}, {"DECK_RES_MIGRATED", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
     {"MODS_DIR", "mods"}, {"MODS_ORDER", "mods"}, {"MODS_DISABLED", "mods"}, {"MODS_REBUILD", "mods"},
@@ -154,7 +154,7 @@ static const CfgMeta metas[] = {
     // shaders and pipelines
     {"PIPE_WAIT", "default", "default|draw", RESTART}, {"PIPE_SKIP", "fullscreen", "strict|any|fullscreen", RESTART},
     {"LIB_PREBUILD", "1", "0|1", RESTART}, {"LIB_PREBUILD_THREADS", "", "1..64", RESTART},
-    {"LIB_PREBUILD_KEEP", "512", "0..4096", RESTART}, {"PIPE_PREBUILD", "1", "0|1", RESTART}, {"PREWARM_XLATE", "", "1..64", RESTART}, {"GPL", "", "0|1", RESTART},
+    {"LIB_PREBUILD_KEEP", "1024", "0..4096", RESTART}, {"PIPE_PREBUILD", "1", "0|1", RESTART}, {"PREWARM_XLATE", "", "1..64", RESTART}, {"GPL", "", "0|1", RESTART},
     // textures and memory
     {"ASTC", "auto", "auto|gpu|native|cpu", RESTART}, {"MEMORY", "auto", "auto|import|mirror|verify", RESTART},
     {"TEX_ALIAS", "1", "0|1", RESTART}, {"TEX_CACHE_MB", "", "", RESTART}, {"TEX_VRAM_PRESSURE", "90", "0..100", RESTART}, {"ASTC_BC", "auto", "auto|bc1|1|0", RESTART}, {"TEX_MIP_SKIP", "0", "0|1024|2048", RESTART}, {"ZSTD_NATIVE", "1", "0|1", RESTART}, {"ZSTD_CHECK", "0", "0|1", RESTART},
@@ -290,8 +290,11 @@ int cfg_load(const char *path) {
 // (default: the Steam Deck when the firmware says so), desktop (none) or deck.
 //
 // The Steam Deck (LCD Jupiter, OLED Galileo; 1280x800, 16:10, 4 Zen 2 cores, RDNA 2 with 8 CUs sharing 16 GB): the game
-// at the screen's 1280x800 with its own 5/6 scene (the aspect patch gives the camera its 16:10, resolution.c, and the
-// romfs-patches-1280x800 overlay the HUD's);
+// renders 1280x720, the 16:9 size of the screen's width, and the present fits it into the 1280x800 window with bars of
+// 40 rows above and below (gfx_present.c gfx_fit_rect). 1280x800 itself is no size the 1.0.1 res set takes
+// (resolution.c res_size: it lost the device and crashed in handheld), so asking for it made the game fall back to
+// 1920x1080 and spend GPU time on pixels the screen then scaled away. A player's output_res (the menu, astralchain.ini,
+// AC_OUTPUT_RES) wins as for every key here, so a Deck docked to a 1080p display can pick 1920x1080;
 // fullscreen and vsync, as gamescope composes Game Mode; 30 fps, the game's shipping rate (AC_FPS=60 opts into the
 // community patch); VRAM pack: ASTC recompressed to BC1 / BC3 by the alpha scan (a quarter to an eighth of RGBA8),
 // ASTC textures of 1024 texels or more without their level 0 (three quarters less each), 512 MiB texture cache, pressure
@@ -303,11 +306,11 @@ int cfg_load(const char *path) {
 // session in the headquarters showed the CPU drawing 9.1 W against the GPU's 2.3 W with the GPU 83% busy at 25 fps:
 // the GPU ran out of power, not the CPU of frequency, and the boost would move more of the budget to the CPU.
 static const struct { const char *key, *value; } DECK[] = {
-    {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"OUTPUT_RES", "1280x800"}, {"RENDER_SCALE", "game"},
+    {"FULLSCREEN", "1"}, {"WINDOW_SIZE", "1280x800"}, {"OUTPUT_RES", "1280x720"}, {"RENDER_SCALE", "game"},
     {"VK_PRESENT", "fifo"}, {"FPS", "30"}, {"OPERATION_MODE", "handheld"},
     {"ASTC_BC", "bc1"}, {"TEX_MIP_SKIP", "1024"}, {"TEX_CACHE_MB", "512"}, {"TEX_VRAM_PRESSURE", "70"}, {"ANISO", "game"},
     {"SHADOW_RES", "512"}, {"SHADOW_SCALE", "1"}, {"SHADOW_RANGE", "100"}, {"CONTACT_SHADOWS", "0"}, {"PCSS", "0"},
-    {"LIB_PREBUILD_KEEP", "0"}, {"CPU_BOOST", "0"},
+    {"LIB_PREBUILD_KEEP", "512"}, {"CPU_BOOST", "0"},
 };
 static int profile = -1;   // 0 none, 1 Steam Deck
 
@@ -320,14 +323,19 @@ static int read_line(const char *path, char *out, size_t n) {
     return ok;
 }
 
-// The Steam Deck: Valve's board, product Jupiter or Galileo (/sys/class/dmi/id); SteamDeck=1, which Steam sets on it.
+// The Steam Deck: SteamDeck=1, which Steam sets on it (Proton passes it on to the Windows exe); else Valve's board,
+// product Jupiter or Galileo (/sys/class/dmi/id). Under Wine (the Windows exe started outside Steam, as by Lutris or
+// Heroic) a path from the root names the current drive, so the files are read through Z:, which Wine and Proton map
+// to the Linux root.
 static int on_steam_deck(void) {
     const char *env = getenv("SteamDeck");
     if (env && !strcmp(env, "1")) return 1;
-    char vendor[64], product[64];
-    return read_line("/sys/class/dmi/id/board_vendor", vendor, sizeof vendor) && !strcmp(vendor, "Valve") &&
-           read_line("/sys/class/dmi/id/product_name", product, sizeof product) &&
-           (!strcmp(product, "Jupiter") || !strcmp(product, "Galileo"));
+    const char *root = plat_is_wine() ? "Z:" : "";
+    char vendor[64], product[64], path[64];
+    snprintf(path, sizeof path, "%s/sys/class/dmi/id/board_vendor", root);
+    if (!read_line(path, vendor, sizeof vendor) || strcmp(vendor, "Valve")) return 0;
+    snprintf(path, sizeof path, "%s/sys/class/dmi/id/product_name", root);
+    return read_line(path, product, sizeof product) && (!strcmp(product, "Jupiter") || !strcmp(product, "Galileo"));
 }
 
 static const char *raw_get(const char *name);
@@ -729,9 +737,51 @@ static void load_ini(void) {
     }
 }
 
+// ---- Steam Deck: one move from a stored 1080p to the profile's 1280x720. Up to 1.7.1 the deck profile asked for
+// 1280x800, which the res set does not take (resolution.c res_size), so the game rendered 1920x1080 and the menu's Game
+// resolution row showed and stored that. Once, on a Deck, astralchain.ini's own output_res is removed when it makes the
+// game render 1920x1080 (1920x1080 itself, or a size off the res set's grid, as a hand-written 1280x800, which falls back
+// to it), so the profile's 1280x720 applies; other sizes (1600x900, 1440p, 2160p) are the player's and stay. The
+// environment's AC_OUTPUT_RES is a choice for one launch: it wins over the file as before and is not looked at. The
+// marker deck_res_migrated = 1 goes into the file whether or not a line moved, so a fresh install is left alone later
+// too and a Deck docked to a 1080p display that picks 1920x1080 again keeps it. Off the Deck (deck = 0) nothing is read
+// or written. Returns 0 when nothing ran (not a Deck, or already done), 1 when only the marker was set, 2 when
+// output_res was reset as well; the caller saves.
+int cfg_migrate_deck_res(int deck) {
+    if (!deck) return 0;
+    plat_mutex_lock(&set_lock);
+    CfgEntry *mark = NULL, *out = NULL;
+    for (int i = 0; i < n_entries; i++) {
+        if (!strcmp(entries[i].key, "DECK_RES_MIGRATED")) mark = &entries[i];
+        if (!strcmp(entries[i].key, "OUTPUT_RES")) out = &entries[i];
+    }
+    if (mark && mark->value && strcmp(mark->value, "0")) {
+        plat_mutex_unlock(&set_lock);
+        return 0;
+    }
+    unsigned w = 0, h = 0;
+    int reset = out && out->value && (!res_output_grid(out->value, &w, &h) || (w == 1920 && h == 1080));
+    if (reset) {
+        rt_log("cfg: Steam Deck: astralchain.ini output_res = %s renders 1920x1080, more than the 1280x800 screen shows; "
+               "reset once to the deck profile's 1280x720 (deck_res_migrated = 1 marks it done: 1920x1080 picked again, "
+               "as for a docked display, stays)", out->value);
+        __atomic_store_n(&out->value, NULL, __ATOMIC_RELEASE);   // the old string stays for readers
+        out->dirty = 0;
+        out->removed = 1;   // cfg_save_to deletes the line
+        __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
+    }
+    plat_mutex_unlock(&set_lock);
+    cfg_set(PREFIX "DECK_RES_MIGRATED", "1");
+    return reset ? 2 : 1;
+}
+
 void cfg_init(void) {
     load_ini();
     if (profile_of())
         rt_log("cfg: device profile Steam Deck: defaults for the keys astralchain.ini does not set (AC_DEVICE_PROFILE=desktop "
                "turns it off)");
+    // Saved at once, but no file is made only for the marker: without astralchain.ini it stays pending in memory and goes
+    // in with the first save that makes the file (a menu change, F11), the only way a stored output_res can appear.
+    int moved = cfg_migrate_deck_res(profile_of());
+    if (moved == 2 || (moved == 1 && find_ini() && plat_file_exists(ini_path))) cfg_save();
 }
