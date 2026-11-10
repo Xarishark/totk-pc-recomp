@@ -96,7 +96,11 @@ SDL3_DLLS = [UCRT / 'SDL3.dll', UCRT / 'libiconv-2.dll', UCRT / 'libopus-0.dll']
 # Flags for generated code as LAS Recomp builds it (Makefile GENFLAGS, Windows), plus -march for the FP/SIMD lowering.
 # --cpu v2 replaces the level for CPUs without AVX2/FMA; runtime/fma.c then supplies the correctly rounded fma the
 # lowering needs (runtime/simd.h).
-GEN_FLAGS = ['-O1', '-fno-strict-aliasing', '-Wno-return-type', '-Wno-unused-label', '-fvisibility=hidden',
+# -O2 where LAS Recomp has -O1: the lowering's helpers (runtime/simd.h, cpu.h) are loops over lanes and switches on
+# constant arguments, which -O1 neither unrolls nor vectorizes. In play on a Core Ultra 285H the whole process took
+# 7.6% fewer cycles a frame at -O2 (109.7 to 101.3 million) and the guest threads 12% less CPU time. The compile takes
+# 1.9 times the CPU time (907 to 1722 CPU-seconds for 1.0.1) and the same memory (285 MiB for the largest chunk).
+GEN_FLAGS = ['-O2', '-fno-strict-aliasing', '-Wno-return-type', '-Wno-unused-label', '-fvisibility=hidden',
              '-march=x86-64-v3']
 RT_FLAGS = ['-O2', '-g', '-Wall', '-fno-strict-aliasing', '-march=x86-64-v3']
 
@@ -166,7 +170,7 @@ DEPS = None            # the deps directory of an llvm-mingw build
 DISPLAY_VERSIONS = {'v0': '1.0.0', 'v101': '1.0.1'}
 
 GiB = 1 << 30
-# Peak commit of one compile, 1.0.1 at -O1 (2026-10-20): 120-180 MiB per ~3 MiB chunk, 568 MiB for main_table.c
+# Peak commit of one compile, 1.0.1 at -O1 (2026-10-20; -O2 measures the same): 120-180 MiB per ~3 MiB chunk, 568 MiB for main_table.c
 # (295k-entry tables). 768 MiB leaves headroom for the largest file.
 JOB_MEM = 768 << 20
 MEM_BUDGET = 50 * GiB  # total for all compile jobs

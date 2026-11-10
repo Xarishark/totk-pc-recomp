@@ -197,7 +197,7 @@ def build_harness(work, bodies, jobs, cflags):
     env = dict(os.environ)
     if os.name == 'nt' and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
-    flags = ['-O1', '-fno-strict-aliasing', '-Wno-unused-label', '-I', str(ROOT / 'runtime')] + cflags.split()
+    flags = ['-O2', '-fno-strict-aliasing', '-Wno-unused-label', '-I', str(ROOT / 'runtime')] + cflags.split()   # as build_game.py GEN_FLAGS
     n = max(1, min(jobs, len(bodies) // 200 + 1))
     per = (len(bodies) + n - 1) // n
     srcs = []

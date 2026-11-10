@@ -50,7 +50,7 @@ Download `Astral Chain-Setup-<version>-windows.zip` from [Releases](../../releas
 - the game language and the folder to install into.
 
 It then extracts the game's data, merges the update into it, lifts the game's code to C, and builds `astralchain.exe` on
-your machine: about a minute on a fast CPU, a few minutes on a slow one, about 14 GB for the installed folder and about
+your machine: about two minutes on a fast CPU, several minutes on a slow one, about 14 GB for the installed folder and about
 11 GB of temporary space while the update is merged. The setup carries no game data and no code derived from the game.
 
 You need Windows 10 or 11 on x86-64 (SSE4.2 at least) and a Vulkan 1.3 graphics card. The exe is unsigned, so
