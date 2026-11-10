@@ -117,12 +117,12 @@ site fov main 998f90 bd014260 @fn:rt_fov_s0 bd014260   # str s0,[x19,#0x140] -> 
 # step: every input/action/hitstop/rumble frame counter is scaled by the whole ticks so its window lasts wall-clock time
 # instead of whole 60 fps frames; the camera's per-frame smoothing blend becomes 1 - powf(1 - a, clamp(step, 0, 4)); the
 # dialogue text reveal, the time-scale channel test and the frame-counted cue scheduler follow the step. Cutscenes keep
-# the game's fixed step and are held to 30 presents per second (frame_rate.c cutscene_rate), unless the experimental
-# AC_CUTSCENE60 steps them by the real time at 60 (frame_rate.c cutscene_step). Sites from the
+# the game's fixed-step flag: in-engine ones step by the real time at 60 (frame_rate.c cutscene_step), and one with a
+# full-screen movie keeps the fixed step, held to 30 presents per second (frame_rate.c cutscene_rate). Sites from the
 # AstralChain-Dynamic-FPS mod v1.1.1 are marked so. AC_FPS=30 runs the original instructions (the shipping 30 fps).
 set  fps60 FPS60 1
 # frame call: request mode 0 (present interval 1) instead of mode 1 (interval 2, 30 fps); the present pacer
-# (nvn_api_obj.c) holds 60 fps, and 30 in a cutscene unless AC_CUTSCENE60 runs it at 60
+# (nvn_api_obj.c) holds 60 fps, and 30 in a cutscene with a full-screen movie
 site fps60 main 3e39d0 320003e0 52800000   # orr w0, wzr, #1 -> mov w0, #0
 # frame timer: the first call (no previous tick) publishes the game's step as the first ticks; every later call takes
 # its step from rt_fps_timer and goes on at the tick store
@@ -145,6 +145,7 @@ site fps60 main 443e88 320003f4 @fn:rt_fps_talk_ret_w8 2a0803f4   # mov w20,#1 -
 site fps60 main 443fa4 bd40d101 @fn:rt_fps_talk_wait_s1    # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
 site fps60 main 4453fc bd40d121 @fn:rt_fps_talk_wait_s1    # ldr s1,[x9,#0xd0] -> the step, or the whole ticks
 # the voiced talk command (main+0x446C40, variant main+0x447600): the same; a state above 3 returns 0 at once
+site fps60 main 446c5c b9404668 @fn:rt_fps_voiced_done_w8    # ldr w8,[x19,#0x44] -> 0 on a skipped frame
 site fps60 main 446c80 b9404e68 @fn:rt_fps_voiced_alt_w8     # ldr w8,[x19,#0x4c] -> 0 on a skipped frame
 site fps60 main 446ca4 b9402668 @fn:rt_fps_voiced_state_w8   # ldr w8,[x19,#0x24] -> the state, or 4 on a skipped frame
 site fps60 main 4473dc bd40d101 @fn:rt_fps_talk_wait_s1      # ldr s1,[x8,#0xd0] -> the step, or the whole ticks
@@ -161,7 +162,7 @@ site fps60 main 430dd0 1e2e1001 bd40d001   # fmov s1,#1.0 -> ldr s1,[x0,#0xd0]
 site fps60 main 6a3f28 11000508 @fn:rt_fps_cue_up_w8   # add w8,w8,#1 -> w8 += ticks
 site fps60 main 6a3f38 6b08013f @fnz:rt_fps_cue_cmp    # cmp w9,w8 -> Z = entry due
 site fps60 main 6a3f54 6b08013f @fnz:rt_fps_cue_cmp    # cmp w9,w8 -> Z = entry due (next entries)
-# cut clock (main+0x8C2410), the end of a cut: the game's own test, unless a cutscene runs at 60 (AC_CUTSCENE60), where
+# cut clock (main+0x8C2410), the end of a cut: the game's own test, unless a cutscene runs at 60 (no movie in it), where
 # a cut goes on while its time is below its length and the next cut starts at what the step went past it
 site fps60 main 8c2550 1e283821 @fn:rt_cut_hold_s1   # fsub s1,s1,s8 -> len - rate, or just below len
 site fps60 main 8c255c bd400680 @fn:rt_cut_prev_s0   # ldr s0,[x20,#4] -> the old time, or s1 (no hold)
@@ -327,7 +328,7 @@ site fps60 main 2876d4 71000508 @fnz:rt_fps_hs_w8   # +0x14d4, sibling of 28759c
 
 # Full-screen movies (runtime/frame_rate.c rt_movie_*): the game's Bink player (open main+0x9BEFD0) tells the runtime
 # which open handles are full-screen movies (1280x720 or more) and when one last waited for its next frame, so a
-# cutscene with a movie keeps the 30 fps hold under AC_CUTSCENE60. Nothing changes what the player does. Its own set,
+# cutscene with a movie keeps the 30 fps hold. Nothing changes what the player does. Its own set,
 # on at 30 fps too, so a movie opened before a switch to 60 is known.
 set  movies AC_MOVIE_TRACK 1
 site movies main 9bf058 f9000680 @fn:rt_movie_opened f9000680   # str x0,[x20,#8] after BinkOpen; the handle first

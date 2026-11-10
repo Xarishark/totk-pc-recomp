@@ -25,7 +25,8 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - Native code, not emulation. It already runs on very old systems;
 - Externally tested (Reddit, YouTube, ...): playable from intro to credits.
 - Base game 1.0.0 with its 1.0.1 update
-- 60 fps by default, with a 30 fps switch and a cutscene speed fix
+- 60 fps by default, in-engine cutscenes included, in sync with the voices and music; a 30 fps switch
+- HDR output (HDR10), with separate brightness for the game and the HUD
 - The game's own audio: music, effects and voices
 - Custom resolutions, AMD FSR 1 upscaling up to 4K and emulator-style 3D render scaling
 - Anisotropic texture filtering up to 16x, for sharp ground into the distance

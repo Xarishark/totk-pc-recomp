@@ -136,11 +136,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_FPS_LIMIT] = "Frame rate",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS runs the game's 60 fps patch; 30 FPS switches it off. Read live.",
     [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_60] = "60 FPS",
-    [UI_MENU_CUTSCENE60] = "60 FPS cutscenes (experimental)",
-    [UI_MENU_CUTSCENE60_DESC] = "In-engine cutscenes run at 60 FPS instead of 30. They follow the real time, so they stay "
-                                "in sync with the voices and music, and a stutter is made up over the next frames. Movies "
-                                "stay at 30 FPS. Needs a PC that holds 60 FPS in cutscenes. Read live.",
-    [UI_MENU_CUTSCENE60_NEEDS_60] = "Needs the 60 FPS frame rate",
     [UI_MENU_REALTIME] = "Game speed follows the clock",
     [UI_MENU_REALTIME_DESC] = "Steps the game by real time, so a slow frame does not slow the game down.",
     [UI_MENU_CLOTH_REALTIME] = "Cloth on the clock",
@@ -525,11 +520,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_FPS_LIMIT] = "Частота кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS включает патч игры на 60 кадров; 30 FPS отключает его. Читается на лету.",
     [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_60] = "60 FPS",
-    [UI_MENU_CUTSCENE60] = "Катсцены в 60 FPS (экспериментально)",
-    [UI_MENU_CUTSCENE60_DESC] = "Катсцены на движке игры идут в 60 FPS вместо 30. Они следуют реальному времени, поэтому "
-                                "не расходятся с голосами и музыкой, а рывок наверстывается в следующих кадрах. Видеоролики "
-                                "остаются в 30 FPS. Нужен ПК, который держит 60 FPS в катсценах. Читается на лету.",
-    [UI_MENU_CUTSCENE60_NEEDS_60] = "Нужна частота кадров 60 FPS",
     [UI_MENU_REALTIME] = "Скорость игры по часам",
     [UI_MENU_REALTIME_DESC] = "Игра идёт по реальному времени, медленный кадр её не замедляет.",
     [UI_MENU_CLOTH_REALTIME] = "Ткань по часам",
@@ -875,12 +865,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_FPS_LIMIT] = "Taxa de quadros",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS usa o patch de 60 fps do jogo; 30 FPS o desliga. Lido na hora.",
     [UI_MENU_FPS_30] = "30 FPS", [UI_MENU_FPS_60] = "60 FPS",
-    [UI_MENU_CUTSCENE60] = "Cenas a 60 FPS (experimental)",
-    [UI_MENU_CUTSCENE60_DESC] = "As cenas feitas no motor do jogo rodam a 60 FPS em vez de 30. Elas seguem o tempo real, "
-                                "então ficam em sincronia com as vozes e a música, e um travamento é compensado nos quadros "
-                                "seguintes. Os vídeos continuam a 30 FPS. Requer um PC que mantenha 60 FPS nas cenas. Lido "
-                                "na hora.",
-    [UI_MENU_CUTSCENE60_NEEDS_60] = "Requer a taxa de 60 FPS",
     [UI_MENU_ASSUME_FOCUS] = "Continuar rodando fora de foco",
     [UI_MENU_ASSUME_FOCUS_DESC] = "Ligado (o padrão), o jogo continua rodando enquanto você está em outra janela, e o "
                                   "teclado fica sem efeito até a janela voltar para a frente. Desligado, ele pausa quando "
@@ -1329,11 +1313,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS 启用游戏的 60 帧补丁；30 FPS 关闭它。即时生效。",
     [UI_MENU_FPS_30] = "30 FPS",
     [UI_MENU_FPS_60] = "60 FPS",
-    [UI_MENU_CUTSCENE60] = "60 FPS 过场动画（实验性）",
-    [UI_MENU_CUTSCENE60_DESC] = "游戏引擎实时渲染的过场动画以 60 FPS 而不是 30 FPS 运行。它们跟随真实时间，因此与语音和音乐"
-                                "保持同步，卡顿会在之后的几帧中补回。视频仍为 30 FPS。需要在过场动画中能稳定 60 FPS 的电脑。"
-                                "即时生效。",
-    [UI_MENU_CUTSCENE60_NEEDS_60] = "需要 60 FPS 帧率",
     [UI_MENU_REALTIME] = "游戏速度跟随时钟",
     [UI_MENU_REALTIME_DESC] = "按真实时间推进游戏，帧率低时游戏速度也不会变慢。",
     [UI_MENU_CLOTH_REALTIME] = "布料跟随时钟",

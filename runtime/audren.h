@@ -188,3 +188,6 @@ int audio_buffer_empty(const AudrenWaveBuffer *b);   // no samples to decode: pl
 void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);   // IAudioDevice
 // The master output volume the game set through IAudioDevice::SetAudioDeviceOutputVolume, 1.0 until it does.
 float audio_device_volume(void);
+// The sound the output device has asked for since it opened, in ns; 0 without a device. It stands still while the
+// device does (a suspended process). Any thread.
+uint64_t audio_device_clock_ns(void);

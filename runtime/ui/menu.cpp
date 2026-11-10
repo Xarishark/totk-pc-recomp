@@ -577,13 +577,6 @@ static void row_fps_limit() {
     opt_choice_list("AC_FPS", UI_MENU_FPS_LIMIT, vals, names, N, UI_MENU_FPS_LIMIT_DESC, cur);
 }
 
-// Experimental 60 fps in-engine cutscenes (frame_rate.c, AC_CUTSCENE60). They need the 60 fps patch, so the row is
-// greyed out at 30 fps; the setting keeps its value for when the frame rate goes back to 60.
-static void row_cutscene60() {
-    if (cfg_int("AC_FPS") < 60) opt_disable_next(UI_MENU_CUTSCENE60_NEEDS_60);
-    opt_toggle("AC_CUTSCENE60", UI_MENU_CUTSCENE60, UI_MENU_CUTSCENE60_DESC);
-}
-
 // The menu's name of a TOTK_VK_PRESENT mode (gfx_window_present_mode); NULL for another.
 static const char *present_name(const char *mode) {
     static const struct { const char *mode; UiTextId name; } names[] = {
@@ -678,7 +671,6 @@ static void tab_screen(float scale) {
 static void tab_game(float scale) {
     opt_begin("##game", scale);
     row_fps_limit();
-    row_cutscene60();
     row_game_lang();
     static const UiTextId mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
     opt_choice("AC_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);

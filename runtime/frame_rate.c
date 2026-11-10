@@ -5,9 +5,10 @@
 // for scripted input. The whole ticks and the step make the game's per-frame counters and blends frame-rate independent
 // (the input/action timers, hitstop, rumble, the camera smoothing, the dialogue text reveal, the cue scheduler).
 //
-// The 60 fps patch leaves the game's cutscenes at 30 (cutscene_rate below): the game steps them by a fixed frame, and
-// without the hold they play twice as fast as their animation data. The experimental AC_CUTSCENE60 runs in-engine
-// cutscenes at 60 on the real-time clock instead (cutscene_step below); movies keep the 30 fps hold.
+// The game steps a cutscene by a fixed frame, so at 60 presents per second it would play twice as fast as its
+// animation data. Under the 60 fps patch an in-engine cutscene steps by the real time instead and presents at 60
+// (cutscene_step below); a cutscene with a full-screen movie keeps the fixed step and is held to 30 presents per second
+// (cutscene_rate below).
 //
 // What remains:
 //   - the frame limit (AC_FPS): 60 fps by default, 30 fps when the patch is off. The pacer (nvn_api_obj.c) holds
@@ -23,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "audren.h"
 #include "cfg.h"
 #include "gfx.h"
 #include "host.h"
@@ -49,9 +51,9 @@ static int fps60_on = -1, fps_hz;
 static unsigned fps_seen;
 static int fps_read;
 
-// ---- 60 fps cutscenes (AC_CUTSCENE60, experimental)
-// The game steps a cutscene by a fixed 1.0 (1/30 s) a frame and plays it frame-locked, which is why the 60 fps patch
-// holds cutscenes to 30 presents per second. With the setting on, a cutscene frame steps by the real time instead, in
+// ---- 60 fps cutscenes: part of the 60 fps patch (AC_FPS=60), without a setting of their own
+// The game steps a cutscene by a fixed 1.0 (1/30 s) a frame and plays it frame-locked, so at 60 presents per second it
+// would run at twice its speed. Under the 60 fps patch a cutscene frame steps by the real time instead, in
 // whole 60 Hz vsyncs (0.5 each): the cutscene presents at 60 and keeps to the wall clock, which the voices and music
 // play on. A frame that took longer than its vsyncs (a hitch, a shader compile) leaves its time as debt, which the next
 // frames pay back at up to 4 vsyncs (step 2.0, the original timer's high clamp) each, so the picture catches up with
@@ -68,7 +70,6 @@ static int fps_read;
 #define CUT_STALL_SLACK_MS 50.0      // what the device's clock may lag a frame's time by: it moves in device periods
 #define MOVIE_HOLD_FRAMES 8          // a movie counts as playing for this many game frames after its last BinkWait
 
-static volatile int cut60_cfg;            // the setting (frame_limit_live)
 static volatile int cut60_now;            // this game frame steps a cutscene at 60 (rt_fps_timer; game thread only writes)
 static _Atomic unsigned fps_switches;     // times frame_limit_live switched the 60 fps patch (rt_fps_timer restarts on it)
 static _Atomic uint64_t g_timer_frames;   // rt_fps_timer calls so far: the game frame the movie hold counts in
@@ -97,9 +98,9 @@ int frame_step_realtime(void) { return 0; }
 //
 // rt_fps_timer replaces everything after the frame time store (site main+0x91DC10; the site branches to the tick store
 // at main+0x91DCB4 next):
-//   - fixed step (a cutscene): 1.0, as the original. The present pacer holds cutscenes to 30 presents per second
-//     (nvn_api_obj.c present_period, frame_step_cutscene), so 1.0 is their real time. With AC_CUTSCENE60 and no movie
-//     playing: the whole vsyncs of the real time instead (cutscene_step), and the presents are not held.
+//   - fixed step (a cutscene): the whole vsyncs of the real time (cutscene_step), presented at 60. While a full-screen
+//     movie plays in it: 1.0, as the original, and the present pacer holds the cutscene to 30 presents per second
+//     (nvn_api_obj.c present_period, frame_step_cutscene), so 1.0 is its real time.
 //   - otherwise the frame time, on the present grid (frame_paced_ms), times 30/1000, times the override when it is set:
 //     the override is a speed relative to one 30 fps frame, so it scales the measured step instead of replacing it.
 //   - clamped to [1/16, 2]: 2 is the original's high clamp (a slower frame slows the game); 1/16 keeps the step away
@@ -243,7 +244,7 @@ void rt_fps_timer(Cpu *c) {
         in_cutscene = cut60_now = movie_now = 0;
     }
     int movie = fixed && movie_playing();       // a full-screen movie keeps its cutscene at the 30 fps hold
-    int cut60 = fixed && cut60_cfg && !movie;
+    int cut60 = fixed && !movie;
     int ended = in_cutscene && (!fixed || cut60 != cut60_now);   // the run of cutscene frames before this one
     int first = fixed && (!in_cutscene || cut60 != cut60_now);   // a new run: its frame time is what came before it
     float step;
@@ -265,8 +266,9 @@ void rt_fps_timer(Cpu *c) {
         rt_log("frame rate: %s (world %.2f s, wall %.3f s): presents held to %d per second",
                !fixed ? "gameplay" : cut60 ? "cutscene at 60 fps" : movie ? "cutscene with a movie" : "cutscene",
                (double)frame_step_world_us() / 1e6, wall_s(), fixed && !cut60 ? 30 : 60);
-    in_cutscene = fixed;
-    cut60_now = cut60;
+    // frame_step_cutscene reads both on the present path: written in an order that never shows a cutscene at 60 as held
+    if (fixed) cut60_now = cut60, in_cutscene = 1;
+    else in_cutscene = 0, cut60_now = 0;
     movie_now = movie;
     if (fixed) {
         run_frames++;
@@ -474,7 +476,7 @@ void rt_fps_talk_state_w8(Cpu *c) {
 // calls it every frame until it returns 1. It polls the line (voice done, text box state) and moves on a frame after
 // it sees a change, and its waits are countdowns: [x19+0x84], 0.5 s after a line, adds step * -1/30 a call (at 30 fps
 // -1/30 rounds to -0.033333335 in single precision, so 0.5 is still 2e-8 after 15 frames and the wait lasts 16 frames,
-// 0.533 s), and [x19+0x7C] adds scale * -1/30 a call, whatever the step. At 60 the command ran twice as often: each
+// 0.533 s), and [x19+0x7C] counts down the same way (main+0x443F90). At 60 the command ran twice as often: each
 // line's waits and reactions came sooner, and a 124 s scene ended 1.3 s early. In a cutscene at 60 it runs only on
 // frames with a whole 30 fps tick, and its step-based countdowns take the whole ticks: the same calls, decrements and
 // rounding as at 30. On the other frames it returns 0 (still running) at once and leaves the scene's per-frame talking
@@ -494,9 +496,13 @@ void rt_fps_talk_ret_w8(Cpu *c) { c->x[8] = talk_skip() ? 0u : 1u; }
 // The voiced talk command (main+0x446C40, with its variant main+0x447600 behind [x19+0x4C]): while its voice
 // ([x19+0x60]) is still in the sound engine it waits, and then counts [x19+0x68] / [x19+0x70] down from 0.5 s by
 // step * -1/30 (main+0x4473DC, main+0x447414, main+0x4477FC), the same countdown as the talk command's. It is gated
-// the same way: in a cutscene at 60 it reads its variant switch as 0 and its state as 4 (both return 0, still running,
-// at once) on frames without a whole tick, and its countdowns take the whole ticks. The scene measured does not use
-// it, so this follows from the code, not from a measurement.
+// the same way: in a cutscene at 60, on frames without a whole tick, it reads its done flag ([x19+0x44], which it sets
+// itself at main+0x4472BC and main+0x447578 and returns 1 on at its next call) and its variant switch as 0 and its
+// state as 4, which together return 0 (still running) at once; its countdowns take the whole ticks. The scene measured
+// does not use it, so this follows from the code, not from a measurement.
+void rt_fps_voiced_done_w8(Cpu *c) {   // ldr w8, [x19, #0x44]
+    c->x[8] = talk_skip() ? 0u : *(uint32_t volatile *)(uintptr_t)(c->x[19] + 0x44);
+}
 void rt_fps_voiced_alt_w8(Cpu *c) {   // ldr w8, [x19, #0x4c]
     c->x[8] = talk_skip() ? 0u : *(uint32_t volatile *)(uintptr_t)(c->x[19] + 0x4C);
 }
@@ -630,6 +636,10 @@ void rt_movie_opened(Cpu *c) {
     for (int i = 0; i < MOVIE_SLOTS; i++) {
         uintptr_t none = 0;
         if (atomic_compare_exchange_strong(&g_movies[i], &none, h)) {
+            // It counts as playing from here on: the timer ran before the player in this frame, so without this the
+            // frames up to the first BinkWait would step at 60.
+            atomic_store_explicit(&g_movie_wait_frame, atomic_load_explicit(&g_timer_frames, memory_order_relaxed),
+                                  memory_order_relaxed);
             rt_log("frame rate: movie opened, %ux%u, %u frames (wall %.3f s); a cutscene holds 30 fps while it plays",
                    hb[0], hb[1], hb[2], wall_s());
             return;
@@ -690,11 +700,6 @@ static void frame_limit_live(void) {
         else rt_log("frame rate: test hitch of %u ms in every cutscene frame", hm);
     }
     hitch_ms = hm, hitch_every_ms = he;
-    int cut = cfg_bool("AC_CUTSCENE60") != 0;
-    if (cut != cut60_cfg) {
-        cut60_cfg = cut;
-        rt_log("frame rate: 60 fps cutscenes %s (experimental)", cut ? "on" : "off");
-    }
     int hz = cfg_int("AC_FPS");
     int on = hz >= 60;
     if (on == fps60_on && fps_hz) return;
@@ -719,8 +724,8 @@ double frame_step_limit_hz(void) { return fps_hz; }
 // pacer (nvn_api_obj.c present_period) holds those frames to 30 per second while frame_step_cutscene says so, or the
 // cutscene plays at twice its speed. The flag is the game's own, taken by the frame timer each game frame.
 //
-// A cutscene at 60 (AC_CUTSCENE60, cut60_now) steps by the real time and is not held; while an event movie plays in a
-// cutscene, the cutscene is held as before. Outside a cutscene a movie is not held: the title screen's background is an
+// A cutscene at 60 (cut60_now) steps by the real time and is not held; while an event movie plays in a cutscene, the
+// cutscene is held. Outside a cutscene a movie is not held: the title screen's background is an
 // event movie (movie/ev0001.bk2) and its prompt and menus run at 60 over it, each movie frame on two presents.
 //
 // The community cutscene fix also writes the game's frame-rate selector: 2 (30 fps) in a held cutscene and 1 (60 fps)
