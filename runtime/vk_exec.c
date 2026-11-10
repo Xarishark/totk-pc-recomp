@@ -603,6 +603,7 @@ void vk_exec_pass_begin(VkExec *ex) {
         want[nwant] = t->image, wasp[nwant++] = i < 8 ? VK_IMAGE_ASPECT_COLOR_BIT : t->img->aspect;
     }
     barrier_to(ex, want, wasp, nwant);   // passes, clears, copies and dispatches see each other's results
+    if (vk_gpuprof_on()) vk_gpuprof_mark(ex, 1, 0);
     ex->fbl_mask = fbl;
     ex->fb_dirty = 0;
     ex->pass_serial++;
@@ -644,6 +645,7 @@ void vk_exec_pass_end(VkExec *ex) {
     for (int i = 0; i < ex->pass_ncolor && i < 8; i++)   // stand-ins of 3D BC targets go to their textures
         if (ex->color[i].image && ex->color[i].img && ex->color[i].img->image != ex->color[i].image)
             bc_copy_back(ex, &ex->color[i]);
+    if (vk_gpuprof_on()) vk_gpuprof_mark(ex, 2, 0);
     if (vk_dump_armed) vk_dump_pass_end(ex);
     uint64_t stamp = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
     for (int i = 0; i < 8; i++)
@@ -815,7 +817,9 @@ static void maybe_split(VkExec *ex) {
     if (split_ns && kern_now_ns() - part_t0 < split_ns) return;   // split_draws stays: the next draw asks again
     split_draws = 0;
     if (ex->recorded == part_start) return;
+    if (vk_gpuprof_on()) vk_gpuprof_mark(ex, 5, 0);
     ex->cb = vk_sync_split();
+    if (vk_gpuprof_on()) vk_gpuprof_mark(ex, 0, 0);
     part_start = ex->recorded;
     part_t0 = kern_now_ns();
     ex->dirty = VK_EXEC_DIRTY_ALL;
@@ -890,6 +894,8 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         case OP_BIND_PROGRAM: case OP_BIND_STATE: case OP_BIND_VATTR: case OP_BIND_VSTREAM: case OP_BIND_VBUF:
         case OP_BIND_UBO: case OP_BIND_SSBO: case OP_BIND_TEX: case OP_BIND_SAMP: case OP_BIND_IMG:
             vk_exec_op_draw(ex, h->op, a);
+            if ((h->op == OP_DISPATCH || h->op == OP_DISPATCH_IND) && !ex->in_pass && vk_gpuprof_on())
+                vk_gpuprof_mark(ex, 3, ex->prog ? ex->prog->serial : 0);
             break;
         case OP_COPY_B2B: case OP_COPY_B2T: case OP_COPY_T2B: case OP_COPY_T2T: case OP_CLEAR_TEX:
             if (h->op != OP_CLEAR_TEX) vk_exec_frame.copies++;
@@ -898,6 +904,9 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         case OP_SIGNAL_EVENT: case OP_REPORT_COUNTER: case OP_RESET_COUNTER: case OP_RENDER_ENABLE: case OP_RENDER_COND:
         case OP_CLEAR_BUF:
             vk_exec_op_xfer(ex, h->op, a);
+            if ((h->op == OP_COPY_B2B || h->op == OP_COPY_B2T || h->op == OP_COPY_T2B || h->op == OP_COPY_T2T ||
+                 h->op == OP_CLEAR_TEX || h->op == OP_CLEAR_BUF) && !ex->in_pass && vk_gpuprof_on())
+                vk_gpuprof_mark(ex, 4, h->op);
             break;
         default: rt_fatal("vk: op %s has no replay handler", nvn_op_name(h->op));
         }
@@ -923,6 +932,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     part_t0 = kern_now_ns();
     x_here = 1;
     if (n) vk_mem_mirror_begin(), vk_usnap_begin(handles, n, fence);
+    if (n && vk_gpuprof_on()) vk_gpuprof_mark(ex, 0, 0);
     for (int i = 0; i < n; i++) {
         if (!handles[i]) rt_fatal("vk: command handle %d of a submission is null", i);
         walk(ex, nvn_op_first(handles[i]), 0);
@@ -931,6 +941,7 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     x_here = 0;
     if (ex->recorded) vk_exec_barrier(ex);   // later submissions see this one's writes
     if (n) ex->recorded += vk_mem_mirror_end(ex->cb, fence), vk_usnap_end(fence);   // VRAM mirror bytes the GPU wrote go back to guest memory
+    if (n && vk_gpuprof_on()) vk_gpuprof_mark(ex, 5, 0), vk_gpuprof_flush(fence);
     if (ex->nviews) {
         ViewList *l = malloc(sizeof *l + sizeof(VkImageView) * (size_t)ex->nviews);
         if (!l) rt_fatal("vk: out of memory");

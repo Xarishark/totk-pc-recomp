@@ -199,3 +199,9 @@ void vk_contact_flush(VkExec *ex);
 // when counting and none is active), and the open pass about to end (ends the active query).
 void vk_exec_oq_draw(VkExec *ex);
 void vk_exec_oq_pass_end(VkExec *ex);
+// vk_gpuprof.c, AC_GPU_PASSES: GPU time per pass. kind: 0 start of a command buffer, 1 before a pass begins, 2 after
+// it ends, 3 after a dispatch (arg: program serial), 4 after a copy (arg: op), 5 end of a command buffer. Outside
+// render passes only.
+int vk_gpuprof_on(void);
+void vk_gpuprof_mark(VkExec *ex, int kind, uint64_t arg);
+void vk_gpuprof_flush(uint64_t fence);
