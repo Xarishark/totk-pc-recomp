@@ -134,9 +134,13 @@ UBIQUITOUS_LIBS = {'libc.so.6', 'libm.so.6', 'libz.so.1', 'libdl.so.2', 'libpthr
 
 
 def needed_libs(path):
-    """SONAMEs of path's NEEDED entries."""
-    r = subprocess.run(['readelf', '-d', str(path)], capture_output=True, text=True)
-    return re.findall(r'\(NEEDED\)\s+Shared library: \[([^\]]+)\]', r.stdout)
+    """SONAMEs of path's NEEDED entries. readelf translates its labels ("Bibliothèque partagée" under a French
+    locale), and a pattern on the English one found nothing there: the closure then stopped at libxml2 without ICU,
+    check_llvm_libs saw nothing to miss, and the bundled ld.lld could not start. The C locale and a pattern that
+    reads only the tag and the bracketed name keep it independent of the build machine's language."""
+    r = subprocess.run(['readelf', '-d', str(path)], capture_output=True, text=True,
+                       env={**os.environ, 'LC_ALL': 'C'})
+    return re.findall(r'\(NEEDED\)[^\[\n]*\[([^\]]+)\]', r.stdout)
 
 
 def bundle_closure(lib, sysroot_lib, name):
