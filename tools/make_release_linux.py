@@ -637,6 +637,12 @@ def prove(out, cpu='v3'):
     # copyfile, not copy2: the check dir may sit on a 9p mount (WSL /mnt/c), whose utime/rename semantics break
     # copystat; only the bytes matter here.
     shutil.copyfile(out / 'bin' / 'libSDL3.so.0', chk / 'libSDL3.so.0')
+    # The folder's translator beside the game, where the installer puts it (installer/steps.py): the repository's
+    # build/xlate holds the Windows ac_xlate.exe only, so without it the shader probes find no translator and pass only
+    # on what an earlier run left in the check dir's shader cache.
+    for f in ('ac_xlate', 'ac_xlate.id'):
+        shutil.copyfile(out / 'bin' / f, chk / f)
+    os.chmod(chk / 'ac_xlate', 0o755)
     needed = subprocess.run(['readelf', '-d', str(chk / 'astralchain')], capture_output=True, text=True).stdout
     print('prove: needs', ', '.join(re.findall(r'\[(lib[^\]]+)\]', needed)))
     glibc = sorted(set(re.findall(r'GLIBC_(\d+\.\d+)', subprocess.run(['readelf', '-V', str(chk / 'astralchain')],
