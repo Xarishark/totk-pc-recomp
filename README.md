@@ -12,7 +12,7 @@ application for Windows, built on the pipeline of [TotK Recomp](https://github.c
 > The game is built from your files on your machine, so the result contains the game. It is for your own use. Do not
 > share it.
 
-Special thanks to [@capibawa](https://github.com/capibawa) for their multiple contributions
+Special thanks to [@capibawa](https://github.com/capibawa) for their multiple contributions, the list is very long but it does include performances, code review, timing correctness, visuals or HDR
 
 ## Status
 
@@ -35,10 +35,6 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - Xbox and PlayStation button prompts, each with its matching button layout (PlayStation mod from https://gamebanana.com/mods/604666)
 - Mods and data cheats from the emulator formats
 - Shaders prepared at install instead of during play
-
-## Planned
-
-- Optimizations for 4gb VRAM GPU and Steam Deck
 
 ## Installing
 
