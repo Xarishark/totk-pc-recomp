@@ -302,6 +302,7 @@ void plat_cpu_boost(int mode, uint64_t spin_ns, char *out, size_t cap) {
     snprintf(out, cap, "left to Windows");
 }
 
+int plat_cpu_boost_note(char *out, size_t cap) { (void)out, (void)cap; return 0; }
 uint32_t plat_cpu_mhz(void) { return 0; }
 
 // ---- time

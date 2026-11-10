@@ -193,23 +193,42 @@ core looks lightly loaded and stays slow: on a Core Ultra 285H (16 cores, `intel
 cores that hold 5 GHz, a third of the time on the low-power cores, and a scene Windows shows at 60 fps ran at 21. The
 logs of a Steam Deck and of a GTX 1080 Ti in issue #8 show the same picture (the render thread busy for the whole
 frame, the GPU waiting for the next submission most of it). `cpu_boost` (`AC_CPU_BOOST`, `plat_cpu_boost` in
-`runtime/platform/linux.c`) answers with two things that need no privilege:
+`runtime/platform/linux.c`) answers with three things that need no privilege:
 
+- the performance power profile, held over D-Bus while the game runs (`HoldProfile` of power-profiles-daemon and of
+  tuned's `tuned-ppd`, what `powerprofilesctl launch` does): the daemon switches the governor or the energy preference
+  to performance and switches back when the game exits or crashes. libsystemd's bus client is loaded at run time;
+  without it or without the daemon the two below stand alone;
 - a utilization clamp at the maximum for the game's threads (`sched_setattr`, Linux 5.3): the `schedutil` governor
   then runs them at the top frequency, and on processors with cores of different speeds the scheduler tries the fast
   ones first;
-- where the processor chooses the frequency itself (`intel_pstate` and `amd-pstate-epp` under their `powersave`
-  governor) or the governor samples each core's idle time (`ondemand`, `conservative`), a thread about to wait polls
-  for up to 1 ms first, in proportion to the work it just did, so the core stays awake across the gap.
+- where the processor still chooses the frequency itself (`intel_pstate` and `amd-pstate-epp` under their `powersave`
+  governor with an energy preference other than `performance`) or the governor samples each core's idle time
+  (`ondemand`, `conservative`), a thread about to wait polls for up to 1 ms first, in proportion to the work it just
+  did, so the core stays awake across the gap.
 
-`auto`, the default, uses the clamp always and the polling only under those governors (and under `schedutil` on a
-kernel without the clamp); `1` polls whatever the governor, `0` turns both off. On the 285H `auto` holds 60 fps at
-4.0-4.6 GHz and uses 1.7 cores of CPU time where the 21 fps used 1.0; limited to 4 of its fast cores it holds 60 as
-well. Only that machine is measured: the `schedutil` path (the Steam Deck's governor) follows the kernel's
-documentation, not a run.
-`AC_TRACE=perf` logs the governor at start (`cpu:`) and, every 60 frames, the frequency of the cores under the render
-and replay threads (`cpu frequency under the render thread`), which is what to compare between `cpu_boost = 0` and
-the default on another machine.
+`auto`, the default, asks for the profile, sets the clamp, and polls only under those governors (and under
+`schedutil` on a kernel without the clamp), looking at the governor again every few seconds; `1` polls whatever the
+governor, `0` turns all three off. Measured on the 285H, in play, same spot:
+
+| | fps | 1% low | frames over 25 ms in 26 s | CPU time | cores at |
+|---|---|---|---|---|---|
+| `cpu_boost = 0` | 21-25 | 15-18 | all | 1.0 cores | 1.1-1.8 GHz |
+| clamp and polling (no profile daemon) | 60 | 33-42 | 2-144 | 1.7 cores | 4.0-4.6 GHz |
+| performance profile held | 60 | 41-47 | 4 | 1.5 cores | 4.2-4.7 GHz |
+
+Limited to 4 of its fast cores the game holds 60 with the clamp and polling as well. Only that machine is measured:
+the `schedutil` path (the Steam Deck's governor, with no profile daemon in Game Mode) follows the kernel's
+documentation, not a run. The log says at start what was arranged (`cpu:` lines, the second one once the daemon has
+answered) and `AC_TRACE=perf` adds, every 60 frames, the frequency of the cores under the render and replay threads
+(`cpu frequency under the render thread`), which is what to compare between `cpu_boost = 0` and the default on
+another machine.
+
+Frame times in the performance overlay: its graph shows the time between the game's present calls, not between the
+pictures on the display. The present thread sends each picture at its slot (16.67 ms apart, 0.01 ms of deviation in
+the menus), while the game's calls alternate around that in the menus that play a video: its render thread decodes a
+video frame in software before every other submission (5 ms at 4 GHz, 13 ms at 2 GHz). The graph therefore shows a
+sawtooth whose height follows the CPU frequency: 6/27 ms at 2 GHz, 11/22 ms with the performance profile.
 
 The dirty census (`mem: dirty` lines, `tools/perf_summary.py`) is the trace item `dirty`, not part of `perf`: its
 write-watch queries read every page table entry of the buffer-bound pools at each submit, 15 ms a frame on the Deck.

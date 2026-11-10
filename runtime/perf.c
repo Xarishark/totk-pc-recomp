@@ -282,6 +282,10 @@ void perf_present(uint64_t frame) {
     cpu_placement();
     if (__atomic_load_n(&overlay, __ATOMIC_RELAXED))   // the overlay's only cost while it is off: this branch
         perfmon_frame(now, d, frame_ns, rep, __atomic_load_n(&counts[PERF_CNT_TEX_UP], __ATOMIC_RELAXED));
+    if (frame % 60 == 0) {   // what plat_cpu_boost arranged, when it changes (the power profile answers after start)
+        char note[224];
+        if (plat_cpu_boost_note(note, sizeof note)) rt_log("cpu: %s", note);
+    }
     kern_core_diag_frame(frame, d);
     if (flight_on) flight_frame(frame, now, d, frame_ns, counts);
     if (!(rt_trace & RT_TRACE_PERF)) {

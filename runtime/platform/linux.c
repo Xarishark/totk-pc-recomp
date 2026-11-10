@@ -444,8 +444,10 @@ static int may_renice(int nice) {
 // a thread that wakes up on whichever core is idle. The game's threads hand work to each other thousands of times a
 // second and sleep in between, so each core looks lightly loaded: on a Core Ultra 285H (intel_pstate, 6 P, 8 E and
 // 2 low-power cores) they ran at 1.3-1.8 GHz on cores that hold 5 GHz, a third of the time on the low-power cores, and
-// the game showed 21 fps where the same machine shows 60 under Windows. Two measures, neither needing a privilege:
+// the game showed 21 fps where the same machine shows 60 under Windows. Three measures, none needing a privilege:
 //
+// - The performance power profile, where a daemon offers it (boost_main): the cleanest, as the system itself then
+//   keeps the frequency up, at light load too (menus, where a frame's work is a few ms and the rest is sleep).
 // - Utilization clamp (sched_setattr, Linux 5.3): a minimum of 1024 says the thread needs a CPU's full capacity. The
 //   schedutil governor then asks for the highest frequency whenever the thread runs, and on processors with cores of
 //   different speeds the scheduler looks for the fastest idle one first. Threads inherit it from their creator.
@@ -453,8 +455,8 @@ static int may_renice(int nice) {
 //   (intel_pstate and amd-pstate in their active modes) or the governor samples it (ondemand, conservative), the clamp
 //   does not reach the frequency, and the cores have to stay awake across the short gaps between bursts of work.
 //
-// With both, the same scene holds 60 fps with those cores above 4 GHz. Threads below normal priority (shader and
-// pipeline workers) drop the clamp and never poll, so they leave the fast cores to the game.
+// With the clamp and the polling alone, the same scene holds 60 fps with those cores above 4 GHz. Threads below normal
+// priority (shader and pipeline workers) drop the clamp and never poll, so they leave the fast cores to the game.
 struct uclamp_attr {   // struct sched_attr; glibc 2.41 declares one of its own, older ones none
     uint32_t size, policy;
     uint64_t flags;
@@ -483,26 +485,101 @@ static int read_word_file(const char *path, char *out, size_t cap) {
     return out[0] != 0;
 }
 
+// Whether waits poll, from what cpufreq reports now, into what (a line for the log). Who decides the frequency from a
+// core's time awake: the processor itself under the pstate drivers' active modes (their "powersave" is that mode, not
+// a fixed frequency) unless the energy preference is "performance", which keeps it at the top; and the sampling
+// governors. schedutil follows the clamp, unless the kernel has none; the performance governor is at the top already;
+// anything else keeps a fixed frequency.
+static int boost_mode, boost_clamp;
+static uint64_t boost_spin_ns;
+
+static void boost_decide(char *what, size_t cap) {
+    char gov[32], drv[32], epp[32];
+    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", gov, sizeof gov);
+    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver", drv, sizeof drv);
+    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", epp, sizeof epp);
+    int hw = !strcmp(gov, "powersave") && (!strcmp(drv, "intel_pstate") || !strcmp(drv, "amd-pstate-epp")) &&
+             strcmp(epp, "performance");
+    int poll = boost_mode > 1 || hw || !strcmp(gov, "ondemand") || !strcmp(gov, "conservative") ||
+               (!strcmp(gov, "schedutil") && !boost_clamp);
+    __atomic_store_n(&spin_cap_ns, poll ? boost_spin_ns : 0, __ATOMIC_RELAXED);
+    snprintf(what, cap, "waits %s (governor %s, driver %s, energy preference %s)",
+             poll && boost_spin_ns ? "poll before they sleep" : "sleep at once", gov[0] ? gov : "unknown",
+             drv[0] ? drv : "unknown", epp[0] ? epp : "none");
+}
+
+// The performance power profile, held over D-Bus for as long as the process lives (HoldProfile of
+// power-profiles-daemon and of tuned's tuned-ppd, the call behind `powerprofilesctl launch`): the daemon switches the
+// governor or the energy preference to performance, and back when this connection closes, at exit or after a crash.
+// It needs no privilege in a local session. libsystemd's bus client is loaded at run time, so the build needs neither
+// its headers nor the library; without it, without the daemon (the Steam Deck's Game Mode) or when it refuses, the
+// clamp and the wait polling stand alone. On the Core Ultra 285H the profile alone holds 60 fps in play with 4 frames
+// over 25 ms in 26 s, where wait polling under balance_performance left 144, and takes 1.5 cores instead of 1.7.
+//
+// The thread asks, then looks at the governor again every few seconds: the daemon applies the profile a moment after
+// it answers, and the player may change the profile while the game runs.
+static char boost_note[224];       // the outcome, for plat_cpu_boost_note
+static volatile int32_t boost_note_new;
+
+static void boost_main(void *arg) {
+    (void)arg;
+    plat_thread_priority(PLAT_PRIO_BELOW_NORMAL);   // housekeeping: no clamp, no polling
+    const char *held = NULL, *why = "no libsystemd";
+    void *lib = dlopen("libsystemd.so.0", RTLD_NOW | RTLD_LOCAL);
+    int (*open_system)(void **) = lib ? (int (*)(void **))dlsym(lib, "sd_bus_open_system") : NULL;
+    int (*call)(void *, const char *, const char *, const char *, const char *, void *, void **, const char *, ...) =
+        lib ? (int (*)(void *, const char *, const char *, const char *, const char *, void *, void **, const char *,
+                       ...))dlsym(lib, "sd_bus_call_method") : NULL;
+    int (*timeout)(void *, uint64_t) = lib ? (int (*)(void *, uint64_t))dlsym(lib, "sd_bus_set_method_call_timeout") : NULL;
+    void *bus = NULL;
+    if (open_system && call) {
+        why = "no system bus";
+        if (open_system(&bus) >= 0 && bus) {
+            static const char *const svc[2][2] = {
+                {"org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"},
+                {"net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"}};   // the name before 0.20
+            if (timeout) timeout(bus, 3000000);   // us: a daemon that does not answer is not waited for
+            why = "no power profile service, or it refused";
+            for (int i = 0; i < 2 && !held; i++)
+                if (call(bus, svc[i][0], svc[i][1], svc[i][0], "HoldProfile", NULL, NULL, "sss", "performance",
+                         "Astral Chain is running", "astralchain") >= 0)
+                    held = svc[i][0];
+            // the connection stays open for the life of the process: closing it would release the hold
+        }
+    }
+    char last[160] = "";
+    for (int tick = 0;; tick++) {
+        plat_sleep_ms(tick ? 5000 : 1500);
+        char what[160];
+        boost_decide(what, sizeof what);
+        if (!strcmp(what, last)) continue;
+        snprintf(last, sizeof last, "%s", what);
+        if (held) snprintf(boost_note, sizeof boost_note, "performance power profile held (%s); %s", held, what);
+        else snprintf(boost_note, sizeof boost_note, "performance power profile not held (%s); %s", why, what);
+        __atomic_store_n(&boost_note_new, 1, __ATOMIC_RELEASE);
+    }
+}
+
 void plat_cpu_boost(int mode, uint64_t spin_ns, char *out, size_t cap) {
-    char gov[32], drv[32];
     if (!mode) {
         snprintf(out, cap, "performance hints off");
         return;
     }
-    int clamp = uclamp_min(0, 1024);
-    __atomic_store_n(&boost_on, clamp, __ATOMIC_RELAXED);
-    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", gov, sizeof gov);
-    read_word_file("/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver", drv, sizeof drv);
-    // Who decides the frequency from a core's time awake: the processor itself under the pstate drivers' active modes
-    // (their "powersave" is that mode, not a fixed frequency), and the sampling governors. schedutil follows the clamp,
-    // unless the kernel has none; performance is at the top already; anything else keeps a fixed frequency.
-    int hw = !strcmp(gov, "powersave") && (!strcmp(drv, "intel_pstate") || !strcmp(drv, "amd-pstate-epp"));
-    int poll = mode > 1 || hw || !strcmp(gov, "ondemand") || !strcmp(gov, "conservative") ||
-               (!strcmp(gov, "schedutil") && !clamp);
-    __atomic_store_n(&spin_cap_ns, poll ? spin_ns : 0, __ATOMIC_RELAXED);
-    snprintf(out, cap, "utilization clamp %s; waits %s (governor %s, driver %s)",
-             clamp ? "at the maximum for the game's threads" : "refused by the kernel",
-             poll && spin_ns ? "poll before they sleep" : "sleep at once", gov[0] ? gov : "unknown", drv[0] ? drv : "unknown");
+    boost_mode = mode;
+    boost_spin_ns = spin_ns;
+    boost_clamp = uclamp_min(0, 1024);
+    __atomic_store_n(&boost_on, boost_clamp, __ATOMIC_RELAXED);
+    char what[160];
+    boost_decide(what, sizeof what);
+    snprintf(out, cap, "utilization clamp %s; %s; asking for the performance power profile",
+             boost_clamp ? "at the maximum for the game's threads" : "refused by the kernel", what);
+    plat_thread_spawn(boost_main, NULL, "cpu boost", 0);
+}
+
+int plat_cpu_boost_note(char *out, size_t cap) {
+    if (!__atomic_exchange_n(&boost_note_new, 0, __ATOMIC_ACQ_REL)) return 0;
+    snprintf(out, cap, "%s", boost_note);
+    return 1;
 }
 
 // cpufreq's scaling_cur_freq of the processor the caller is on (kHz; the pstate drivers derive it from the cycles the

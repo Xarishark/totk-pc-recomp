@@ -94,6 +94,9 @@ void plat_yield(void);                    // gives the rest of the time slice to
 // it whatever the governor. spin_ns: the longest time a condition-variable wait may poll before it sleeps. Writes a
 // line for the log into out.
 void plat_cpu_boost(int mode, uint64_t spin_ns, char *out, size_t cap);
+// 1 with a new line for the log in out when what plat_cpu_boost arranged has changed since the last call (the power
+// profile was granted or refused, the governor changed): cheap enough to ask once a second.
+int plat_cpu_boost_note(char *out, size_t cap);
 // The frequency in MHz of the processor the calling thread is on, as the OS reports it now; 0 when unknown.
 uint32_t plat_cpu_mhz(void);
 static inline void plat_pause(void) {     // spin-wait hint
