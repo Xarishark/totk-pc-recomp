@@ -37,8 +37,8 @@ spin main 87adb0 87ade8   # 14 instructions; loads
 spin main 9a8274 9a829c   # 5 instructions; loads
 
 # 1062p (no dynamic resolution): KeatonTheBot's pchtxt for 1.0.1. The pchtxt's @flag offset_shift 0x100 names module
-# offsets after the shift; these are those offsets. Width 0x760 = 1888, height 0x426 = 1062. Off by default: res1080
-# below takes the same sites (runtime/resolution.c game_res_pick keeps one of the two on).
+# offsets after the shift; these are those offsets. Width 0x760 = 1888, height 0x426 = 1062. Off by default: res
+# below takes the same sites (runtime/resolution.c res_pick keeps one of the two on).
 set  res1062 AC_RES1062 0
 site res1062 main 4328c0 5280c808 5280ec08   # mov w8, #1600 -> #1888 (render width)
 site res1062 main 4328c8 52807088 528084c8   # mov w8, #900 -> #1062 (render height)
@@ -54,110 +54,48 @@ site res1062 main 40f1ac 7119001f 711d801f   # cmp w0, #1600 -> #1888
 site res1062 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720
 site res1062 main 40f1b4 52806556 528084d6   # mov w22, #810 -> #1062
 site res1062 main 40f1d0 7119001f 711d801f   # cmp w0, #1600 -> #1888
-site res1062 main 40f1d8 1a880261 1a880001   # csel w1, w19, w8, eq -> w0 (level 2 docked width, as res1080)
+site res1062 main 40f1d8 1a880261 1a880001   # csel w1, w19, w8, eq -> w0 (level 2 docked width, as res)
 site res1062 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias)
 
-# 1080p: the res1062 sites with 1920x1080 (0x780 x 0x438), as 1.0.0's res1080 set, the ladder's docked entries included,
-# so the scene stays at 1920x1080 whatever scale the dynamic-resolution logic picks. Each ladder level picks one size
-# when the scene target has the docked width and another when it has not; handheld (1280x720 targets, main+0x40d5a0)
-# always takes the second. Those two handheld entries (40f1a4 and 40f1b0) get res1062's 1280x720, the handheld targets'
-# own size: 1920x1080 there is larger than the targets the game made for handheld, the level's target is never
-# created, and loading a save in handheld read through its null texture in main+0x9d0df0 (issues #25 and #38).
-# Level 2's docked width is w19, which the function sets to the handheld 1280 before the ladder (main+0x40f128, also the
-# width of a 1280x720 target it makes there, so left alone): with the height raised to 1080 that level was 1280x1080,
-# and the former AC_SSAA=1440p made it 1707x1440, which lost the device on an RTX 5070 Ti (issue #51). 40f1d8 takes the scene
-# target's width (w0) instead, as level 0 does, so the level is 1920x1080 docked and keeps 800x720 in handheld.
-# res1062 gets the same site.
-# On 1.0.0, 2048x1152 crashed the render-context setup: most likely the render-target budget the res1440 set below
-# grows, which 1080p already fills to 98 %. On by default.
-set  res1080 AC_RES1080 1
-site res1080 main 4328c0 5280c808 5280f008   # mov w8, #1600 -> #1920 (render width)
-site res1080 main 4328c8 52807088 52808708   # mov w8, #900 -> #1080 (render height)
-site res1080 main 40d5e4 5280c809 5280f009   # mov w9, #1600 -> #1920 (docked)
-site res1080 main 40d5f0 52807089 52808709   # mov w9, #900 -> #1080
-site res1080 main 40fb04 5280c809 5280f009   # mov w9, #1600 -> #1920 (handheld)
-site res1080 main 40fb14 52807089 52808709   # mov w9, #900 -> #1080
-site res1080 main 40f184 7119001f 711e001f   # cmp w0, #1600 -> #1920 (ladder)
-site res1080 main 40f188 52807088 52808708   # mov w8, #900 -> #1080
-site res1080 main 40f1a4 321603e8 5280a008   # mov w8, #1024 -> #1280 (handheld, as res1062)
-site res1080 main 40f1a8 5280b409 5280f009   # mov w9, #1440 -> #1920
-site res1080 main 40f1ac 7119001f 711e001f   # cmp w0, #1600 -> #1920
-site res1080 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720 (handheld, as res1062)
-site res1080 main 40f1b4 52806556 52808716   # mov w22, #810 -> #1080
-site res1080 main 40f1d0 7119001f 711e001f   # cmp w0, #1600 -> #1920
-site res1080 main 40f1d8 1a880261 1a880001   # csel w1, w19, w8, eq -> w0 (level 2 docked width: 1920, not 1280)
-site res1080 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
-
-# 720p: the res1080 sites with 1280x720 (0x500 x 0x2d0), for GPUs that cannot hold 1080p. Every docked level is then the
-# handheld targets' own size, which the handheld entries (40f1a4, 40f1b0) already give, so docked and handheld render
-# alike. Smaller than the shipped 1600x900, so the render-target budget needs nothing more. Off by default;
-# runtime/resolution.c game_res_pick turns res1080 off when it is on.
-set  res720 AC_RES720 0
-site res720 main 4328c0 5280c808 5280a008   # mov w8, #1600 -> #1280 (render width)
-site res720 main 4328c8 52807088 52805a08   # mov w8, #900 -> #720 (render height)
-site res720 main 40d5e4 5280c809 5280a009   # mov w9, #1600 -> #1280 (docked)
-site res720 main 40d5f0 52807089 52805a09   # mov w9, #900 -> #720
-site res720 main 40fb04 5280c809 5280a009   # mov w9, #1600 -> #1280 (handheld)
-site res720 main 40fb14 52807089 52805a09   # mov w9, #900 -> #720
-site res720 main 40f184 7119001f 7114001f   # cmp w0, #1600 -> #1280 (ladder)
-site res720 main 40f188 52807088 52805a08   # mov w8, #900 -> #720
-site res720 main 40f1a4 321603e8 5280a008   # mov w8, #1024 -> #1280 (handheld, as res1062)
-site res720 main 40f1a8 5280b409 5280a009   # mov w9, #1440 -> #1280
-site res720 main 40f1ac 7119001f 7114001f   # cmp w0, #1600 -> #1280
-site res720 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720 (handheld, as res1062)
-site res720 main 40f1b4 52806556 52805a16   # mov w22, #810 -> #720
-site res720 main 40f1d0 7119001f 7114001f   # cmp w0, #1600 -> #1280
-site res720 main 40f1d8 1a880261 1a880001   # csel w1, w19, w8, eq -> w0 (level 2 docked width, as res1080)
-site res720 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
-
-# The game rendering 2560x1440 or 3840x2160 (output_res). The res1080 sites with the larger size (0xa00 x
-# 0x5a0, 0xf00 x 0x870); the handheld entries keep res1062's 1280x720.
-# Off by default; runtime/resolution.c game_res_pick turns res1080 off when one of them is on.
-# The render size alone (0x4328c0) is what breaks start-up: the game's render targets and its three window textures
+# The game resolution (runtime/resolution.c res_pick, AC_OUTPUT_RES): the res1062 sites, each taking the output size
+# from the patch page (+32: width, +36: height, u32) instead of a constant, so any size runs without a set of its own,
+# as the TotK Recomp's output set does. 1920x1080 by default, as 1.0.0's res1080 set, the ladder's docked entries
+# included, so the scene stays at the output size whatever scale the dynamic-resolution logic picks. Only 16:9 sizes of
+# 32n x 18n are taken (resolution.c res_size): 1280x800 lost the device, and in handheld took the docked entries below.
+# Each ladder level picks one size when the scene target has the docked width and another when it has not; handheld
+# (1280x720 targets, main+0x40d5a0) always takes the second. Those two handheld entries (40f1a4 and 40f1b0) get
+# res1062's 1280x720, the handheld targets' own size: a larger size there is larger than the targets the game made for
+# handheld, the level's target is never created, and loading a save in handheld read through its null texture in
+# main+0x9d0df0 (issues #25 and #38). Level 2's docked width is w19, which the function sets to the handheld 1280 before
+# the ladder (main+0x40f128, also the width of a 1280x720 target it makes there, so left alone): with the height raised
+# to 1080 that level was 1280x1080, and the former AC_SSAA=1440p made it 1707x1440, which lost the device on an RTX 5070
+# Ti (issue #51). 40f1d8 takes the scene target's width (w0) instead, as level 0 does, so the level has the output size
+# docked and keeps 800x720 in handheld. res1062 gets the same site.
+# Above 1080p the render size alone (0x4328c0) breaks start-up: the game's render targets and its three window textures
 # (main+0x9e8620; general textures through main+0x9ead20) come out of one budget the graphics configuration sets at
-# main+0x40e0b0 (+0x88: 0x13600000, 310 MiB), carved from the process heap. At 1080p its 81 allocations take 304 MiB.
-# At 1440p one fails, the device setup gives up quietly, and start-up crashes reading a list it never filled
-# (main+0x9c0cd0). Measured with the budgets below over 75 s into play: 1440p takes 482 of 566 MiB, 2160p 955 of
-# 1046 MiB, the same 81 allocations. The process heap grows by the same 256 / 736 MiB (resolution.c
-# res_game_res_extra_bytes; without it the game prints NN_MEMORY_INFO with the shortfall).
-set  res1440 AC_RES1440 0
-site res1440 main 4328c0 5280c808 52814008   # mov w8, #1600 -> #2560 (render width)
-site res1440 main 4328c8 52807088 5280b408   # mov w8, #900 -> #1440 (render height)
-site res1440 main 40d5e4 5280c809 52814009   # mov w9, #1600 -> #2560 (docked)
-site res1440 main 40d5f0 52807089 5280b409   # mov w9, #900 -> #1440
-site res1440 main 40fb04 5280c809 52814009   # mov w9, #1600 -> #2560 (handheld)
-site res1440 main 40fb14 52807089 5280b409   # mov w9, #900 -> #1440
-site res1440 main 40f184 7119001f 7128001f   # cmp w0, #1600 -> #2560 (ladder)
-site res1440 main 40f188 52807088 5280b408   # mov w8, #900 -> #1440
-site res1440 main 40f1a4 321603e8 5280a008   # mov w8, #1024 -> #1280 (handheld, as res1062)
-site res1440 main 40f1a8 5280b409 52814009   # mov w9, #1440 -> #2560
-site res1440 main 40f1ac 7119001f 7128001f   # cmp w0, #1600 -> #2560
-site res1440 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720 (handheld, as res1062)
-site res1440 main 40f1b4 52806556 5280b416   # mov w22, #810 -> #1440
-site res1440 main 40f1d0 7119001f 7128001f   # cmp w0, #1600 -> #2560
-site res1440 main 40f1d8 1a880261 1a880001   # csel w1, w19, w8, eq -> w0 (level 2 docked width, as res1080)
-site res1440 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
-site res1440 main 40e0b0 52a26c08 52a46c08   # mov w8, #0x13600000 -> #0x23600000 (graphics config +0x88: render target memory)
-
-set  res2160 AC_RES2160 0
-site res2160 main 4328c0 5280c808 5281e008   # mov w8, #1600 -> #3840 (render width)
-site res2160 main 4328c8 52807088 52810e08   # mov w8, #900 -> #2160 (render height)
-site res2160 main 40d5e4 5280c809 5281e009   # mov w9, #1600 -> #3840 (docked)
-site res2160 main 40d5f0 52807089 52810e09   # mov w9, #900 -> #2160
-site res2160 main 40fb04 5280c809 5281e009   # mov w9, #1600 -> #3840 (handheld)
-site res2160 main 40fb14 52807089 52810e09   # mov w9, #900 -> #2160
-site res2160 main 40f184 7119001f 713c001f   # cmp w0, #1600 -> #3840 (ladder)
-site res2160 main 40f188 52807088 52810e08   # mov w8, #900 -> #2160
-site res2160 main 40f1a4 321603e8 5280a008   # mov w8, #1024 -> #1280 (handheld, as res1062)
-site res2160 main 40f1a8 5280b409 5281e009   # mov w9, #1440 -> #3840
-site res2160 main 40f1ac 7119001f 713c001f   # cmp w0, #1600 -> #3840
-site res2160 main 40f1b0 52804ed4 52805a14   # mov w20, #630 -> #720 (handheld, as res1062)
-site res2160 main 40f1b4 52806556 52810e16   # mov w22, #810 -> #2160
-site res2160 main 40f1d0 7119001f 713c001f   # cmp w0, #1600 -> #3840
-site res2160 main 40f1d8 1a880261 1a880001   # csel w1, w19, w8, eq -> w0 (level 2 docked width, as res1080)
-site res2160 main 9ed178 bc687920 1e2e1000   # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
-site res2160 main 40e0b0 52a26c08 52a82c08   # mov w8, #0x13600000 -> #0x41600000 (graphics config +0x88: render target memory)
-
+# main+0x40e0b0 (+0x88: 0x13600000, 310 MiB), carved from the process heap. At 1080p its 81 allocations take 304 MiB;
+# at 1440p one fails, the device setup gives up quietly, and start-up crashes reading a list it never filled
+# (main+0x9c0cd0). So the budget follows the output's pixel count (rt_res_budget_w8; measured over 75 s into play:
+# 1440p took 482 MiB, 2160p 955 MiB, the same 81 allocations), and the process heap grows by the same amount
+# (resolution.c res_heap_extra_bytes; without it the game prints NN_MEMORY_INFO with the shortfall).
+set  res AC_RES 1
+site res main 4328c0 5280c808 @fn:rt_res_w8      # mov w8, #1600 -> output width (render width)
+site res main 4328c8 52807088 @fn:rt_res_h8      # mov w8, #900 -> output height (render height)
+site res main 40d5e4 5280c809 @fn:rt_res_w9      # mov w9, #1600 -> width (docked)
+site res main 40d5f0 52807089 @fn:rt_res_h9      # mov w9, #900 -> height
+site res main 40fb04 5280c809 @fn:rt_res_w9      # mov w9, #1600 -> width (handheld)
+site res main 40fb14 52807089 @fn:rt_res_h9      # mov w9, #900 -> height
+site res main 40f184 7119001f @fnz:rt_res_cmp_w0 # cmp w0, #1600 -> cmp w0, width (ladder)
+site res main 40f188 52807088 @fn:rt_res_h8      # mov w8, #900 -> height
+site res main 40f1a4 321603e8 5280a008           # mov w8, #1024 -> #1280 (handheld, as res1062)
+site res main 40f1a8 5280b409 @fn:rt_res_w9      # mov w9, #1440 -> width
+site res main 40f1ac 7119001f @fnz:rt_res_cmp_w0 # cmp w0, #1600 -> cmp w0, width
+site res main 40f1b0 52804ed4 52805a14           # mov w20, #630 -> #720 (handheld, as res1062)
+site res main 40f1b4 52806556 @fn:rt_res_h22     # mov w22, #810 -> height
+site res main 40f1d0 7119001f @fnz:rt_res_cmp_w0 # cmp w0, #1600 -> cmp w0, width
+site res main 40f1d8 1a880261 1a880001           # csel w1, w19, w8, eq -> w0 (level 2 docked width: the output's)
+site res main 9ed178 bc687920 1e2e1000           # ldr s0, [x9,x8,lsl #2] -> fmov s0, #1.0 (mipmap bias, as res1062)
+site res main 40e0b0 52a26c08 @fn:rt_res_budget_w8   # mov w8, #0x13600000 -> the budget for the output size
 # Field of view (AC_FOV, runtime/resolution.c res_fov_live). A camera's lens (*(camera+0x58)) keeps the vertical view
 # angle at +0x27c (radians: 50 degrees in play, the shot's own in cutscenes), the aspect ratio at +0x278 and near / far
 # at +0x270 / +0x274. While the lens is dirty (+0x28c), main+0x9a3010 loads those four and builds the projection

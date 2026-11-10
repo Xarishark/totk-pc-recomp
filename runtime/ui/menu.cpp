@@ -484,18 +484,27 @@ static void row_window_size(void) {
     opt_choice_list("AC_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
 }
 
-// AC_OUTPUT_RES (resolution.c game_res_pick): the size the game renders itself, as in the TotK Recomp's menu; on 1.0.1
-// the four sizes of the game-resolution sets, 1280x720 for weak GPUs. Read at start; the row says "after restart" while
-// the stored value differs from the size this run renders.
+// AC_OUTPUT_RES (resolution.c res_pick): the size the game renders itself, as in the TotK Recomp's menu: its 16:9 sizes
+// up to 3840x2160, the most the process heap leaves room for, 1280x720 for weak GPUs (resolution.c res_size takes 16:9
+// sizes of 32n x 18n only). Another size from the ini (the Steam Deck profile's 1280x800) shows as it is. Read at
+// start; the row says "after restart" while the stored value differs from the size this run renders.
 static void row_output_res(void) {
-    static const char *const vals[] = {"1280x720", "1920x1080", "2560x1440", "3840x2160"};
-    const char *names[] = {"1280 × 720", "1920 × 1080", "2560 × 1440", "3840 × 2160"};   // U+00D7, the multiplication sign
+    static const char *const vals[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3200x1800", "3840x2160"};
+    enum { N = sizeof vals / sizeof *vals };
+    char shown[N][32];
+    const char *names[N];
+    for (int i = 0; i < N; i++) {
+        int w = 0, h = 0;
+        sscanf(vals[i], "%dx%d", &w, &h);
+        snprintf(shown[i], sizeof shown[i], "%d × %d", w, h);   // U+00D7, the multiplication sign
+        names[i] = shown[i];
+    }
     unsigned g[2];
     res_game_size(g);
     char now[16];
     snprintf(now, sizeof now, "%ux%u", g[0], g[1]);
     const char *note = strcmp(cfg_value("AC_OUTPUT_RES"), now) ? menu_text(UI_MENU_AFTER_RESTART) : nullptr;
-    opt_choice_list("AC_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, 4, UI_MENU_OUTPUT_RES_DESC, -1, note);
+    opt_choice_list("AC_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, N, UI_MENU_OUTPUT_RES_DESC, -1, note);
 }
 
 static void row_shadow_res(void) {
@@ -1125,7 +1134,7 @@ static float perf_gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
 static void perf_picture(const MenuTarget *t, const ImVec4 &c, const PerfStats &s) {
     unsigned out[2], scene[2];
     res_sizes(out, scene);
-    res_game_size(out);   // the res1080 / res1062 sets: the game renders its scene at its output size
+    res_game_size(out);   // the res / res1062 sets: the game renders its scene at its output size
     scene[0] = out[0], scene[1] = out[1];
     unsigned rw = scene[0], rh = scene[1];
     char v[6][64];

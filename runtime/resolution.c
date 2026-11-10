@@ -28,8 +28,9 @@
 // no other heap shrinks. Without the rewritten table (a RomFS that lacks it, a format this code does not know) the
 // patch sets stay off and the game keeps its own sizes.
 //
-// Astral Chain 1.0.1 has no output set: there AC_OUTPUT_RES picks one of four game-resolution sets (1280x720,
-// 1920x1080, 2560x1440, 3840x2160; game_res_pick below), and none of the HeapDef growth above applies.
+// Astral Chain 1.0.1 has no output set: there the res set reads AC_OUTPUT_RES from the patch page at the game's render
+// size sites and grows the game's render-target budget with it (res_pick below); none of the HeapDef growth above
+// applies.
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -123,8 +124,8 @@ static int bigger(void) {
 
 static int output_set(void);   // below: TotK's output patch set is in the generated C
 
-// TotK's HeapDef growth for its output, scene and shadow sizes; 0 without the output set (1.0.1), whose sizes come from
-// the game-resolution sets and grow the pool through res_game_res_extra_bytes instead.
+// TotK's HeapDef growth for its output, scene and shadow sizes; 0 without the output set (1.0.1), whose size comes from
+// the res set and grows the pool through res_output_extra_bytes instead.
 uint64_t res_heap_extra_kib(void) {
     if (!output_set() || !bigger()) return 0;
     double grow = fmax(0.0, (double)R.ow * R.oh / (BASE_W * BASE_H) - 1.0) +
@@ -133,10 +134,10 @@ uint64_t res_heap_extra_kib(void) {
     return kib + ((shadow_kib() + 1023) & ~1023ull);   // whole MiB
 }
 
-uint64_t res_game_res_extra_bytes(void);   // below: game_res's render-target budget growth
+uint64_t res_output_extra_bytes(void);   // below: the res set's render-target budget growth
 
 uint64_t res_heap_extra_bytes(void) {
-    return ((res_heap_extra_kib() << 10) + res_game_res_extra_bytes() + 0x1fffff) & ~0x1fffffull;
+    return ((res_heap_extra_kib() << 10) + res_output_extra_bytes() + 0x1fffff) & ~0x1fffffull;
 }
 
 // ---- the HeapDef table. BYML version 2..7, little endian ("YB"): a hash node is {u8 0xC1, u24 count} and count
@@ -269,93 +270,120 @@ static void res_shadow_range(void) {
 }
 
 // ---- start: the patch page and the sets
-// Game versions without TotK's output patch set (1.0.1): output_res picks one of the game-resolution sets
-// (recomp/patches-v101.txt), which patch the same instructions, so one of them at most is on. 1280x720 (res720) is for
-// GPUs that cannot hold 1080p and fits the game's own render-target budget; 1920x1080 (res1080) is the default. At
-// 2560x1440 and 3840x2160 the game's render-target budget is grown to fit (main+0x40e0b0, 310 MiB at 1080p, 566 MiB at
-// 1440p, 1046 MiB at 2160p), and the process heap grows by the same amount (res_heap_extra_bytes), as the budget is
-// carved from it. Another size keeps 1920x1080. The sets' own variables still work and win over output_res, the first
-// of this list over the later ones: AC_RES2160, AC_RES1440, AC_RES1062 (the community 1062p) and AC_RES720.
-static const struct {
-    const char *set, *name;
-    unsigned w, h;
-    uint64_t extra;   // the process heap's growth for the set's render-target budget, bytes
-} game_res[] = {{"res2160", "3840x2160", 3840, 2160, 736ull << 20}, {"res1440", "2560x1440", 2560, 1440, 256ull << 20},
-                {"res1062", NULL, 1888, 1062, 0}, {"res720", "1280x720", 1280, 720, 0},
-                {"res1080", "1920x1080", 1920, 1080, 0}};
-#define GAME_RES_N (int)(sizeof game_res / sizeof game_res[0])
+// Game versions without TotK's output patch set (1.0.1): the res set (recomp/patches-v101.txt) reads the output size
+// from the patch page (+32 width, +36 height, u32; rt_res_* below) at the sites that hold the game's render size, so
+// output_res takes a size as in the TotK Recomp, here any 16:9 one of 32n x 18n: 1920x1080 by default, 1280x720 for
+// GPUs that cannot hold 1080p, up to 3840x2160 (res_size). Above 1080p's pixel count the game's render-target budget
+// (main+0x40e0b0, 310 MiB, which 1080p fills to 304) grows with the pixels (res_budget), and the process heap by the
+// same amount, as the budget is carved from it (res_output_extra_bytes). AC_RES1062=1 still asks for the community
+// 1062p set instead.
+#define RES_PAGE 32
+#define RES_BUDGET_GAME (310ull << 20)   // the game's own render-target budget, 0x13600000
+#define RES_PIXELS_MAX (3840ull * 2160)  // the most the process heap's 4 GiB (memory.c HEAP_CAP) leaves room for
 
 // TotK's output and scene sets (patches-v121.txt, patches-v143.txt) make the game read any output size from the patch
-// page, with the grown HeapDef table (res_init below); without them output_res picks a set of the table above.
+// page, with the grown HeapDef table (res_init below); without them the res set does.
 static int output_set(void) { return rt_patch_set("output") >= 0; }
 
-// The entry output_res asks for, -1 for none (1920x1080, the res1080 set's default, a size this table does not have, or
-// a game version with the output set).
-static int game_res_setting(void) {
-    if (output_set()) return -1;
-    const char *v = cfg_value("AC_OUTPUT_RES");
-    for (int i = 0; i < GAME_RES_N; i++)
-        if (game_res[i].name && !strcmp(v, game_res[i].name)) return strcmp(game_res[i].set, "res1080") ? i : -1;
-    return -1;
+// The output size output_res asks for on 1.0.1, decided once (mem_init sizes the pool before the sets are switched):
+// 32n x 18n from 1280x720 (n = 40) to 3840x2160 (n = 120); else 1920x1080. Other shapes and sizes off that grid fail:
+// 1280x800 lost the device in the first gameplay frames (a device fault in a shader, as scene sizes off the grid did
+// in the temporal-upscaling work), and in handheld, where the scene targets are 1280x720, a 1280-wide output makes the
+// ladder's cmp take the docked entries for them, so a level's target is never made and loading a save reads through
+// its null texture in main+0x9d0df0 (as issues #25 and #38). On the grid the only 1280-wide size is 1280x720 itself.
+static void res_size(unsigned *w, unsigned *h) {
+    static unsigned sw, sh;
+    if (!sw) {
+        const char *o = cfg_value("AC_OUTPUT_RES");
+        unsigned a = 0, b = 0;
+        char tail;
+        sw = 1920, sh = 1080;
+        if (sscanf(o, "%ux%u%c", &a, &b, &tail) == 2 && a % 32 == 0 && b % 18 == 0 && a / 32 == b / 18 &&
+            a >= 1280 && (uint64_t)a * b <= RES_PIXELS_MAX)
+            sw = a, sh = b;
+        else if (strcmp(o, "1920x1080"))
+            rt_log("resolution: output_res = %s is not a 16:9 size of 32n x 18n from 1280x720 to 3840x2160; "
+                   "1920x1080", o);
+    }
+    *w = sw, *h = sh;
 }
 
-// The entry that will be on, before the sets are switched (mem_init sizes the pool first): a set's own variable first,
-// as game_res_pick decides, then output_res.
-static int game_res_wanted(void) {
-    static const char *const vars[] = {"AC_RES2160", "AC_RES1440"};
-    for (int i = 0; i < 2; i++) {
-        const char *v = cfg_get(vars[i]);
-        if (v && atoi(v)) return i;
-    }
-    return game_res_setting();
+// The render-target budget for w x h: the game's own up to 1080p's pixel count, which it fits; above, the measured use
+// (87 MiB and 110 bytes a pixel: 304 MiB at 1920x1080, 482 at 2560x1440, 955 at 3840x2160, the same 81 allocations over
+// 75 s into play) with 15 % to spare, in whole MiB: 545 MiB at 2560x1440, 1100 at 3840x2160.
+static uint64_t res_budget(unsigned w, unsigned h) {
+    uint64_t px = (uint64_t)w * h;
+    if (px <= 1920ull * 1080) return RES_BUDGET_GAME;
+    uint64_t use = (87ull << 20) + px * 110;
+    return (use + use * 15 / 100 + 0xfffff) & ~0xfffffull;
 }
 
-uint64_t res_game_res_extra_bytes(void) {
-    int i = game_res_wanted();
-    return i >= 0 ? game_res[i].extra : 0;
+// The res set is in the generated C and nothing turned it off: AC_RES=0, or AC_RES1062=1, whose sites are the same.
+static int res_set_wanted(void) {
+    if (output_set() || rt_patch_set("res") < 0) return 0;
+    const char *r = cfg_get("AC_RES"), *r1062 = cfg_get("AC_RES1062");
+    return !(r && !atoi(r)) && !(r1062 && atoi(r1062));
 }
 
-static void game_res_pick(void) {
-    int ask = game_res_setting();
-    if (ask >= 0 && rt_patch_set(game_res[ask].set) >= 0 && !rt_patch_enabled(rt_patch_set(game_res[ask].set))) {
-        rt_patch_switch(rt_patch_set(game_res[ask].set), 1);
-        rt_log("resolution: output_res = %s: the %s set is on", game_res[ask].name, game_res[ask].set);
-    } else if (!output_set() && ask < 0 && strcmp(cfg_value("AC_OUTPUT_RES"), "1920x1080")) {
-        rt_log("resolution: output_res = %s is not 1280x720, 1920x1080, 2560x1440 or 3840x2160 here; 1920x1080",
-               cfg_value("AC_OUTPUT_RES"));
-    }
-    int won = -1, any = 0;
-    for (int i = 0; i < GAME_RES_N; i++) {
-        int s = rt_patch_set(game_res[i].set);
-        any |= s >= 0;
-        if (!rt_patch_enabled(s)) continue;
-        if (won < 0) {
-            won = i;
-        } else {
-            rt_patch_switch(s, 0);
-            rt_log("resolution: %s asks for %ux%u: the %s set is off", game_res[won].set, game_res[won].w,
-                   game_res[won].h, game_res[i].set);
-        }
-    }
-    unsigned g[2];
-    res_game_size(g);
-    if (any) rt_log("resolution: the game renders %ux%u", g[0], g[1]);
+uint64_t res_output_extra_bytes(void) {
+    if (!res_set_wanted()) return 0;
+    unsigned w, h;
+    res_size(&w, &h);
+    return res_budget(w, h) - RES_BUDGET_GAME;
 }
+
+static unsigned res_page(int i) {
+    uint32_t v;
+    memcpy(&v, (const uint8_t *)rt_patch_page() + RES_PAGE + 4 * i, sizeof v);
+    return v;
+}
+
+// The res set's sites: a mov of the game's render width or height, the ladder's cmp of the scene target's width
+// against it (flags as cmp w0, width sets them), and the budget's mov.
+void rt_res_w8(Cpu *c) { c->x[8] = res_page(0); }
+void rt_res_h8(Cpu *c) { c->x[8] = res_page(1); }
+void rt_res_w9(Cpu *c) { c->x[9] = res_page(0); }
+void rt_res_h9(Cpu *c) { c->x[9] = res_page(1); }
+void rt_res_h22(Cpu *c) { c->x[22] = res_page(1); }
+uint64_t rt_res_cmp_w0(Cpu *c) {
+    uint32_t a = (uint32_t)c->x[0], b = res_page(0), r = a - b;
+    return MKFLAGS(r >> 31, r == 0, a >= b, ((a ^ b) & (a ^ r)) >> 31);
+}
+void rt_res_budget_w8(Cpu *c) { c->x[8] = res_budget(res_page(0), res_page(1)); }
+
+static void res_pick(void) {
+    int res = rt_patch_set("res"), r1062 = rt_patch_set("res1062");
+    if (res < 0) return;
+    if (rt_patch_enabled(r1062) && rt_patch_enabled(res)) {
+        rt_patch_switch(res, 0);
+        rt_log("resolution: AC_RES1062 asks for 1888x1062: the res set is off");
+    }
+    if (rt_patch_enabled(res)) {
+        unsigned w, h;
+        res_size(&w, &h);
+        uint32_t page[2] = {w, h};
+        memcpy((uint8_t *)rt_patch_page() + RES_PAGE, page, sizeof page);
+        rt_log("resolution: the game renders %ux%u (render-target budget %llu MiB)", w, h,
+               (unsigned long long)(res_budget(w, h) >> 20));
+    } else if (rt_patch_enabled(r1062)) {
+        rt_log("resolution: the game renders 1888x1062");
+    }
+}
+
 void res_game_size(unsigned out[2]) {
-    int i = 0;
-    while (i < GAME_RES_N && !rt_patch_enabled(rt_patch_set(game_res[i].set))) i++;
-    if (i < GAME_RES_N) {
-        out[0] = game_res[i].w, out[1] = game_res[i].h;
+    if (rt_patch_enabled(rt_patch_set("res"))) {
+        res_size(&out[0], &out[1]);
+    } else if (rt_patch_enabled(rt_patch_set("res1062"))) {
+        out[0] = 1888, out[1] = 1062;
     } else {
         unsigned scene[2];
         res_sizes(out, scene);
     }
 }
-
 void res_init(void) {
-    game_res_pick();
+    res_pick();
     res_shadow_range();
-    if (!output_set()) {   // 1.0.1: output_res picked a game-resolution set above
+    if (!output_set()) {   // 1.0.1: the res set took output_res above
         shadow_init(rt_patch_page());
         return;
     }
