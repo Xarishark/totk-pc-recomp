@@ -60,9 +60,12 @@ static int instance_ext_present(const char *name) {
 // Mesa's drivers (RADV on Linux and the Steam Deck) keep a shader cache of their own beside our pipeline cache, by
 // default in ~/.cache and up to 1 GB: about 35 MB in a minute of the title screen. A Deck's /home is small and the game
 // usually sits on the SD card, so unless MESA_SHADER_CACHE_DIR names a folder, it goes to mesa-cache beside the exe.
+// Not for the Windows exe under Wine or Proton: the driver runs on the Unix side and reads the Unix environment the
+// process started with, which a Windows environment change does not reach, and the value would be a Windows path.
+// The driver cache there stays where the launcher's environment puts it (vk_pipeline.c, section "driver cache").
 static void mesa_cache_beside_exe(void) {
     char dir[PLAT_PATH_MAX * 2];
-    if (plat_getenv("MESA_SHADER_CACHE_DIR", dir, sizeof dir)) return;
+    if (plat_is_wine() || plat_getenv("MESA_SHADER_CACHE_DIR", dir, sizeof dir)) return;
     int len = plat_exe_path(dir, sizeof dir - 16);
     char *cut = len ? plat_last_sep(dir) : NULL;
     if (!cut) return;

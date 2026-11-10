@@ -1503,7 +1503,9 @@ static VkPipelineLayout half_layout(Layout *l, int h) {
 }
 
 // Builds one library from the pipeline's state; key is the library's key (PrKey: fin holds the added outputs).
-static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPipelineLayout lay, const void *key) {
+// cache: P.cache, or VK_NULL_HANDLE for a build meant for the driver's own disk cache only (lb_library).
+static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPipelineLayout lay, const void *key,
+                             VkPipelineCache cache) {
     static const VkGraphicsPipelineLibraryFlagsEXT part[4] = {
         VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT, VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT,
         VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT, VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT};
@@ -1600,7 +1602,7 @@ static VkPipeline lib_create(int kind, const VkPipeState *s, const GKey *k, VkPi
         ri.depthAttachmentFormat = (VkFormat)k->depth, ri.stencilAttachmentFormat = (VkFormat)k->stencil;
         pi.pColorBlendState = &cb, pi.pMultisampleState = &ms;
     }
-    if (vkCreateGraphicsPipelines(P.device, P.cache, 1, &pi, NULL, &pipe) != VK_SUCCESS) pipe = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(P.device, cache, 1, &pi, NULL, &pipe) != VK_SUCCESS) pipe = VK_NULL_HANDLE;
 out:
     if (m) vkDestroyShaderModule(P.device, m, NULL);
     free(patched);
@@ -1667,7 +1669,7 @@ static VkPipeline lib_build(Lib *b, int kind, const VkPipeState *s, const GKey *
     if (lay || kind == LIB_VI || kind == LIB_FO) {
         plat_mutex_unlock(&P.lock);
         uint64_t t0 = qpc();
-        pipe = lib_create(kind, s, k, lay, b->key);
+        pipe = lib_create(kind, s, k, lay, b->key, P.cache);
         double ms = ms_since(t0);
         plat_mutex_lock(&P.lock);
         P.g.lib_n[kind]++, P.g.lib_ms[kind] += ms;
@@ -1715,7 +1717,7 @@ static VkPipeline lib_get(int kind, const VkPipeState *s, const GKey *k, Layout 
     if (b) return lib_build(b, kind, s, k, l);
     plat_mutex_unlock(&P.lock);
     uint64_t t0 = qpc();
-    VkPipeline pipe = lib_create(kind, s, k, lay, key);
+    VkPipeline pipe = lib_create(kind, s, k, lay, key, P.cache);
     double ms = ms_since(t0);
     plat_mutex_lock(&P.lock);
     if ((have = lib_find(h, key, size)) && !have->building) {   // another thread built it meanwhile
@@ -2563,9 +2565,12 @@ static Layout *compute_layout(const GfxShader *cs, Bindings *B, const char **why
 //   sections and shader loads at normal priority, so a preempted thread never holds the lock the replay needs):
 //   compute pipelines of every recorded and prepared compute shader, kept (vk_pipeline_compute builds compute
 //   synchronously on the replay thread; 163 prepared), and the libraries of the first AC_LIB_PREBUILD_KEEP variants
-//   play recorded (priority 0), kept in libs[] with their shaders. KEEP defaults to 512 (0 on Steam Deck):
+//   play recorded (priority 0), kept in libs[] with their shaders. KEEP defaults to 1024 (512 on Steam Deck):
 //   a kept library costs 140-460 KB of process memory (10,000 kept took 9 GB in run 1) to save a rebuild the driver
 //   cache makes 0.1 ms on a warm cache, several ms on a cold one.
+//   When the driver cache in use is not one the preparation filled (section "driver cache" below), the boot also
+//   builds every other prepared or recorded vertex and fragment variant after those, as the preparation does: into
+//   the driver's disk cache only (no VkPipelineCache, so neither pipeline-cache.bin nor process memory grows).
 // Library state: the vertex output union known now (vs_union_peek; the prewarm fills it from pipeline-keys.bin, the
 // preparation has none), the clamp, polygon mode and depth mode most recorded pipelines use (defaults without a key
 // file: clamp 0, fill, -w..w), single-sampled, no dual source; the state dynamic on this GPU is 0 in every key.
@@ -2589,6 +2594,10 @@ static struct {
     double warm_ms[3];
     volatile int32_t kept;                                // libraries entered in libs[] so far
     int32_t keep_n;
+    size_t n_keep;                                     // boot: e[0..n_keep) kept, the rest built for the driver
+                                                       // cache only (rewarm)
+    int rewarm;                                        // boot: the list covers the warm list for the driver cache
+    int nocache;                                       // boot: driver-cache-only builds go past P.cache (lb_library)
     int idle;                                          // build at PLAT_PRIO_IDLE (boot), normal (preparation)
     PlatMutex stat;
 } LB = {.stat = PLAT_MUTEX_INIT};
@@ -2721,6 +2730,106 @@ static void journal_mark(int slot, const GfxWarmEnt *e) {
     plat_file_pwrite(SK.journal, rec, sizeof rec, (uint64_t)slot * JR_SLOT);
 }
 
+// ---- driver cache: which of the GPU driver's disk caches hold the prepared variants (<dir>/shader-prepared-driver.txt)
+// What the preparation leaves is the driver's own disk cache, which the driver places, not us. AMD's and NVIDIA's
+// Windows drivers key it to the GPU and driver version (AMD's also to the exe path). Mesa's drivers (RADV on the Steam
+// Deck, natively and under Proton) keep it in MESA_SHADER_CACHE_DIR, else under XDG_CACHE_HOME or HOME, as the
+// environment the process started with names them, and a driver update starts a new cache. Under Proton that
+// environment is the launcher's: Steam can name a folder per library entry, so the installer's preparation, and the
+// game started from the installer's window, use one cache, while the game started from its own entry may use another,
+// empty one, and build every library during play in every session. A Windows exe cannot move Mesa's cache
+// (vk_device.c mesa_cache_beside_exe).
+// The file lists, one line each (dc_identity), the driver caches that a finished preparation (lb_warm_prepared) or boot
+// rebuild (lb_worker) went through, the last DC_KEEP of them. A boot whose line is missing builds the warm list into
+// the cache in use in the background (lb_start) and adds its line when every variant went through; the next boot with
+// that cache only reads the file.
+#define DC_KEEP 8
+#define DC_LINE 1600
+
+// The line of the driver cache this process uses: GPU, driver version, pipelineCacheUUID (a Mesa build has its own),
+// the driver's description, then where the cache is (Mesa: the variables above; the others: the exe path).
+static void dc_identity(char *out, size_t n) {
+    const VkCtx *c = vk_ctx();
+    VkPhysicalDeviceDriverProperties drv = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &drv};
+    vkGetPhysicalDeviceProperties2(c->phys, &p2);
+    char gpu[32], uuid[2 * VK_UUID_SIZE + 1], v[PLAT_PATH_MAX];
+    gpu_key(gpu, sizeof gpu);
+    for (int i = 0; i < VK_UUID_SIZE; i++) snprintf(uuid + 2 * i, 3, "%02x", c->props.pipelineCacheUUID[i]);
+    size_t len = (size_t)snprintf(out, n, "%s %s \"%s\"", gpu, uuid, drv.driverInfo);
+    if (strstr(drv.driverInfo, "Mesa")) {
+        // Mesa's lookup order: the first of these that is set names the folder
+        static const char *const where[] = {"MESA_SHADER_CACHE_DIR", "XDG_CACHE_HOME", "HOME"};
+        static const char *const how[] = {"MESA_SHADER_CACHE_DISABLE", "MESA_DISK_CACHE_SINGLE_FILE",
+                                          "MESA_DISK_CACHE_MULTI_FILE", "MESA_DISK_CACHE_DATABASE"};
+        const char *name = "none";
+        v[0] = 0;
+        for (int i = 0; i < 3; i++)
+            if (plat_getenv(where[i], v, sizeof v)) {
+                name = where[i];
+                break;
+            }
+        if (len < n) len += (size_t)snprintf(out + len, n - len, " mesa %s=%s", name, v);
+        for (int i = 0; i < 4 && len < n; i++)
+            if (plat_getenv(how[i], v, sizeof v)) len += (size_t)snprintf(out + len, n - len, " %s=%s", how[i], v);
+    } else if (len < n && plat_exe_path(v, sizeof v)) {
+        snprintf(out + len, n - len, " exe %s", v);
+    }
+    for (char *p = out; *p; p++)
+        if (*p == '\n' || *p == '\r') *p = ' ';
+}
+
+// Whether <dir>/shader-prepared-driver.txt lists id.
+static int dc_listed(const char *dir, const char *id) {
+    char p[PLAT_PATH_MAX * 2 + 48];
+    snprintf(p, sizeof p, "%s/shader-prepared-driver.txt", dir);
+    uint64_t n = 0;
+    char *f = (char *)plat_file_read(p, &n), *next;
+    int found = 0;
+    for (char *line = f; line && *line && !found; line = next) {
+        next = strchr(line, '\n');
+        if (next) *next++ = 0;
+        size_t l = strlen(line);
+        if (l && line[l - 1] == '\r') line[l - 1] = 0;
+        found = !strcmp(line, id);
+    }
+    free(f);
+    return found;
+}
+
+// Adds id to <dir>/shader-prepared-driver.txt (the last DC_KEEP lines stay).
+static void dc_record(const char *dir, const char *id) {
+    if (dc_listed(dir, id)) return;
+    char p[PLAT_PATH_MAX * 2 + 48];
+    snprintf(p, sizeof p, "%s/shader-prepared-driver.txt", dir);
+    static const char head[] =
+        "# GPU driver shader caches that hold the prepared shader variants (runtime/vk_pipeline.c, section \"driver\n"
+        "# cache\"): GPU vendor:device:driver version, pipeline cache UUID, driver, cache location. A start with a cache\n"
+        "# not listed here builds the variants into it in the background. Deleting this file makes the next start do so.\n";
+    uint64_t n = 0;
+    char *f = (char *)plat_file_read(p, &n);
+    const char *lines[DC_KEEP];
+    int k = 0;
+    for (char *line = f, *next; line && *line; line = next) {
+        next = strchr(line, '\n');
+        if (next) *next++ = 0;
+        size_t l = strlen(line);
+        if (l && line[l - 1] == '\r') line[l - 1] = 0;
+        if (line[0] == '#' || !line[0]) continue;
+        if (k == DC_KEEP - 1) memmove(lines, lines + 1, (DC_KEEP - 2) * sizeof *lines), k--;
+        lines[k++] = line;
+    }
+    size_t cap = sizeof head + (size_t)n + strlen(id) + 2, len = sizeof head - 1;
+    char *out = malloc(cap);
+    if (out) {
+        memcpy(out, head, len);
+        for (int i = 0; i < k; i++) len += (size_t)snprintf(out + len, cap - len, "%s\n", lines[i]);
+        len += (size_t)snprintf(out + len, cap - len, "%s\n", id);
+        if (!plat_file_write_atomic(p, out, len)) rt_log("vk_pipeline: cannot write %s", p);
+    }
+    free(out), free(f);
+}
+
 VkPipeline vk_pipeline_compute(const GfxShader *cs, const VkPipeInfo **info) {
     if (info) *info = NULL;
     if (!cs || !ensure_init()) return VK_NULL_HANDLE;
@@ -2820,7 +2929,9 @@ static void lb_compute(const GfxShader *cs) {
 }
 
 // The pre-rasterization (vertex) or fragment-shader library of one shader with the LB state.
-// keep 0: build into the driver's pipeline cache only (sh is a private copy; the library is destroyed).
+// keep 0: build into the driver's pipeline cache only (sh is a private copy; the library is destroyed). At boot
+// (LB.nocache) such a build goes past P.cache, which would keep every library's code in memory and in
+// pipeline-cache.bin.
 static void lb_library(const GfxShader *sh, int vertex, int keep) {
     int kind = vertex ? LIB_PR : LIB_FS, stat = vertex ? 0 : 1;
     VkPipeState s;
@@ -2861,7 +2972,7 @@ static void lb_library(const GfxShader *sh, int vertex, int keep) {
         return;
     }
     double t0 = now_ms();
-    VkPipeline pipe = lib_create(kind, &s, &k, lay, key);
+    VkPipeline pipe = lib_create(kind, &s, &k, lay, key, keep || !LB.nocache ? P.cache : VK_NULL_HANDLE);
     double ms = now_ms() - t0;
     if (!keep) {
         if (pipe) vkDestroyPipeline(P.device, pipe, NULL);
@@ -2906,7 +3017,24 @@ static void lb_report(const char *how) {
     plat_mutex_unlock_shared(&LB.stat);
 }
 
-// Boot: compute pipelines and kept libraries, all entered for the process.
+static char dc_boot_id[DC_LINE];   // lb_start: the driver cache of this process, when the boot rebuilds into it
+
+// The boot rebuild went through every variant: the driver cache in use is listed from now on. Variants missing from
+// the shader cache cannot be built; most of them missing means the shaders were translated for another GPU or driver
+// (a folder prepared on one machine and copied to another): the host answers are in every cache key (gfx_shader.c).
+static void dc_rewarm_done(void) {
+    char dir[PLAT_PATH_MAX * 2];
+    if (!cache_dir(dir, sizeof dir)) return;
+    if (LB.noshader * 2 > LB.n)
+        rt_log("vk_pipeline: %llu of %zu variants of the warm list are not in the shader cache for this GPU and driver; "
+               "they are translated during play. The folder was prepared on another GPU or with other settings: run "
+               "astralchain.exe --prepare-shaders in it on this machine", (unsigned long long)LB.noshader, LB.n);
+    dc_record(dir, dc_boot_id);
+    rt_log("vk_pipeline: the driver's shader cache now holds the warm list: %s/shader-prepared-driver.txt lists it", dir);
+}
+
+// Boot: compute pipelines and kept libraries, all entered for the process; then, when the driver cache was not
+// prepared (LB.rewarm), the other variants into the driver cache only.
 static void lb_worker(void *arg) {
     (void)arg;
     plat_thread_priority(PLAT_PRIO_IDLE);
@@ -2920,24 +3048,30 @@ static void lb_worker(void *arg) {
             plat_mutex_unlock(&LB.stat);
             continue;
         }
+        // kept entries enter the shader cache; the rewarm's are private copies, released after their build
+        int keep = i < LB.n_keep, owned = 0;
         plat_thread_priority(PLAT_PRIO_NORMAL);   // gfx_shader's cache lock, disk reads
-        const GfxShader *sh = gfx_shader_load_input(LB.e[i].iid, 0);
+        const GfxShader *sh = keep ? gfx_shader_load_input(LB.e[i].iid, 0) : gfx_shader_load_private(LB.e[i].iid, &owned);
         plat_thread_priority(PLAT_PRIO_IDLE);
         if (!sh) {
             plat_mutex_lock(&LB.stat);
             LB.noshader++;
             plat_mutex_unlock(&LB.stat);
         } else if (gfx_shader_stage(sh) == GFX_STAGE_CS) {
-            lb_compute(sh);
+            if (keep) lb_compute(sh);
         } else if (gfx_shader_stage(sh) == GFX_STAGE_VS || gfx_shader_stage(sh) == GFX_STAGE_FS) {
-            if (P.gpl) lb_library(sh, gfx_shader_stage(sh) == GFX_STAGE_VS, 1);
+            if (P.gpl) lb_library(sh, gfx_shader_stage(sh) == GFX_STAGE_VS, keep);
             else lb_skip_lib();
         }
+        if (owned) gfx_shader_release_private(sh);
         plat_mutex_lock(&LB.stat);
         LB.done++;
         plat_mutex_unlock(&LB.stat);
     }
-    if (!plat_dec32(&LB.running)) lb_report(LB.stop ? "stopped" : "done");
+    if (!plat_dec32(&LB.running)) {
+        lb_report(LB.stop ? "stopped" : "done");
+        if (LB.rewarm && !LB.stop) dc_rewarm_done();
+    }
     return;
 }
 
@@ -2952,24 +3086,91 @@ static void lb_state(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
     LB.samples = (uint8_t)(1u << bf);
 }
 
-// Boot: compute shaders of the warm list (recorded and prepared), then the first KEEP recorded graphics variants.
+// A listed driver cache can still have lost the variants: Mesa evicts past its size limit (MESA_SHADER_CACHE_MAX_SIZE),
+// a launcher may clear or replace its folder, a driver may not have written it. So a listed cache is checked: up to
+// DC_PROBE of the variants the rebuild would build (all[i] for i past the kept ones, spread over the list) are built on
+// this thread, before the guest runs and with the library state set (lb_state), into the driver cache only. A library
+// the cache holds took 0.05-0.2 ms on desktop GPUs; a compile takes several ms to tens. DC_PROBE_SLOW builds over
+// DC_PROBE_MS mean the cache does not hold the list. The probing stops as soon as the answer is known: a few ms on a
+// warm cache, a few compiles on a cold one. Returns 1 for a cold cache.
+#define DC_PROBE 16
+#define DC_PROBE_SLOW 4
+#define DC_PROBE_MS 5.0
+
+static int dc_probe_cold(const GfxWarmEnt *all, size_t total, size_t stop, int *tried, double *slow_ms) {
+    size_t cand = 0;
+    for (size_t i = 0; i < total; i++)
+        cand += all[i].stage != GFX_STAGE_CS && !(i < stop && all[i].prio == 0);
+    int slow = 0, fast = 0, j = 0;
+    *tried = 0, *slow_ms = 0;
+    for (size_t i = 0, c = 0; i < total && j < DC_PROBE && slow < DC_PROBE_SLOW && fast <= DC_PROBE - DC_PROBE_SLOW; i++) {
+        if (all[i].stage == GFX_STAGE_CS || (i < stop && all[i].prio == 0)) continue;
+        if (c++ < (size_t)j * cand / DC_PROBE) continue;   // every candidate when there are fewer than DC_PROBE
+        j++;
+        int owned = 0;
+        const GfxShader *sh = gfx_shader_load_private(all[i].iid, &owned);
+        int st = sh ? gfx_shader_stage(sh) : -1;
+        if (st == GFX_STAGE_VS || st == GFX_STAGE_FS) {
+            double t0 = now_ms();
+            lb_library(sh, st == GFX_STAGE_VS, 0);
+            double ms = now_ms() - t0;
+            if (ms > DC_PROBE_MS) slow++, *slow_ms += ms;
+            else fast++;
+            (*tried)++;
+        }
+        if (owned) gfx_shader_release_private(sh);
+    }
+    return slow >= DC_PROBE_SLOW;
+}
+
+// Boot: compute shaders of the warm list (recorded and prepared), then the first KEEP recorded graphics variants, then,
+// when the driver cache in use is not listed as prepared or does not hold the list (section "driver cache"), the other
+// graphics variants.
 static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
     const char *e = cfg_value("AC_LIB_PREBUILD"), *ke = cfg_value("AC_LIB_PREBUILD_KEEP");
     const char *te = cfg_get("AC_LIB_PREBUILD_THREADS");   // no fixed default: a quarter of the CPUs when unset
     if (!A.on || !cfg_bool("AC_LIB_PREBUILD")) return;
     char dir[PLAT_PATH_MAX * 2];
-    if (cache_dir(dir, sizeof dir)) skip_init(dir);
+    int have_dir = cache_dir(dir, sizeof dir);
+    if (have_dir) skip_init(dir);
     GfxWarmEnt *all = NULL;
-    size_t total = gfx_shader_warm_list(&all), n = 0, n_cs = 0;
+    size_t total = gfx_shader_warm_list(&all), n = 0, n_cs = 0, stop = 0, n_rewarm = 0;
     LB.keep_n = atoi(ke);
     LB.e = malloc((total + 1) * sizeof *LB.e);
     for (size_t i = 0; LB.e && i < total; i++)
         if (all[i].stage == GFX_STAGE_CS) LB.e[n++] = all[i];
     n_cs = n;
-    for (size_t i = 0; LB.e && i < total && (int32_t)(n - n_cs) < LB.keep_n; i++)
-        if (all[i].stage != GFX_STAGE_CS && all[i].prio == 0) LB.e[n++] = all[i];
+    for (; LB.e && stop < total && (int32_t)(n - n_cs) < LB.keep_n; stop++)
+        if (all[stop].stage != GFX_STAGE_CS && all[stop].prio == 0) LB.e[n++] = all[stop];
+    LB.n_keep = n;
+    // the driver cache: without stage libraries there is nothing of the vertex and fragment variants to build ahead
+    int listed = 1, cold = 0;
+    LB.nocache = 1;
+    if (LB.e && have_dir && P.gpl) {
+        dc_identity(dc_boot_id, sizeof dc_boot_id);
+        listed = dc_listed(dir, dc_boot_id);
+        int tried = 0;
+        double slow_ms = 0, t0 = now_ms();
+        if (listed) lb_state(pr_hist, fs_hist), cold = dc_probe_cold(all, total, stop, &tried, &slow_ms);
+        char probe[160] = "";
+        if (listed)
+            snprintf(probe, sizeof probe, " (%d of its variants built in %.1f ms, %.1f ms of it in compiles over %.0f ms)",
+                     tried, now_ms() - t0, slow_ms, DC_PROBE_MS);
+        rt_log("vk_pipeline: driver shader cache: %s; %s%s", dc_boot_id,
+               !listed ? "not listed in shader-prepared-driver.txt: the warm list is built into it in the background"
+               : cold  ? "listed in shader-prepared-driver.txt but it lost the warm list: built into it again in the "
+                         "background"
+                       : "listed in shader-prepared-driver.txt, it holds the warm list",
+               probe);
+    }
+    for (size_t i = 0; (!listed || cold) && i < total; i++)   // in warm-list order: the variants met in play first
+        if (all[i].stage != GFX_STAGE_CS && !(i < stop && all[i].prio == 0)) LB.e[n++] = all[i], n_rewarm++;
     free(all);
-    if (atoi(e) > 1 && (size_t)atoi(e) < n) n = (size_t)atoi(e);   // a count above 1 caps the list; 1 is plain on
+    // also with nothing past the kept ones (a short warm list): the kept builds then fill the driver cache, and its
+    // line is recorded all the same, so the next boot does not report it as unlisted again
+    LB.rewarm = !listed || cold;
+    // a count above 1 caps the list (the driver cache is then not covered); 1 is plain on
+    if (atoi(e) > 1 && (size_t)atoi(e) < n) n = (size_t)atoi(e), LB.rewarm = 0;
     if (!n) {
         free(LB.e), LB.e = NULL;
         return;
@@ -2988,10 +3189,11 @@ static void lb_start(const uint32_t pr_hist[16], const uint32_t fs_hist[4]) {
         if ((LB.th[started] = plat_thread_new(lb_worker, NULL, "lib prebuild"))) started++;
     plat_add32(&LB.running, started - t);
     LB.threads = started;
+    size_t kept = LB.n_keep < n ? LB.n_keep : n;
     rt_log("vk_pipeline: stage library prebuild: %zu compute pipelines and %zu recorded variants' libraries "
-           "(AC_LIB_PREBUILD_KEEP %d) on %d idle-priority threads; library state clamp %u, polygon mode %u, depth "
-           "-w..w %u, samples %u", n_cs < n ? n_cs : n, n > n_cs ? n - n_cs : 0, LB.keep_n, started, LB.clamp, LB.poly,
-           LB.minus_w, LB.samples);
+           "(AC_LIB_PREBUILD_KEEP %d), %zu variants into the driver cache only, on %d idle-priority threads; library "
+           "state clamp %u, polygon mode %u, depth -w..w %u, samples %u", n_cs < kept ? n_cs : kept,
+           kept > n_cs ? kept - n_cs : 0, LB.keep_n, n - kept, started, LB.clamp, LB.poly, LB.minus_w, LB.samples);
 }
 
 static void lb_stop(void) {
@@ -3069,6 +3271,10 @@ static void lb_warm_prepared(const char *dir) {
     for (int i = 0; i < k; i++) plat_thread_join(t[i]);
     if (SK.journal) plat_file_close(SK.journal), SK.journal = NULL, plat_file_delete(jp);   // every build returned
     lb_report("preparation done");
+    char id[DC_LINE];   // the driver cache this run filled: a start with the same one does not build them again
+    dc_identity(id, sizeof id);
+    dc_record(dir, id);
+    rt_log("vk_pipeline: driver shader cache prepared: %s", id);
     // with gpl off only compute variants are built: say so, rather than count the skipped ones as built
     unsigned long long skipped = LB.skipped;
     size_t tried = n - (size_t)skipped;

@@ -29,6 +29,7 @@ The install folder (`main.c` `portable_paths()` reads this layout; it stays port
   exefs/, romfs/                        extracted from the player's files
   shader-cache/                         the translated shaders, packed into one shader-cache.pack
   shader-prepared.bin                   the variants prepared ahead of play (read at boot to warm the driver)
+  shader-prepared-driver.txt            the GPU driver caches that hold them (a start with another one rebuilds it)
   profile/                              saves
   mods/                                 the player's mods, one folder per mod (created by the menu's "Open mods folder")
   logs/                                 astralchain.log of the last run, astralchain.1.log to astralchain.4.log before it

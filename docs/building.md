@@ -122,6 +122,13 @@ From the repository root, in PowerShell. Every step that depends on the game ver
    Without this step the first launch compiles shaders and pipelines during play and stutters until the caches fill.
    The AMD driver keeps its pipeline cache per exe path and holds a limited amount: preparing another build folder can
    evict this one's. `astralchain.exe --warm-shaders` rebuilds it from the shader cache.
+   What the preparation leaves is the driver's own disk cache, and the driver decides where it lives: Mesa's drivers
+   (RADV on the Steam Deck, under Proton as well) use the folder the launcher's environment names
+   (`MESA_SHADER_CACHE_DIR`, which Steam can set per library entry), so the installer's run and a later start from
+   another Steam entry can use different caches, and a driver update starts an empty one. `shader-prepared-driver.txt`
+   next to the exe lists the caches a preparation filled. A start whose cache is not listed, or is listed but builds a
+   sample of the prepared variants slowly (evicted or cleared), builds them into it in the background at idle priority
+   (`vk_pipeline: driver shader cache:` in the log says which case applies, and the boot prebuild's report its timings).
    When the driver's shader compiler crashes on a variant (NVIDIA 615.78.08 on an RTX 5080 does, issue #30),
    `prepare_shaders.py` runs the driver step again with `--warm-shaders`, up to three times, without the variants the
    driver was building at the crash. `shader-prepare-skip.txt` next to the exe lists them with the GPU and driver
