@@ -672,15 +672,20 @@ SI void sv_fcvtn(Cpu *c, int sz, int part, int odd, int d, int n) {
 }
 
 // TBL / TBX with len+1 table registers
+// One byte shuffle (pshufb, SSSE3: both CPU levels have it) per table register instead of a loop over the result's
+// bytes: index k picks from register i when k - 16 * i, as a byte, is 0..15. The byte loop wrote the result one byte
+// at a time and read it back as 16, which the processor cannot forward: in play 65% of the cycles of the game's
+// quaternion and matrix helpers (main+0x9b2c30 and its neighbours, 14% of all cycles) went there.
 SI void sv_tbl(Cpu *c, int Q, int len, int tbx, int d, int n, int m) {
-    uint8_t tab[64];
-    for (int i = 0; i <= len; i++) memcpy(tab + 16 * i, &c->v[(n + i) & 31], 16);
-    u128 idx = c->v[m], o = c->v[d], r = 0;
-    for (int i = 0; i < 8 << Q; i++) {
-        unsigned k = (unsigned)lget(&idx, 0, i);
-        lset(&r, 0, i, k < 16u * (len + 1) ? tab[k] : tbx ? lget(&o, 0, i) : 0);
+    __m128i idx = (__m128i)c->v[m], r = _mm_setzero_si128(), hit = _mm_setzero_si128();
+    for (int i = 0; i <= len; i++) {
+        __m128i rel = _mm_sub_epi8(idx, _mm_set1_epi8((char)(16 * i)));
+        __m128i in = _mm_cmpeq_epi8(_mm_and_si128(rel, _mm_set1_epi8((char)0xf0)), _mm_setzero_si128());
+        r = _mm_or_si128(r, _mm_and_si128(_mm_shuffle_epi8((__m128i)c->v[(n + i) & 31], rel), in));
+        hit = _mm_or_si128(hit, in);
     }
-    c->v[d] = r;
+    if (tbx) r = _mm_or_si128(r, _mm_andnot_si128(hit, (__m128i)c->v[d]));   // out of range: the old byte stays
+    c->v[d] = (u128)(Q ? r : _mm_move_epi64(r));   // the 64-bit form clears the upper half
 }
 
 // ---- CRC32 / CRC32C (bytes = 1, 2, 4, 8)
