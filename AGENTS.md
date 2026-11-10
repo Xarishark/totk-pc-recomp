@@ -9,6 +9,7 @@ on the pipeline of the TotK Recomp project. Design: `docs/architecture.md`. Tool
 - **Performance first**: Astral Chain is a fast PlatinumGames action game. Frame-time budgets are a feature: keep the
   host paths cheap (upload, replay, present pacing), avoid per-frame allocations and full-RomFS scans, and measure
   with `AC_TRACE=perf` / the performance overlay instead of guessing.
+- **Widely distributed**: the port runs on very heterogeneous PCs (integrated GPUs, the Steam Deck, old and weak CPUs, 4 GB cards), so a change must hold on the weakest of them, not only on the development machine.
 - **ASTC textures are everywhere**: the game's textures are almost all ASTC (`runtime/nvn.h` formats 0x79-0x94,
   14 LDR + 14 sRGB block sizes). Sampling goes through the native ASTC path when the device supports
   textureCompressionASTC_LDR (`runtime/vk_astc.c`, `AC_ASTC=auto`), the compute decoder otherwise. Any change to the

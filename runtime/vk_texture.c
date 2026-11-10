@@ -64,6 +64,8 @@ typedef struct Tex {
                                        // destroyed (sweep_flip) so the next lookup recreates the other format
     uint32_t bc_gen;                   // AC_ASTC_BC=bc1: page generation of create_tex's alpha scan, until the first
                                        // upload consumes it (bc_verdict_current); 0 none
+    uint32_t ahead;                    // AC_TEX_PREFETCH: the submit_epoch pre_step made it at (0: made by a use). Not
+                                       // drawn yet while last_use still equals it (cache_before)
 } Tex;
 
 // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
@@ -370,6 +372,242 @@ static uint32_t mip_skip_of(const nvn_texdesc *d, uint64_t addr, uint32_t w, uin
     return 1;
 }
 
+// ---------------------------------------------------------------- uploads ahead of the first draw (AC_TEX_PREFETCH)
+// A texture's first upload used to happen at the first draw that binds it, all of it in that frame: on the render
+// thread the alpha scan of AC_ASTC_BC=bc1 (2 to 3 ms per MiB of an opaque texture, 85% of the first uploads' CPU time),
+// the image and the staging copy, and on the GPU the ASTC decode and BC encode, about 1 ms per million texels on an
+// Arc 140T. An enemy spawning with 72 new textures (70 M texels) held the render thread 52 ms and the GPU about as
+// long: the freeze the "Texture uploads" counter of the overlay points at. The game makes its textures known long
+// before it draws them: of 468 ASTC textures of a save load and a walk, every one was registered in its descriptor
+// slot 31 frames or more before its first binding, 331 of them over 300 frames, with the storage already written
+// (one was written again in between). So the work is done between the two:
+//   - vk_texture_register queues every mirrored 2D ASTC texture that has no image yet (pre_add);
+//   - a background thread runs the alpha scan (pre_main), below normal priority, and keeps the verdict with the page
+//     generation taken before it read the storage;
+//   - each submit, the render thread creates and uploads queued textures through the usual path (pre_step: entry_of,
+//     make_fresh_snap) up to a budget of texels, so the GPU decodes a little every frame instead of everything in the
+//     frame of the first draw. create_tex takes the worker's verdict when no page was written since (pre_take).
+// A texture drawn before its turn uploads at the draw as before, with the worker's verdict if it is ready. Storage
+// written after the upload is uploaded again at the binding like any rewritten texture. The textures made ahead count
+// against the texture cache like the others, and nothing is made ahead once the cache budget is reached or the device
+// memory is 80% used (PRE_VRAM_PCT): an upload ahead never pushes out a texture in use. They are the cost: textures
+// the game registered and does not draw hold memory (314 MiB more as BC in play on a save, 1161 to 1475 MiB), up
+// to the cache budget; from there the cache's own rule decides (sweep_cache drops the least recently used entries,
+// the ones made ahead and never drawn first, cache_before), and the queue waits for room with its scans done.
+// Dropping the oldest undrawn ones for newer registrations was tried and undone: the textures registered at boot
+// are drawn in play minutes later, and went first. BC textures are left to the draw: their upload is a copy (0.06 ms
+// each on the render thread in the same measurement) and making all of them ahead held another 154 MiB.
+// An entry the cache budget or the VRAM pressure drops leaves its verdict behind (pre_keep), so its return at the
+// next binding does not scan again. AC_TEX_PREFETCH=0 turns all of it off.
+#define PRE_MIN_TEXELS (3ull << 19)   // per submit: 1.5 M texels, one 1024x1024 texture with its levels
+#define PRE_MAX_TEXELS (8ull << 20)   // per submit at most, when the queue is long (a load)
+#define PRE_SPREAD 60                 // submits a queue is spread over between the two bounds
+#define PRE_MAX_ITEMS 8               // per submit: each costs the render thread an image and a staging copy
+#define PRE_QUEUE_MAX 8192            // textures waiting; a register past it is not queued
+#define PRE_KEPT_MAX 16384            // verdicts kept of dropped entries
+#define PRE_VRAM_PCT 80               // percent of the device-local budget in use above which nothing is made ahead
+#define PRE_COPY_SHARE 8              // a texel that is only copied (native ASTC) counts as 1/8 of a decoded one
+#define PRE_SLICE (64u << 10)         // bytes the worker scans per hold of pre_mem_lock
+#define PRE_RESCANS 3                 // scans of a storage that keeps being written before it is given up
+// PRE_KEPT: the verdict of a dropped entry (pre_keep); in pre_map only, on no list
+enum { PRE_NEW, PRE_SCAN, PRE_BUSY, PRE_READY, PRE_KEPT };
+typedef struct Pre {
+    TexKey key;
+    tex_t t;
+    uint64_t size, texels;    // storage bytes; texels of every level and layer the image will have
+    uint64_t cost, bytes;     // pre_step: the texels counted against the submit's budget, the image's estimated bytes
+    uint8_t state;
+    uint8_t cancel;           // dropped: out of pre_map, and whoever takes it off its list (or the worker, PRE_BUSY) frees it
+    uint8_t bw, bh, rescans;
+    int8_t verdict;           // the alpha scan: -1 not scanned, 0 opaque, 1 alpha-carrying
+    uint32_t gen;             // page generation taken before the scan read the storage
+    struct Pre *next;
+} Pre;
+typedef struct { Pre *head, *tail; } PreList;
+static PlatMutex pre_lock = PLAT_MUTEX_INIT;       // the lists, pre_map and the Pre fields; taken after tex_lock
+static PlatMutex pre_mem_lock = PLAT_MUTEX_INIT;   // held by the worker while it reads guest storage (one slice)
+static PlatCond pre_cv = PLAT_COND_INIT;
+static nvn_hmap pre_map = {.klen = sizeof(TexKey)};
+static PreList pre_new, pre_scan, pre_ready;
+static volatile int32_t pre_count;   // entries of pre_map
+static int pre_kept;                 // PRE_KEPT ones among them (pre_lock)
+static uint64_t pre_texels;          // texels of the entries of pre_map (pre_lock)
+static int pre_on = -1;
+static int pre_in_step;              // the render thread is uploading ahead (tex_lock)
+// Since the last perf line (tex_lock): uploads ahead, the worker's scans used, ASTC first uploads made at a draw.
+static uint64_t pre_n_ahead, pre_tx_ahead, pre_n_scan_used, pre_n_draw, pre_tx_draw;
+static uint32_t mip_skip_of(const nvn_texdesc *d, uint64_t addr, uint32_t w, uint32_t h, uint32_t levels,
+                            uint32_t samples, float scale);
+
+static void pre_push(PreList *l, Pre *p) {
+    p->next = NULL;
+    if (l->tail) l->tail->next = p;
+    else l->head = p;
+    l->tail = p;
+}
+
+static Pre *pre_pop(PreList *l) {
+    Pre *p = l->head;
+    if (p && !(l->head = p->next)) l->tail = NULL;
+    return p;
+}
+
+// pre_lock held: p leaves pre_map. The caller either holds p (off its list) or marks it cancelled.
+static void pre_unmap(Pre *p) {
+    if (nvn_hm_get(&pre_map, &p->key) != p) return;
+    nvn_hm_del(&pre_map, &p->key);
+    pre_texels -= p->texels;
+    if (p->state == PRE_KEPT) pre_kept--;
+    __atomic_store_n(&pre_count, (int32_t)pre_map.n, __ATOMIC_RELEASE);
+}
+
+// The scan thread: one texture at a time, in PRE_SLICE pieces so that vk_texture_range_gone (the storage goes back
+// to the guest) waits for one piece at most.
+static void pre_main(void *arg) {
+    (void)arg;
+    plat_thread_priority(PLAT_PRIO_BELOW_NORMAL);
+    for (;;) {
+        plat_mutex_lock(&pre_lock);
+        Pre *p;
+        while (!(p = pre_pop(&pre_scan))) plat_cond_wait(&pre_cv, &pre_lock);
+        if (p->cancel) {
+            plat_mutex_unlock(&pre_lock);
+            free(p);
+            continue;
+        }
+        p->state = PRE_BUSY;
+        plat_mutex_unlock(&pre_lock);
+        uint32_t gen = 0;
+        int verdict = 0, tracked = 1;
+        for (uint64_t off = 0; off < p->size && !verdict && tracked; off += PRE_SLICE) {
+            plat_mutex_lock(&pre_mem_lock);
+            int gone = __atomic_load_n(&p->cancel, __ATOMIC_ACQUIRE);
+            if (!gone) {
+                // Stamped before the first byte is read: a later write carries a newer generation (create_tex).
+                if (!off && vk_mem_changed(p->key.addr, p->size, 0, &gen) < 0) tracked = 0;
+                uint64_t n = p->size - off < PRE_SLICE ? p->size - off : PRE_SLICE;
+                if (tracked) verdict = astc_storage_alpha_possible((const uint8_t *)p->t.mem + off, n, p->bw, p->bh);
+            }
+            plat_mutex_unlock(&pre_mem_lock);
+            if (gone) break;
+        }
+        plat_mutex_lock(&pre_lock);
+        if (p->cancel || !tracked || !gen) {   // untracked storage: no way to tell later whether the verdict holds
+            if (!p->cancel) pre_unmap(p);
+            plat_mutex_unlock(&pre_lock);
+            free(p);
+            continue;
+        }
+        p->gen = gen, p->verdict = (int8_t)verdict, p->state = PRE_READY;
+        pre_push(&pre_ready, p);
+        plat_mutex_unlock(&pre_lock);
+    }
+}
+
+// vk_texture_register (tex_lock held, the game's thread): t is queued when it is a texture the upload ahead handles.
+static void pre_add(const tex_t *t) {
+    if (pre_on < 0) {
+        pre_on = cfg_bool("AC_TEX_PREFETCH");
+        if (pre_on && !plat_thread_spawn(pre_main, NULL, "vk tex scan", 0)) pre_on = 0;
+        rt_log("vk: textures are %s (AC_TEX_PREFETCH)",
+               pre_on ? "scanned on a background thread and uploaded ahead of their first draw" : "uploaded at their first draw");
+    }
+    // ASTC only: the game's static assets, which it never renders into, so an image made early holds what the draw
+    // would have uploaded. Other mirrored textures (CPU-written pictures, render targets with CPU storage) are left to
+    // the draw path and its aliases.
+    const nvn_texdesc *d = &t->d;
+    if (!pre_on || !t->mem || d->format < 0x79 || d->format > 0x94 || nvn_tex_is_linear(d) || d->samples > 1) return;
+    if (d->target != NVN_TEXTURE_TARGET_2D && d->target != NVN_TEXTURE_TARGET_2D_ARRAY &&
+        d->target != NVN_TEXTURE_TARGET_CUBEMAP && d->target != NVN_TEXTURE_TARGET_CUBEMAP_ARRAY)
+        return;
+    if (!tex_mirrored(t)) return;
+    TexKey k;
+    make_key(t, &k);
+    if (nvn_hm_get(&by_key, &k)) return;
+    nvn_texlayout L;
+    nvn_tex_layout(d, &L);
+    if (!L.size) return;
+    Pre *p = calloc(1, sizeof *p);
+    if (!p) return;
+    p->key = k, p->t = *t, p->size = L.size, p->verdict = -1, p->state = PRE_NEW;
+    uint32_t levels = umax(d->levels, 1);
+    for (uint32_t lv = mip_skip_of(d, k.addr, umax(d->width, 1), umax(d->height, 1), levels, 1, 1.0f); lv < levels && lv < 16; lv++)
+        p->texels += (uint64_t)mip(d->width, lv) * mip(d->height, lv) * umax(L.layers, 1);
+    plat_mutex_lock(&pre_lock);
+    if (nvn_hm_get(&pre_map, &k) || (int)pre_map.n - pre_kept >= PRE_QUEUE_MAX) {   // a kept verdict stays as it is
+        plat_mutex_unlock(&pre_lock);
+        free(p);
+        return;
+    }
+    nvn_hm_put(&pre_map, &k, p);
+    pre_texels += p->texels;
+    __atomic_store_n(&pre_count, (int32_t)pre_map.n, __ATOMIC_RELEASE);
+    pre_push(&pre_new, p);
+    plat_mutex_unlock(&pre_lock);
+}
+
+// The texture of key k is created, released or gone: its queue entry goes. Returns the worker's verdict when it is
+// ready (0 or 1, *gen the generation it holds from), else -1.
+static int pre_take(const TexKey *k, uint32_t *gen) {
+    if (!__atomic_load_n(&pre_count, __ATOMIC_ACQUIRE)) return -1;
+    int v = -1;
+    plat_mutex_lock(&pre_lock);
+    Pre *p = nvn_hm_get(&pre_map, k);
+    if (p) {
+        int kept = p->state == PRE_KEPT;
+        if (p->state == PRE_READY || kept) v = p->verdict, *gen = p->gen;
+        pre_unmap(p);
+        if (kept) free(p);   // on no list and not the worker's: nobody else frees it
+        else __atomic_store_n(&p->cancel, 1, __ATOMIC_RELEASE);
+    }
+    plat_mutex_unlock(&pre_lock);
+    return v;
+}
+
+// e is about to be dropped by the cache budget or the VRAM pressure while the game still has the texture: the alpha
+// verdict its image was made from stays, with the generation of e's last storage check (nothing was written up to
+// it that the image did not get, and an upload that found another verdict trades the entry, bc_flip), for the
+// create_tex of its return.
+static void pre_keep(const Tex *e) {
+    if (pre_on <= 0 || !e->f.astc_bc || vk_astc_bc() != 2 || e->bc_flip || !e->uploaded || !e->wgen) return;
+    if (e->t.d.target == NVN_TEXTURE_TARGET_3D) return;
+    Pre *p = calloc(1, sizeof *p);
+    if (!p) return;
+    p->key = e->key, p->t = e->t, p->size = e->t.L.size, p->state = PRE_KEPT;
+    p->verdict = e->f.astc_bc != 2, p->gen = e->wgen;
+    plat_mutex_lock(&pre_lock);
+    if (nvn_hm_get(&pre_map, &p->key) || pre_kept >= PRE_KEPT_MAX) {
+        plat_mutex_unlock(&pre_lock);
+        free(p);
+        return;
+    }
+    nvn_hm_put(&pre_map, &p->key, p);
+    pre_kept++;
+    __atomic_store_n(&pre_count, (int32_t)pre_map.n, __ATOMIC_RELEASE);
+    plat_mutex_unlock(&pre_lock);
+}
+
+// Every queue entry whose storage lies in [lo, lo + size) goes, and the worker is out of that storage on return.
+// all: every entry (shutdown).
+static void pre_range_gone(uint64_t lo, uint64_t size, int all) {
+    if (!__atomic_load_n(&pre_count, __ATOMIC_ACQUIRE)) return;
+    plat_mutex_lock(&pre_lock);
+    for (uint32_t i = 0; i < pre_map.cap;) {
+        Pre *p = pre_map.vals[i];
+        if (p && (all || (p->key.addr + p->size > lo && p->key.addr < lo + size))) {
+            int kept = p->state == PRE_KEPT;
+            pre_unmap(p);   // moves later entries of the probe chain into slot i: look at it again
+            if (kept) free(p);
+            else __atomic_store_n(&p->cancel, 1, __ATOMIC_RELEASE);
+        } else {
+            i++;
+        }
+    }
+    plat_mutex_unlock(&pre_lock);
+    plat_mutex_lock(&pre_mem_lock);   // a slice in progress ends; the next one sees cancel
+    plat_mutex_unlock(&pre_mem_lock);
+}
+
 // defer_init: the caller records the image's first transition (init_image or alias_copy).
 static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     static volatile int32_t n_unmapped, n_unsupported, n_failed, n_unbound, n_thick;
@@ -397,12 +635,21 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     int bc_verdict = -1;   // -1 not scanned (no BC1 mode, 3D target, no storage), 0 opaque, 1 alpha-carrying
     uint64_t bc_scan_ns = 0;
     uint32_t bc_gen = 0;   // page generation taken just before the scan; 0 when the storage is not tracked
+    // The scan thread's verdict for this texture, if it finished one (AC_TEX_PREFETCH); its queue entry goes either way.
+    uint32_t pre_gen = 0, pre_now;
+    int pre_verdict = pre_take(k, &pre_gen);
     if (f.astc_bc && vk_astc_bc() == 2 && t->mem && d->target != NVN_TEXTURE_TARGET_3D) {
         uint64_t s0 = plat_now_ns();
-        // Stamped before the scan reads the bytes: a write after this point carries a newer generation, so the
-        // first upload can tell whether this verdict still describes the storage (upload, bc_verdict_current).
-        if (vk_mem_changed(k->addr, L.size, 0, &bc_gen) < 0) bc_gen = 0;
-        bc_verdict = astc_storage_alpha_possible(t->mem, L.size, f.astc_bw, f.astc_bh);
+        if (pre_verdict >= 0 && vk_mem_changed(k->addr, L.size, pre_gen, &pre_now) == 0) {
+            // no page written since the worker stamped pre_gen and read the storage: its verdict describes these bytes
+            bc_verdict = pre_verdict, bc_gen = pre_gen;
+            pre_n_scan_used++;
+        } else {
+            // Stamped before the scan reads the bytes: a write after this point carries a newer generation, so the
+            // first upload can tell whether this verdict still describes the storage (upload, bc_verdict_current).
+            if (vk_mem_changed(k->addr, L.size, 0, &bc_gen) < 0) bc_gen = 0;
+            bc_verdict = astc_storage_alpha_possible(t->mem, L.size, f.astc_bw, f.astc_bh);
+        }
         bc_scan_ns = plat_now_ns() - s0;
         if (!bc_verdict) {
             TexVkFormat g = f;
@@ -720,6 +967,7 @@ static void sweep_pressure(void) {   // tex_lock held
     for (Tex *e = rel_head, *next; e && dropped < PRESSURE_STEP; e = next) {
         next = e->rel_next;
         if (!e->pub.mirrored || e->pub.gpu_owned || e->gpu_dirty) continue;
+        pre_keep(e);
         destroy_tex(e);
         dropped++, n_pressure_drops++;
     }
@@ -766,6 +1014,14 @@ static int cache_evictable(const Tex *e) {
     return e->last_use && submit_epoch - e->last_use > CACHE_AGE;
 }
 
+// Whether the cache budget drops a before b: the entries made ahead (AC_TEX_PREFETCH) that nothing has used yet
+// first, then the least recently used. An upload ahead filled the cache to its budget on the Steam Deck profile
+// (512 MiB); without this order a texture drawn 20 s ago went before one made 10 s ago that may never be drawn.
+static int cache_before(const Tex *a, const Tex *b) {
+    int ua = a->ahead && a->last_use == a->ahead, ub = b->ahead && b->last_use == b->ahead;
+    return ua != ub ? ua : a->last_use < b->last_use;
+}
+
 static void sweep_cache(void) {   // tex_lock held
     cache_budget_init();
     if (!cache_budget || own_bytes <= cache_budget) return;
@@ -773,10 +1029,11 @@ static void sweep_cache(void) {   // tex_lock held
         Tex *best = NULL;
         for (uint32_t i = 0; i < by_key.cap; i++) {
             Tex *e = by_key.vals[i];
-            if (e && cache_evictable(e) && (!best || e->last_use < best->last_use)) best = e;
+            if (e && cache_evictable(e) && (!best || cache_before(e, best))) best = e;
         }
         if (!best) break;
         n_cache_drops++, n_cache_drop_bytes += best->bytes;
+        pre_keep(best);
         destroy_tex(best);
     }
 }
@@ -999,6 +1256,7 @@ static void upload(Tex *e) {
         }
     } else {
         n_uploads++, perf_count(PERF_CNT_TEX_UP);
+        if (astc && !pre_in_step) pre_n_draw++, pre_tx_draw += decoded / 4;
     }
     e->wt_n = 0;
     e->uploaded = 1;
@@ -1266,6 +1524,8 @@ void vk_texture_release(const tex_t *t) {
     TexKey k;
     make_key(t, &k);
     lock();
+    uint32_t pg;
+    pre_take(&k, &pg);   // finalized before its upload ahead: nothing to make
     Tex *e = nvn_hm_get(&by_key, &k);
     if (e && !e->released) {
         e->released = 1;
@@ -1279,6 +1539,7 @@ void vk_texture_release(const tex_t *t) {
 
 void vk_texture_range_gone(uint64_t lo, uint64_t size, VmaAllocation alloc) {
     lock();
+    pre_range_gone(lo, size, 0);
     Tex **list = malloc(sizeof *list * (size_t)(by_key.n + 1));
     int n = 0;
     for (uint32_t i = 0; i < by_key.cap; i++) {
@@ -1317,6 +1578,7 @@ void vk_texture_register(int id, const tex_t *t, const view_t *v) {
     s->has_view = v != NULL;
     if (v) s->v = *v;
     else memset(&s->v, 0, sizeof s->v);
+    pre_add(t);
     unlock();
 }
 
@@ -1424,12 +1686,99 @@ int vk_texture_slot_swz(int id, uint8_t swz[4]) {
 
 uint32_t vk_texture_epoch(void) { return __atomic_load_n(&submit_epoch, __ATOMIC_RELAXED); }
 
+// Each submit (tex_lock held, the render thread): newly registered textures go to the scan thread or, when their format
+// needs no scan, straight to the ready list; then ready ones are created and uploaded up to the submit's budget.
+static void pre_step(void) {
+    if (pre_on <= 0 || !__atomic_load_n(&pre_count, __ATOMIC_ACQUIRE)) return;
+    int bc = vk_astc_bc(), scan_mode = bc == 2, woke = 0;
+    static uint8_t vram_full;
+    if (!(submit_epoch & 7)) {   // the budget query every 8 submits, like sweep_pressure
+        uint64_t used, budget;
+        int exact, pct = vram_pressure > 0 && vram_pressure < PRE_VRAM_PCT ? vram_pressure : PRE_VRAM_PCT;
+        vram_full = vk_mem_vram(&used, &budget, &exact) && used > budget / 100 * (uint64_t)pct;
+    }
+    cache_budget_init();
+    plat_mutex_lock(&pre_lock);
+    for (Pre *p; (p = pre_pop(&pre_new));) {
+        if (p->cancel) { free(p); continue; }
+        TexVkFormat f;
+        if (!tex_vk_format(p->key.d.format, &f)) {
+            pre_unmap(p);
+            free(p);
+            continue;
+        }
+        // The image's size is not known before it is made: a decoded texel is one byte as BC3 (BC1 takes half),
+        // four as RGBA8; native ASTC keeps the storage's size and costs the GPU a copy.
+        if (f.astc_bw) p->cost = p->texels, p->bytes = p->texels * (bc ? 1 : 4);
+        else p->cost = p->texels / PRE_COPY_SHARE, p->bytes = p->size;
+        if (f.astc_bc && scan_mode) {
+            p->bw = f.astc_bw, p->bh = f.astc_bh, p->state = PRE_SCAN;
+            pre_push(&pre_scan, p), woke = 1;
+        } else {
+            p->state = PRE_READY;
+            pre_push(&pre_ready, p);
+        }
+    }
+    uint64_t budget = pre_texels / PRE_SPREAD;
+    plat_mutex_unlock(&pre_lock);
+    if (budget < PRE_MIN_TEXELS) budget = PRE_MIN_TEXELS;
+    if (budget > PRE_MAX_TEXELS) budget = PRE_MAX_TEXELS;
+    uint64_t done = 0;
+    pre_in_step = 1;
+    for (int items = 0; done < budget && items < PRE_MAX_ITEMS && !vram_full; items++) {
+        plat_mutex_lock(&pre_lock);
+        Pre *p = pre_ready.head;
+        if (!p || (!p->cancel && cache_budget && own_bytes + p->bytes > cache_budget)) {   // no room: the queue waits
+            plat_mutex_unlock(&pre_lock);
+            break;
+        }
+        pre_pop(&pre_ready);
+        if (p->cancel) {
+            plat_mutex_unlock(&pre_lock);
+            free(p);
+            continue;
+        }
+        // An entry at the storage already (this descriptor or another one): the draw path owns it, with its aliases.
+        int skip = nvn_hm_get(&by_key, &p->key) || nvn_hm_get(&by_addr, &p->key.addr);
+        uint32_t now;
+        if (!skip && p->verdict >= 0 && vk_mem_changed(p->key.addr, p->size, p->gen, &now) != 0) {
+            // written since the scan (the game was still filling it): scanned again, a few times at most
+            if (p->rescans++ < PRE_RESCANS) {
+                p->state = PRE_SCAN;
+                pre_push(&pre_scan, p), woke = 1;
+                plat_mutex_unlock(&pre_lock);
+                continue;
+            }
+            skip = 1;
+        }
+        if (skip) pre_unmap(p);
+        plat_mutex_unlock(&pre_lock);
+        if (!skip) {
+            Tex *e = entry_of(&p->t);   // create_tex takes p's verdict and unmaps p (pre_take)
+            if (e && !e->uploaded) {
+                make_fresh_snap(e);
+                e->checked = submit_epoch;
+                e->ahead = e->last_use = submit_epoch;
+                done += p->cost;
+                pre_n_ahead++, pre_tx_ahead += p->texels;
+            }
+            plat_mutex_lock(&pre_lock);
+            pre_unmap(p);   // when create_tex failed before pre_take
+            plat_mutex_unlock(&pre_lock);
+        }
+        free(p);
+    }
+    pre_in_step = 0;
+    if (woke) plat_cond_signal(&pre_cv);
+}
+
 void vk_texture_new_submit(void) {
     lock();
     if (!++submit_epoch) submit_epoch = 1;
     sweep_flip();
     sweep_pressure();
     if (!(submit_epoch & 3)) sweep_cache();
+    pre_step();
     static uint64_t log_at;
     uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) / 60;
     if ((rt_trace & RT_TRACE_PERF) && f != log_at && tex_alias > 0) {
@@ -1460,6 +1809,19 @@ void vk_texture_new_submit(void) {
                (unsigned long long)f * 60, (unsigned long long)ck, (unsigned long long)n_checks, (unsigned long long)calls,
                (unsigned long long)untr);
         n_checks = 0;
+        {
+            plat_mutex_lock(&pre_lock);
+            uint32_t waiting = pre_map.n - (uint32_t)pre_kept;
+            int kept = pre_kept;
+            uint64_t wtx = pre_texels;
+            plat_mutex_unlock(&pre_lock);
+            rt_log("perf: frame %llu: texture prefetch: %llu uploaded ahead (%.1f M texels), %llu background scans used; "
+                   "ASTC first uploads at a draw %llu (%.1f M texels); waiting %u (%.1f M texels); verdicts kept %d",
+                   (unsigned long long)f * 60, (unsigned long long)pre_n_ahead, pre_tx_ahead / 1e6,
+                   (unsigned long long)pre_n_scan_used, (unsigned long long)pre_n_draw, pre_tx_draw / 1e6, waiting, wtx / 1e6,
+                   kept);
+            pre_n_ahead = pre_tx_ahead = pre_n_scan_used = pre_n_draw = pre_tx_draw = 0;
+        }
         rt_log("perf: frame %llu: released textures kept %d, dropped under VRAM pressure %llu", (unsigned long long)f * 60,
                nreleased, (unsigned long long)n_pressure_drops);
         n_pressure_drops = 0;
@@ -2182,6 +2544,7 @@ void vk_texture_census(VkTexCensus *s) {
 void vk_texture_shutdown(void) {
     VkCtx *c = vk_ctx();
     lock();
+    pre_range_gone(0, 0, 1);
     Tex **list = malloc(sizeof *list * (size_t)(by_key.n + 1));
     int n = 0;
     for (uint32_t i = 0; i < by_key.cap; i++)
