@@ -52,7 +52,6 @@ void vk_queue_unlock(void);
 void res_sizes(unsigned out[2], unsigned scene[2]);
 void res_game_size(unsigned out[2]);
 int rt_patch_set(const char *name);
-float vk_render_scale(void);
 double frame_step_limit_hz(void);
 extern const int rt_game_version;
 extern const char rt_port_version[];
@@ -485,12 +484,18 @@ static void row_window_size(void) {
     opt_choice_list("AC_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
 }
 
-// AC_SSAA (vk_texture.c render_scale): the game's 1080p rendered at a screen size, the emulator-style resolution
-// scale. The game keeps its logical size; the window shows the larger picture.
-static void row_render_scale(void) {
-    static const char *const vals[] = {"off", "1440p", "2160p"};
-    const char *names[] = {menu_text(UI_MENU_OFF), "1440p (2560 × 1440)", "2160p (3840 × 2160)"};
-    opt_choice_list("AC_SSAA", UI_MENU_RENDER_SCALE, vals, names, 3, UI_MENU_RENDER_SCALE_DESC);
+// AC_OUTPUT_RES (resolution.c game_res_pick): the size the game renders itself, as in the TotK Recomp's menu; on 1.0.1
+// the four sizes of the game-resolution sets, 1280x720 for weak GPUs. Read at start; the row says "after restart" while
+// the stored value differs from the size this run renders.
+static void row_output_res(void) {
+    static const char *const vals[] = {"1280x720", "1920x1080", "2560x1440", "3840x2160"};
+    const char *names[] = {"1280 × 720", "1920 × 1080", "2560 × 1440", "3840 × 2160"};   // U+00D7, the multiplication sign
+    unsigned g[2];
+    res_game_size(g);
+    char now[16];
+    snprintf(now, sizeof now, "%ux%u", g[0], g[1]);
+    const char *note = strcmp(cfg_value("AC_OUTPUT_RES"), now) ? menu_text(UI_MENU_AFTER_RESTART) : nullptr;
+    opt_choice_list("AC_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, 4, UI_MENU_OUTPUT_RES_DESC, -1, note);
 }
 
 static void row_shadow_res(void) {
@@ -623,7 +628,7 @@ static void tab_screen(float scale) {
     static const UiTextId perf[] = {UI_MENU_PERF_OFF, UI_MENU_PERF_FPS, UI_MENU_PERF_FULL};
     opt_choice("AC_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
-    row_render_scale();
+    row_output_res();
     if (rt_patch_set("shadow") >= 0) row_shadow_res();
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
     opt_choice("AC_UPSCALER", UI_MENU_UPSCALER, up, 2, UI_MENU_UPSCALER_DESC);
@@ -1122,8 +1127,7 @@ static void perf_picture(const MenuTarget *t, const ImVec4 &c, const PerfStats &
     res_sizes(out, scene);
     res_game_size(out);   // the res1080 / res1062 sets: the game renders its scene at its output size
     scene[0] = out[0], scene[1] = out[1];
-    float rs = vk_render_scale();
-    unsigned rw = (unsigned)lroundf(scene[0] * rs), rh = (unsigned)lroundf(scene[1] * rs);
+    unsigned rw = scene[0], rh = scene[1];
     char v[6][64];
     snprintf(v[0], sizeof v[0], menu_text(UI_MENU_OV_FMT_SIZE), t->width, t->height);
     snprintf(v[1], sizeof v[1], menu_text(UI_MENU_OV_FMT_SIZE), (unsigned)t->image_w, (unsigned)t->image_h);

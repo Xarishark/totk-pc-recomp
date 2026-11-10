@@ -1,6 +1,6 @@
 // AMD FidelityFX Super Resolution 1 on the present path (gfx_present.c present_image): EASU scales the game's crop
 // rectangle to its place on the swapchain and RCAS sharpens it, in place of the bilinear vkCmdBlitImage. An image the
-// window's size (AC_SSAA = 1440p on a 1440p screen) gets RCAS alone. A larger one (2160p on a 1440p screen) is
+// window's size (output_res = 2560x1440 on a 1440p screen) gets RCAS alone. A larger one (2160p on a 1440p screen) is
 // reduced by an area average (runtime/shaders/downscale.comp) in EASU's place, then sharpened by RCAS: EASU and the
 // bilinear blit read only the texels around each pixel's centre and would throw part of the supersampling away.
 // AC_UPSCALER=fsr|bilinear picks it, AC_SHARPNESS (0..100, 0 = no RCAS pass) sets RCAS; both apply at the next frame.

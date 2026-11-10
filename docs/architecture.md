@@ -95,8 +95,15 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
 - Pipelines: `VK_EXT_graphics_pipeline_library` where the driver has it. Shader stages are compiled ahead into libraries; a draw that meets a new state links them at once (fast link), and an optimised pipeline replaces the linked one when a background thread finishes it. Pipeline keys seen in play are saved and built at boot. A draw whose pipeline is not ready is skipped when one of its pass's targets was rendered in the previous frame, and waits otherwise, so one-shot passes are never lost; a full-screen draw is skipped as well rather than waiting (`AC_PIPE_SKIP`); the stage libraries a waiting draw needs are built on idle workers in parallel (`AC_PIPE_WAIT`). Without the extension, a missing pipeline is built on a worker and the draw waits or is skipped by the same rule.
 - Resolution. Patch sets make the game read its output, swapchain and scene sizes from the patch page
   (MacNativeGames' sites); `resolution.c` sets them from `output_res` and `render_scale` and grows the texture heap
-  and the application pool to match. When the window is larger than the output, `vk_fsr.c` runs AMD FSR 1 (EASU,
-  RCAS) on the present. An `output_res` that is not 16:9 (more than 1% off, `res_is_16x9`) also switches on the
+  and the application pool to match. Astral Chain 1.0.1 has no output set: there `output_res` picks one of four
+  game-resolution sets instead (`resolution.c` `game_res_pick`): 1280x720 (`res720`, for weak GPUs), 1920x1080
+  (`res1080`, the default), 2560x1440 or 3840x2160 (`res1440`, `res2160`); another size keeps 1920x1080. The game's
+  render targets and window textures come from one budget the graphics configuration sets (main+0x40e0b0: 310 MiB, of
+  which 1080p uses 304), carved from the process heap; the larger sets raise it to 566 and 1046 MiB and
+  `res_heap_extra_bytes` grows the application pool by the same amount (TotK's HeapDef growth does not apply there). The
+  game always renders its picture at its own size: nothing enlarges its render targets from outside (the former
+  `ssaa`). When the window is larger than the output, `vk_fsr.c` runs AMD FSR 1 (EASU, RCAS) on the present. An
+  `output_res` that is not 16:9 (more than 1% off, `res_is_16x9`) also switches on the
   `aspect` patch set, which hands the output's ratio to the camera, and `romfs.c` `overlay_init` loads the
   `romfs-patches-<w>x<h>` overlay for it when it exists (`tools/make_romfs_patches.py --aspect`, laid out by
   `tools/ultrawide_layout.py`; the installer builds ten sizes: 21:9 2560x1080, 3440x1440, 3840x1600, 5120x2160, 32:9

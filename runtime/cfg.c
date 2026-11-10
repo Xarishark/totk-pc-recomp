@@ -48,10 +48,10 @@ static const char *const known[] = {
     "PRESENT_SHOT", "PREWARM_XLATE", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES",
     "PROFILE_MAIN", "PROFILE_RENDER", "PROMPTS", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REALTIME", "REC_END", "REEXEC",
     "RENDER_SCALE", "REPLAY_ASYNC",
-    "REPLAY_CHECK", "RES1062", "RES1080", "RESOLVE_CHECK", "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS", "ROMFS_PATCHES",
+    "REPLAY_CHECK", "RES1062", "RES1080", "RES1440", "RES2160", "RES720", "RESOLVE_CHECK", "RESTART_WAIT", "ROMFS", "ROMFS_INDEX", "ROMFS_MMAP", "ROMFS_MODS", "ROMFS_PATCHES",
     "ROMFS_PROOF_DIR", "ROMFS_VERIFY", "RSTICK_DEADZONE", "RUMBLE", "RUMBLE_CURVE", "RUMBLE_STRENGTH", "RUMBLE_TRIGGERS", "SHADER_CACHE",
     "SHADER_MEMO", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE", "SHARED_FONTS", "SHARPNESS", "SHOTS", "SHOTS_DIR",
-    "SHOTS_FULL", "SKIP_FS", "SKIP_VS", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "SSAA", "STICK_DEADZONE", "STICK_SENS",
+    "SHOTS_FULL", "SKIP_FS", "SKIP_VS", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "STICK_SENS",
     "SWKBD_ANSWER",
     "SWKBD_TEST", "TEST_PAD", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_CACHE_MB", "TEX_MEMO", "TEX_MIP_SKIP", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS",
@@ -64,7 +64,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"FPS", "frame rate"},
     {"REALTIME", "frame rate"}, {"CLOTH_REALTIME", "frame rate"}, {"HIGHFPS_FIX", "frame rate"},
     {"FULLSCREEN", "display"}, {"WINDOW_SIZE", "display"}, {"PERF_OVERLAY", "display"}, {"VK_PRESENT", "display"},
-    {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"SSAA", "display"}, {"UPSCALER", "display"},
+    {"GPU_INDEX", "display"}, {"OUTPUT_RES", "display"}, {"RENDER_SCALE", "display"}, {"UPSCALER", "display"},
     {"SHARPNESS", "display"}, {"ASPECT", "display"}, {"FOV", "display"}, {"ANISO", "display"},
     {"COLOR_PRESET", "display"},
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
@@ -110,8 +110,8 @@ static const CfgMeta metas[] = {
     {"FULLSCREEN", "1", "0|1", LIVE}, {"WINDOW_SIZE", "1920x1080", NULL, LIVE},
     {"VK_PRESENT", "mailbox", "mailbox|fifo|immediate", LIVE}, {"GPU_INDEX", "", NULL, RESTART},
     {"PERF_OVERLAY", "off", "off|fps|full", LIVE},
+    // the size the game renders itself (resolution.c: TotK's output set, or on 1.0.1 game_res_pick's four sizes)
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
-    {"SSAA", "off", "off|1440p|2160p", RESTART},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
     {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART}, {"FXAA", "1", "0|1", LIVE},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
@@ -214,10 +214,36 @@ static void add(char *key, char *value, int line) {
     entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 0, 0};
 }
 
+// ssaa (the host-side render scale: off, 1440p or 2160p, or a factor from 0.2.x/0.3.0) is gone: output_res makes the game
+// render the size itself. A 1440p or 2160p line is read as output_res = 2560x1440 or 3840x2160, which the next cfg_save
+// writes; an output_res line of the file's own other than the default 1920x1080 wins.
+static void migrate_ssaa(void) {
+    CfgEntry *ssaa = NULL, *out = NULL;
+    for (int i = 0; i < n_entries; i++) {
+        if (!strcmp(entries[i].key, "SSAA")) ssaa = &entries[i];
+        if (!strcmp(entries[i].key, "OUTPUT_RES")) out = &entries[i];
+    }
+    if (!ssaa || (out && strcmp(out->value, "1920x1080"))) return;
+    const char *v = ssaa->value, *to = NULL;
+    double k = atof(v);
+    if (!strcmp(v, "1440p") || (strcmp(v, "2160p") && k > 1.01 && k < 1.75)) to = "2560x1440";
+    else if (!strcmp(v, "2160p") || (strcmp(v, "off") && k >= 1.75)) to = "3840x2160";
+    if (!to) return;
+    rt_log("cfg: astralchain.ini ssaa = %s is read as output_res = %s", v, to);
+    if (out) {
+        free(out->value);
+        out->value = strdup(to);
+        out->dirty = 1;
+    } else if (n_entries < CFG_MAX_KEYS) {
+        entries[n_entries++] = (CfgEntry){strdup("OUTPUT_RES"), strdup(to), 1, 0};
+    }
+}
+
 // 0.1.9 had the Xbox prompts as a pad layout: pad_layout = xbox_prompts is pad_layout = nintendo with prompts = xbox.
 // Read as those two, which the menu shows and the next cfg_save writes; a prompts line of the file's own wins. The
 // value still works from the environment (input_pad_layout_pick, input_prompts_pick).
 static void migrate(void) {
+    migrate_ssaa();
     CfgEntry *layout = NULL, *prompts = NULL;
     for (int i = 0; i < n_entries; i++) {
         if (!strcmp(entries[i].key, "PAD_LAYOUT")) layout = &entries[i];

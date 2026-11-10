@@ -345,7 +345,7 @@ typedef struct {
     uint8_t fb_usage;              // created with ATTACHMENT_FEEDBACK_LOOP usage (VK_FEEDBACK_LAYOUT, attachable images)
     uint8_t fb_learned;            // a draw sampled it while it was a written attachment of the open pass: its passes
                                    // attach it in ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT (vk_exec.c vk_exec_pass_begin)
-    float scale;                   // 1, AC_SHADOW_SCALE for a shadow map, or AC_SSAA for a render target made larger
+    float scale;                   // 1, or AC_SHADOW_SCALE for a shadow map made larger
                                    // than the game's (vk_texture.c texture_scale_of): width and height above are the
                                    // larger ones, the game's regions are multiplied by it
     uint8_t skip;                  // AC_TEX_MIP_SKIP: the game's levels below this one are not in the image (vk_texture.c
@@ -377,7 +377,6 @@ uint32_t vk_texture_slots_gen(void);
 // its storage address is created, dropped, released or taken back into use. Unlocked; read it before the lookup it
 // guards (a lookup may create an entry). 0 when the slot was never registered: nothing is kept under 0.
 uint64_t vk_texture_slot_token(int id);
-float vk_render_scale(void);                       // AC_SSAA: the factor render targets are made larger by (1 = off)
 uint32_t vk_sampler_gen(void);                      // changes whenever a sampler slot is registered
 void vk_texture_gpu_written(const tex_t *t);        // rendered or copied into by the GPU: no re-upload from storage
 void vk_texture_storage_bound_locked(const VkTexImage *img);   // bound as a storage image in the recording submission

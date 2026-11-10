@@ -418,7 +418,7 @@ static void copy_buffer_image(VkExec *ex, const p_copy_b2t *p, int to_image) {
     Sub s;
     if (!sub_resolve(p->tex, &p->view, p->has_view, &p->r, 1, &s)) return;
     if (s.img->scale > 1.0f) {   // the buffer holds the game's texel count, the image more
-        warn_once(W_REGION, "buffer copy of a render target enlarged by AC_SSAA (or a shadow map by AC_SHADOW_SCALE): skipped");
+        warn_once(W_REGION, "buffer copy of a shadow map enlarged by AC_SHADOW_SCALE: skipped");
         return;
     }
     uint64_t size;
@@ -451,8 +451,8 @@ static void copy_t2t(VkExec *ex, const p_copy_t2t *p) {
         return;
     }
     // vkCmdBlitImage and vkCmdResolveImage take colour images only; a depth/stencil copy whose images differ in size or
-    // samples has no valid command here. With AC_SSAA one side can be the enlarged target and the other the game's
-    // size; skipping keeps the invalid blit out of the command buffer.
+    // samples has no valid command here. With AC_SHADOW_SCALE one side can be an enlarged shadow map and the other the
+    // game's size; skipping keeps the invalid blit out of the command buffer.
     if (s.aspect != VK_IMAGE_ASPECT_COLOR_BIT && (!same_size || s.img->samples != d.img->samples)) {
         warn_once(W_COPY, "depth/stencil copy %ux%u -> %ux%u (%u -> %u samples): skipped", s.w, s.h, d.w, d.h,
                   s.img->samples, d.img->samples);

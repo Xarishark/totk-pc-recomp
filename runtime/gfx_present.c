@@ -513,7 +513,7 @@ int vk_thumbs_read(uint64_t frame, uint8_t *rgba) {
 }
 
 // AC_PRESENT_SHOT (boot.c rt_frame_presented): the swapchain image of the next present, as the window shows it (after
-// AC_SSAA, FSR and the colour adjustment), at the swapchain's size. --shot saves the game's texture instead.
+// FSR and the colour adjustment), at the swapchain's size. --shot saves the game's texture instead.
 static char g_present_shot[PLAT_PATH_MAX];
 
 void vk_present_shot(const char *path) {
