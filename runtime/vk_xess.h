@@ -1,6 +1,6 @@
-// XeSS (vk_xess.c): Intel XeSS Super Resolution as the scene's temporal anti-aliasing at its own size (Native AA),
-// behind AC_ANTI_ALIASING=xess (astralchain.ini anti_aliasing = xess). vk_dlaa.c finds the scene, jitters it, makes its
-// motion vectors and calls vk_xess_evaluate where DLAA would run; this file only talks to libxess.dll.
+// XeSS (vk_xess.c): Intel XeSS Super Resolution as the scene's temporal upscaler, at its own size (Native AA) or from a
+// smaller scene, behind AC_UPSCALING=xess (astralchain.ini upscaling = xess). vk_dlaa.c finds the scene, jitters it,
+// makes its motion vectors and calls vk_xess_evaluate where the upscaler runs; this file only talks to libxess.dll.
 #pragma once
 #include "vk.h"
 
@@ -14,11 +14,11 @@ int vk_xess_device_exts(VkInstance inst, VkPhysicalDevice pd, const VkExtensionP
                         const char **ext, uint32_t *n, uint32_t max);   // 1: XeSS can run, mutable descriptors needed
 int vk_xess_available(void);   // loaded, and the device was made with what it needs
 // One evaluation, recorded into cb (the replay's command buffer, no render pass open; vk_xess_evaluate drains the
-// recorder thread before XeSS records into cb itself): color is
-// the scene's light (linear), depth its depth (depth aspect), mv the motion vectors (RG16F, render pixels, last frame's
-// position minus this frame's, without the jitter), out an RGBA16F image of the same size that receives the result.
-// Every image is in GENERAL before and after. jx, jy: the jitter the scene was drawn with, in pixels (window x right,
-// y down). 0: XeSS failed and is off for the rest of the run.
+// recorder thread before XeSS records into cb itself): color is the scene (w x h): its light (linear), or with ldr the
+// tonemapped composite (0..1); depth its depth (depth aspect), mv the motion vectors (RG16F, render pixels, last frame's
+// position minus this frame's, without the jitter), out an RGBA16F image of ow x oh (0: w x h) that receives the
+// result. Every image is in GENERAL before and after. jx, jy: the jitter the scene was drawn with, in render pixels
+// (window x right, y down). 0: XeSS failed and is off for the rest of the run.
 typedef struct {
     VkImage image;
     VkImageView view;
@@ -27,9 +27,11 @@ typedef struct {
 } XessImage;
 typedef struct {
     XessImage color, depth, mv, out;
-    uint32_t w, h;
+    uint32_t w, h;     // the scene (input)
+    uint32_t ow, oh;   // the output, 0: the scene's size
     float jx, jy;
     int reset;
+    int ldr;           // color is 0..1 (tonemapped), not linear scene light
 } XessFrame;
 int vk_xess_evaluate(VkCommandBuffer cb, const XessFrame *f);
 void vk_xess_release(void);   // vk_device.c destroy_all, the device idle: the context goes before the device

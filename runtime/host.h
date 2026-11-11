@@ -274,7 +274,19 @@ int res_heapdef_build(const void *in, size_t n, void **out, size_t *out_n);   //
                                                            // the grown heaps, malloc'd; 0 = cannot (logged)
 void res_heapdef_served(void);                             // romfs.c serves the grown table
 void res_init(void);                                       // after rt_patches_init: the patch page and the sets
-float res_dlss_lod_bias(void);                             // AC_DLSS upscaling: texture LOD bias (<= 0)
+float res_dlss_lod_bias(void);                             // upscaling: texture LOD bias (<= 0), 0 at the game's size
+// Upscaling on 1.0.1 (the scene set): the scene the game renders (the game resolution unless an upscaling mode reduced
+// it at start), whether it is reduced, and the scene a mode ("native", "quality" ... "ultra_performance") gives at the
+// game resolution (the menu's mode row).
+void res_scene_size(unsigned out[2]);
+int res_scene_reduced(void);
+void res_scene_for(const char *mode, unsigned out[2]);
+// boot.c, after the device exists and before the game runs: upscaler_ok (vk_dlaa.c vk_dlaa_upscaler_ok) whether the
+// upscaler the settings ask for can run here; without one a reduced scene and an output_res = auto raised for it go
+// back. vram_mib: the largest device-local heap (0 unknown).
+void res_settle(int upscaler_ok, unsigned vram_mib);
+const char *res_output_asked(void);                        // output_res as read at start ("" before; may be "auto")
+void res_auto_next(unsigned out[2]);                       // the size output_res = auto would take at the next start
 void res_sizes(unsigned out[2], unsigned scene[2]);      // the output and scene sizes in effect (the game's own
                                                            // until res_init switched the sets on)
 int res_is_16x9(unsigned w, unsigned h);                   // within 1% of 16:9 (the test res_init and romfs.c share)

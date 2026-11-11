@@ -18,6 +18,7 @@
 #include "nvn_api.h"
 #include "platform/platform.h"
 #include "vk.h"
+#include "vk_dlaa.h"
 #include "platform/platform.h"
 
 #define SYM_INIT_START "_ZN2nn4init5StartEmmPFvvES2_"
@@ -298,6 +299,20 @@ static void prewarm_main(void *arg) {
     return;
 }
 
+// The scene size and an output_res = auto were decided from the settings before the device existed (resolution.c
+// res_init); with the device up and before the game makes its render targets, what can really upscale here is known
+// (vk_dlaa.c vk_dlaa_upscaler_ok) and the sizes follow it (res_settle). Without a GPU (AC_GPU=null) nothing renders.
+static void settle_resolution(void) {
+    const char *gpu = rt_config()->gpu;
+    if ((gpu && !strcmp(gpu, "null")) || !vk_init()) return;
+    const VkPhysicalDeviceMemoryProperties *m = &vk_ctx()->mem_props;
+    VkDeviceSize big = 0;
+    for (uint32_t i = 0; i < m->memoryHeapCount; i++)
+        if ((m->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && m->memoryHeaps[i].size > big)
+            big = m->memoryHeaps[i].size;
+    res_settle(vk_dlaa_upscaler_ok(), (unsigned)(big >> 20));
+}
+
 void rt_boot(void) {
     check_npdm();
     if (!rt_config()->shot) vk_pipeline_async_enable();   // a --shot image must not depend on build timing
@@ -316,6 +331,7 @@ void rt_boot(void) {
     uint64_t held = plat_now_ms();
     if (warm) plat_thread_join(warm);
     else vk_pipeline_prewarm();
+    settle_resolution();
     held = plat_now_ms() - held;
     rt_log("boot: guest starts %llu ms after process start (%llu ms of it waiting for the prewarm)",
            (unsigned long long)(plat_process_uptime_ns() / 1000000), (unsigned long long)held);

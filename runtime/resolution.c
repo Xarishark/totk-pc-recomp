@@ -43,7 +43,11 @@
 #include "gfx.h"
 #include "host.h"
 #include "layout.h"
+#include "ov.h"
+#include "platform/platform.h"
 #include "simd.h"
+
+int gfx_display_height(void);   // vk.h (which needs Vulkan): the screen the game shows on, 0 when unknown
 
 #define BASE_W 1600
 #define BASE_H 900
@@ -60,7 +64,6 @@ static struct {
     int heapdef_ok;            // romfs.c serves the grown HeapDef
     int on;                    // res_init switched the patch sets on
     unsigned shadow;           // fixed sun shadow map size (AC_SHADOW_RES), 0: the game's own
-    double dlss_k;             // AC_DLSS quality/balanced/performance: the scene's share of the output, else 0
 } R;
 
 static void decide(void) {
@@ -79,16 +82,7 @@ static void decide(void) {
     }
     const char *s = cfg_value("AC_RENDER_SCALE");
     double k = 5.0 / 6.0;
-    const char *m = cfg_value("AC_DLSS");   // a DLSS mode other than dlaa sets the scene size
-    static const struct { const char *name; double k; } dlss[] = {
-        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}};
-    for (int i = 0; i < 3; i++)
-        if (!strcmp(m, dlss[i].name)) R.dlss_k = dlss[i].k;
-    if (R.dlss_k) {
-        k = R.dlss_k;
-        R.scene_set = 1;
-        rt_log("resolution: DLSS %s: the scene at %.0f %% of the output (render_scale ignored)", m, k * 100);
-    } else if (strcmp(s, "game")) {
+    if (strcmp(s, "game")) {
         char *end;
         double pct = strtod(s, &end);
         if (end != s && !*end && pct >= 25 && pct <= 400) {
@@ -303,16 +297,95 @@ int res_output_grid(const char *o, unsigned *w, unsigned *h) {
     return 1;
 }
 
-static void res_size(unsigned *w, unsigned *h) {
-    static unsigned sw, sh;
-    if (!sw) {
-        const char *o = cfg_value("AC_OUTPUT_RES");
-        sw = 1920, sh = 1080;
-        if (!res_output_grid(o, &sw, &sh) && strcmp(o, "1920x1080"))
-            rt_log("resolution: output_res = %s is not a 16:9 size of 32n x 18n from 1280x720 to 3840x2160; "
-                   "1920x1080", o);
+// ---- the upscaler at start, before the device exists (resolution.c cannot ask NGX or XeSS yet): what upscaling
+// (cfg.c cfg_upscaling) will run, judged from the settings and the files next to the executable. vk_dlaa.c answers for
+// real once the device is up (res_settle). DLSS needs nvngx_dlss.dll from NVIDIA beside astralchain.exe, XeSS
+// libxess.dll, both Windows libraries; FSR 3 is built in, so auto (DLSS where it can run, else FSR 3) always has one.
+static int beside_exe(const char *name) {
+    char exe[1024], path[1100];
+    if (!plat_exe_path(exe, sizeof exe)) return 0;
+    char *last = plat_last_sep(exe);
+    if (!last) return 0;
+    snprintf(path, sizeof path, "%.*s/%s", (int)(last - exe), exe, name);
+    return plat_file_exists(path);
+}
+
+static int upscaler_at_start(void) {
+    const char *up = cfg_upscaling();
+    if (!strcmp(up, "fsr3") || !strcmp(up, "auto")) return 1;
+#ifdef _WIN32
+    if (!strcmp(up, "dlss")) return beside_exe("nvngx_dlss.dll");
+    if (!strcmp(up, "xess")) return beside_exe("libxess.dll");
+#endif
+    return 0;
+}
+
+
+// output_res = auto: the largest game resolution the screen (or the window, when not fullscreen) holds of 1280x720 and
+// 1920x1080, and while an upscaler runs from the start also 2560x1440 and 3840x2160: DLAA or the upscaler then writes
+// the screen's size, the HUD is drawn at it, and the window copies the picture 1:1 instead of scaling it a second time.
+// Without one, more than 1080p would be plain supersampling at several times the cost. Only those sizes: a 1600-line
+// screen gets 1440p, which the window scales the rest of the way. Not the default: on a 4K screen it renders four times
+// 1080p's pixels, which only the player can choose for their GPU.
+static const unsigned AUTO_SIZES[][2] = {{1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}};
+
+static void auto_pick(int temporal, int screen, unsigned out[2]) {
+    out[0] = 1920, out[1] = 1080;
+    if (screen <= 0) return;   // unknown: the default
+    out[0] = 1280, out[1] = 720;
+    for (int i = 1; i < (temporal ? 4 : 2); i++)
+        if ((int)AUTO_SIZES[i][1] <= screen) out[0] = AUTO_SIZES[i][0], out[1] = AUTO_SIZES[i][1];
+}
+
+// The height auto fits: the screen in fullscreen, else the window's client height (window_size).
+static int auto_height(void) {
+    if (cfg_bool("AC_FULLSCREEN")) return gfx_display_height();
+    unsigned w = 0, h = 0;
+    char tail;
+    if (sscanf(cfg_value("AC_WINDOW_SIZE"), "%ux%u%c", &w, &h, &tail) == 2 && h >= 720) return (int)h;
+    return gfx_display_height();
+}
+
+static char asked[16];           // output_res as res_size read it ("" before)
+static unsigned size_w, size_h;  // the size res_size decided (0 until then)
+static int auto_raised;          // output_res = auto took more than it would without an upscaler
+
+const char *res_output_asked(void) { return asked; }
+
+// For the menu, each frame: the size auto would take at the next start, read again only when a setting changed (the
+// file check behind upscaler_at_start looks at the file system).
+void res_auto_next(unsigned out[2]) {
+    static unsigned seen = ~0u, next[2];
+    if (cfg_version() != seen) {
+        seen = cfg_version();
+        auto_pick(upscaler_at_start(), auto_height(), next);
     }
-    *w = sw, *h = sh;
+    out[0] = next[0], out[1] = next[1];
+}
+
+// Decided once, from mem_init (which sizes the pool for it) before the device exists; res_settle may lower an auto size
+// before the game runs.
+static void res_size(unsigned *w, unsigned *h) {
+    if (!size_w) {
+        const char *o = cfg_value("AC_OUTPUT_RES");
+        snprintf(asked, sizeof asked, "%s", o);
+        unsigned sw = 1920, sh = 1080;
+        if (!strcmp(o, "auto")) {
+            int temporal = upscaler_at_start(), screen = auto_height();
+            unsigned plain[2], got[2];
+            auto_pick(0, screen, plain);
+            auto_pick(temporal, screen, got);
+            sw = got[0], sh = got[1];
+            auto_raised = got[0] != plain[0];
+            rt_log("resolution: output_res auto: %ux%u for a %d-line %s%s", sw, sh, screen,
+                   cfg_bool("AC_FULLSCREEN") ? "screen" : "window", temporal ? " with an upscaler from the start" : "");
+        } else if (!res_output_grid(o, &sw, &sh) && strcmp(o, "1920x1080")) {
+            rt_log("resolution: output_res = %s is not auto or a 16:9 size of 32n x 18n from 1280x720 to 3840x2160; "
+                   "1920x1080", o);
+        }
+        size_h = sh, size_w = sw;
+    }
+    *w = size_w, *h = size_h;
 }
 
 // The render-target budget for w x h: the game's own up to 1080p's pixel count, which it fits; above, the measured use
@@ -387,10 +460,152 @@ void res_game_size(unsigned out[2]) {
         res_sizes(out, scene);
     }
 }
+// ---- 1.0.1: the scene size for upscaling (the scene set, recomp/patches-v101.txt). The game resolution (res, res1062
+// or the game's own) stays the output, where the HUD is drawn; only the scene shrinks, to the upscaling mode's share of
+// it: the game's dynamic-resolution levels all take the size on page +16 ({w, h} as floats, read by rt_res_scene_w1 /
+// rt_res_scene_h2 below), and the game's own scaling pass (SMAA's blending) draws the scene to the output, where
+// vk_dlaa.c runs the upscaler in its place. The scene is never larger than the targets the game already makes, so the
+// render-target budget needs nothing more. Decided once at start: the game makes its scene targets then.
+static struct {
+    unsigned w, h;     // the scene the game renders (the game resolution unless reduced)
+    unsigned gw, gh;   // the game resolution
+    int reduced;       // the scene set is on: the scene is smaller than the game resolution
+    int set;           // the scene set (rt_patch_set), -1 when the generated C lacks it
+    char mode[24];     // the upscaling mode that sized it ("native" when not reduced)
+} S = {.set = -1};
+
+// The scene's share of the game resolution per mode, DLSS's and AMD's (XeSS's run close: vk_xess.c picks its setting by
+// the size). The scene is a size on the 32 x 18 grid the game takes (resolution.c res_output_grid; off it the first 3D
+// frame lost the device on an RTX 5070 Ti: 1114x626, 1120x626, 1136x640 and 1104x621 did, 1120x630 played), so n =
+// round(N x share) for a game resolution of 32N x 18N, at most N - 1. At least 640x360 (n = 20): the smallest scene
+// measured in play, and the scene depth vk_dlaa.c recognises is at least 640 wide. In handheld at most 1280x720
+// (n = 40): the game made its handheld scene targets at that size, and a level larger than them is never made, which
+// crashed loading a save (main+0x9d0df0, issues #25 and #38). At 1920x1080: 1280x720, 1120x630, 960x540, 640x360.
+static double mode_share(const char *m) {
+    static const struct { const char *name; double k; } modes[] = {
+        {"quality", 2.0 / 3.0}, {"balanced", 0.58}, {"performance", 0.5}, {"ultra_performance", 1.0 / 3.0}};
+    for (size_t i = 0; i < sizeof modes / sizeof *modes; i++)
+        if (!strcmp(m, modes[i].name)) return modes[i].k;
+    return 0;
+}
+
+static void scene_for(const char *mode, const unsigned g[2], unsigned out[2]) {
+    out[0] = g[0], out[1] = g[1];
+    double k = mode_share(mode);
+    unsigned big = g[0] / 32;
+    if (!k || g[0] % 32 || g[1] % 18 || g[1] / 18 != big) return;   // native, or a game size off the grid (res1062)
+    int n = (int)lround(big * k), most = (int)big - 1;
+    if (ov_handheld() && most > 40) most = 40;
+    if (n > most) n = most;
+    if (n < 20) n = 20;
+    if (n > most) return;   // no smaller size on the grid
+    out[0] = 32u * (unsigned)n, out[1] = 18u * (unsigned)n;
+}
+
+void res_scene_for(const char *mode, unsigned out[2]) {
+    unsigned g[2];
+    res_game_size(g);
+    scene_for(S.set >= 0 ? mode : "native", g, out);
+}
+
+void res_scene_size(unsigned out[2]) {
+    if (S.gw) out[0] = S.w, out[1] = S.h;
+    else res_game_size(out);
+}
+
+int res_scene_reduced(void) { return S.reduced; }
+
+static void scene_apply(unsigned w, unsigned h) {
+    S.w = w, S.h = h, S.reduced = w < S.gw;
+    float sc[2] = {(float)w, (float)h};
+    memcpy((uint8_t *)rt_patch_page() + 16, sc, sizeof sc);   // before the switch: a site that sees it on reads the size
+    rt_patch_switch(S.set, S.reduced);
+}
+
+static void scene_init(void) {
+    unsigned g[2];
+    res_game_size(g);
+    S.gw = S.w = g[0], S.gh = S.h = g[1];
+    S.set = rt_patch_set("scene");
+    const char *q = cfg_upscaling_quality();
+    snprintf(S.mode, sizeof S.mode, "native");
+    if (!mode_share(q)) return;
+    const char *force = cfg_get("AC_PATCH_SCENE");   // AC_PATCH_SCENE=0 (test): the game's own levels
+    if (S.set < 0 || (force && !strcmp(force, "0"))) {
+        rt_log("resolution: upscaling_quality = %s needs the scene patch set, which %s: the scene keeps the game's size",
+               q, S.set < 0 ? "the generated C lacks" : "AC_PATCH_SCENE=0 keeps off");
+        return;
+    }
+    if (!upscaler_at_start()) {
+        const char *up = cfg_upscaling();
+        if (strcmp(up, "off"))
+            rt_log("resolution: upscaling = %s cannot run (%s): the scene keeps the game's size", up,
+                   !strcmp(up, "dlss") ? "nvngx_dlss.dll from NVIDIA is not next to astralchain.exe"
+                   : !strcmp(up, "xess") ? "libxess.dll is not next to astralchain.exe"
+                                         : "not on this system");
+        return;
+    }
+    unsigned s[2];
+    scene_for(q, g, s);
+    if (s[0] >= S.gw) return;
+    snprintf(S.mode, sizeof S.mode, "%s", q);
+    scene_apply(s[0], s[1]);
+    rt_log("resolution: upscaling %s: the scene at %ux%u, %.0f %% of the game's %ux%u", q, s[0], s[1],
+           100.0 * s[0] / S.gw, S.gw, S.gh);
+}
+
+// The scene set's sites (each a csel of a level's width into w1 or height into w2).
+static unsigned page_size(int i) {
+    float v;
+    memcpy(&v, (const uint8_t *)rt_patch_page() + 16 + 4 * i, sizeof v);
+    return v >= 64.0f && v <= SCENE_MAX ? (unsigned)v : 64u;
+}
+void rt_res_scene_w1(Cpu *c) { c->x[1] = page_size(0); }
+void rt_res_scene_h2(Cpu *c) { c->x[2] = page_size(1); }
+
+// After the device exists and before the game runs (boot.c rt_boot): the upscaler that will really run is known now
+// (vk_dlaa.c vk_dlaa_upscaler_ok: NGX answered, libxess.dll came up on this GPU, FSR 3's formats). Without one, a
+// reduced scene goes back to the game resolution's size, and an output_res = auto raised for it goes back to what it
+// takes without an upscaler: the game's plain scaling at 33..67 %, or SMAA at the screen's size, would be the result.
+// vram_mib: the GPU's largest device-local heap; auto keeps at most 2560x1440 at 4.5 GiB or less (the game's render
+// targets take about 955 MiB at 3840x2160, before the textures). The sites read the page each time they run and the
+// game makes no target before this, so rewriting the page is enough; the pool keeps its larger size, untouched.
+void res_settle(int upscaler_ok, unsigned vram_mib) {
+    if (!rt_patch_enabled(rt_patch_set("res")) || output_set()) return;
+    unsigned w = size_w, h = size_h;
+    if (auto_raised) {
+        unsigned plain[2];
+        auto_pick(0, auto_height(), plain);
+        if (!upscaler_ok) {
+            w = plain[0], h = plain[1];
+            rt_log("resolution: output_res auto: no upscaler can run here: %ux%u, not %ux%u", w, h, size_w, size_h);
+        } else if (vram_mib && vram_mib <= 4608 && w > 2560) {
+            w = 2560, h = 1440;
+            rt_log("resolution: output_res auto: %u MiB of video memory: 2560x1440, not %ux%u", vram_mib, size_w, size_h);
+        }
+    }
+    if (w != size_w || h != size_h) {
+        size_w = w, size_h = h, auto_raised = 0;
+        uint32_t page[2] = {w, h};
+        memcpy((uint8_t *)rt_patch_page() + RES_PAGE, page, sizeof page);
+        S.gw = w, S.gh = h;
+        unsigned g[2] = {w, h}, s[2];
+        scene_for(S.mode, g, s);
+        scene_apply(s[0], s[1]);
+    }
+    if (S.reduced && !upscaler_ok) {
+        rt_log("resolution: the upscaler cannot run on this GPU: the scene keeps the game's size, %ux%u, not %ux%u",
+               S.gw, S.gh, S.w, S.h);
+        snprintf(S.mode, sizeof S.mode, "native");
+        scene_apply(S.gw, S.gh);
+    }
+}
+
 void res_init(void) {
     res_pick();
     res_shadow_range();
-    if (!output_set()) {   // 1.0.1: the res set took output_res above
+    if (!output_set()) {   // 1.0.1: the res set took output_res above, the scene set scales the scene for upscaling
+        scene_init();
         shadow_init(rt_patch_page());
         return;
     }
@@ -444,11 +659,12 @@ void res_init(void) {
            scene_on ? "" : " (the game's own 5/6 of the output)", (unsigned long long)res_heap_extra_kib());
 }
 
-// DLSS upscaling: textures are sampled for the output's resolution, not the scene's (NVIDIA's DLSS guide: a mip bias
-// of log2(render / output)), so their detail survives the scaling. 0 without a DLSS mode.
+// Upscaling: textures are sampled for the output's resolution, not the scene's (NVIDIA's DLSS guide, and AMD's and
+// Intel's: a mip bias of log2(render / output)), so their detail survives the scaling. 0 while the scene is the game
+// resolution's size; vk_dlaa.c applies it only while an upscaler scales (the game's plain scaling of a biased scene
+// would only shimmer).
 float res_dlss_lod_bias(void) {
-    decide();
-    return R.dlss_k ? (float)log2(R.dlss_k) : 0.0f;
+    return S.reduced ? (float)log2((double)S.w / S.gw) : 0.0f;
 }
 
 // 16:9 within 1% (1366x768 counts): the shape the game's own layouts and camera are made for.

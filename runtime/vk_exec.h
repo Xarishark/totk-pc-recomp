@@ -181,6 +181,13 @@ void vk_dump_present(uint64_t frame);    // vk_be_present: waits for the dump fr
 void vk_c0_fill(uint8_t bank[VK_C0_BYTES], int stage, const p_bind_buf ssbo[16], const p_bind_buf ubo[16],
                 const uint32_t dispatch[3], uint32_t base_instance);
 
+// vk_dlaa.c: once an upscaler scaled the scene this frame, draws in passes wider than vk_dlaa_swap_w + 1 that sample the
+// scene's composite vk_dlaa_swap_img read the upscaler's picture vk_dlaa_swap_view in its place, so the game's scaling
+// draw scales nothing and copies the upscaled picture (vk_exec_draw.c tex_info). Cleared at each present.
+extern VkImage vk_dlaa_swap_img;
+extern VkImageView vk_dlaa_swap_view;
+extern uint32_t vk_dlaa_swap_w;
+
 // Handler hooks. vk_exec.c defines both WEAK: they stop with rt_fatal naming the op.
 // vk_exec_draw.c: OP_DRAW, OP_DRAW_IDX, OP_DISPATCH, OP_BIND_* (program, state, vattr, vstream, vbuf, ubo, ssbo, tex,
 // samp, img), OP_UPDATE_UB, OP_DRAW_IDX_IND, OP_DISPATCH_IND. payload: nvn_op_payload of the record.

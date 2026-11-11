@@ -1,4 +1,5 @@
-// AMD FidelityFX Super Resolution 3.1.4 (temporal) as Native AA: our own Vulkan host for AMD's GLSL passes.
+// AMD FidelityFX Super Resolution 3.1.4 (temporal), as Native AA or upscaling: our own Vulkan host for AMD's GLSL
+// passes.
 //
 // The passes are AMD's, unmodified: tools/ffx_sdk.py fetches them from the FidelityFX SDK v1.1.4 (MIT, pinned commit
 // and file hashes) and compiles them with the options listed there into fsr3_spv.h in the build directory. This file
@@ -11,18 +12,20 @@
 // pass's sharpening (DLAA and XeSS run without sharpening as well), the LUT Lanczos (the reference one is compiled in,
 // so the LUT binding gets a 1x1 placeholder), half precision and the debug view.
 //
-// Inputs (vk_dlaa.c evaluate_): the light target (linear scene light: HDR colour input, with FSR's auto exposure, as
-// DLSS's AutoExposure), motion vectors at the scene's size in pixels, last frame's position minus this one's, without
+// Inputs (vk_dlaa.c resolve): the light target at the scene's size (linear scene light: HDR colour input, with FSR's
+// auto exposure, as DLSS's AutoExposure), or upscaling a smaller scene, the game's tonemapped composite (LDR colour
+// input, exposure 1; HDR input again with HDR output, whose composite keeps highlights above 1), motion vectors at the
+// scene's size in pixels, last frame's position minus this one's, without
 // the jitter; the jitter in pixels, x right and y down (the shift of the picture, the same values DLSS and XeSS get);
 // depth near 0 to far 1 (Astral Chain tests LEQUAL); the camera's near and far plane and vertical field of view from its
 // projection, which FSR uses to turn depth into view distance for its disocclusion test.
 //
 // Each image is kept in GENERAL. Every pass is followed by a full memory barrier (the passes are small; AMD's back end
 // places one per resource transition). The constant blocks come from a host-visible ring of SLOTS frames. One context
-// (images and frame index) for the scene's size; another size makes it again (the old images go to the deferred
-// destruction, no wait for the device).
+// (images and frame index) for the scene's size and the output's; another pair makes it again (the old images go to the
+// deferred destruction, no wait for the device).
 //
-// Adapted from the FSR 3 host of pull request #59 (capibawa), cut down to Native AA.
+// Adapted from the FSR 3 host of pull request #59 (capibawa).
 #include <math.h>
 #include <string.h>
 
@@ -49,17 +52,22 @@ static const PassLayout LAYOUT[P_N] = {
     {10, {S, S, S, S, S, S, S, U, U, C}},
     {13, {S, S, S, S, S, S, S, S, S, U, U, U, C}},
 };
-// tools/ffx_sdk.py PASSES, in the same order
-static const uint32_t *const SPV[P_N] = {fsr3_prepare_inputs_spv, fsr3_luma_pyramid_spv, fsr3_shading_change_pyramid_spv,
-                                         fsr3_shading_change_spv, fsr3_prepare_reactivity_spv, fsr3_luma_instability_spv,
-                                         fsr3_accumulate_spv};
-static const size_t SPV_BYTES[P_N] = {sizeof fsr3_prepare_inputs_spv, sizeof fsr3_luma_pyramid_spv,
-                                      sizeof fsr3_shading_change_pyramid_spv, sizeof fsr3_shading_change_spv,
-                                      sizeof fsr3_prepare_reactivity_spv, sizeof fsr3_luma_instability_spv,
-                                      sizeof fsr3_accumulate_spv};
+// tools/ffx_sdk.py PASSES, in the same order, and its two VARIANTS: HDR colour input (linear light), then LDR
+#define PASS_SPV(p) {fsr3_##p##_spv, fsr3_##p##_ldr_spv}
+#define PASS_BYTES(p) {sizeof fsr3_##p##_spv, sizeof fsr3_##p##_ldr_spv}
+static const uint32_t *const SPV[P_N][2] = {PASS_SPV(prepare_inputs), PASS_SPV(luma_pyramid),
+                                            PASS_SPV(shading_change_pyramid), PASS_SPV(shading_change),
+                                            PASS_SPV(prepare_reactivity), PASS_SPV(luma_instability),
+                                            PASS_SPV(accumulate)};
+static const size_t SPV_BYTES[P_N][2] = {PASS_BYTES(prepare_inputs), PASS_BYTES(luma_pyramid),
+                                         PASS_BYTES(shading_change_pyramid), PASS_BYTES(shading_change),
+                                         PASS_BYTES(prepare_reactivity), PASS_BYTES(luma_instability),
+                                         PASS_BYTES(accumulate)};
+#undef PASS_SPV
+#undef PASS_BYTES
 
-// The internal images (AMD's FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_*): R the scene's size, H half of it, 1 a single
-// texel. INTER is AMD's INTERMEDIATE_FP16x1: the farthest depth, later the luma instability. LHIST is RGBA8, the format
+// The internal images (AMD's FFX_FSR3UPSCALER_RESOURCE_IDENTIFIER_*): R the scene's size, H half of it, O the
+// output's size (the new locks and the upscaled history), 1 a single texel. INTER is AMD's INTERMEDIATE_FP16x1: the farthest depth, later the luma instability. LHIST is RGBA8, the format
 // the GLSL declares its storage image with (the SDK's HLSL path makes it RGBA16F; a storage view's format must match the
 // shader's declaration in Vulkan).
 enum { I_DMV, I_DDEPTH, I_RECON, I_INTER, I_FDMIP1, I_LUMA0, I_LUMA1, I_SPD, I_ATOMIC, I_FINFO, I_SHADE, I_DREACT,
@@ -69,8 +77,8 @@ static const struct { VkFormat f; char size; } IMG[I_N] = {
     {VK_FORMAT_R16_SFLOAT, 'R'}, {VK_FORMAT_R16_SFLOAT, 'H'}, {VK_FORMAT_R16_SFLOAT, 'R'},
     {VK_FORMAT_R16_SFLOAT, 'R'}, {VK_FORMAT_R16G16_SFLOAT, 'H'}, {VK_FORMAT_R32_UINT, '1'},
     {VK_FORMAT_R32G32B32A32_SFLOAT, '1'}, {VK_FORMAT_R8_UNORM, 'H'}, {VK_FORMAT_R8G8B8A8_UNORM, 'R'},
-    {VK_FORMAT_R8_UNORM, 'R'}, {VK_FORMAT_R8_UNORM, 'R'}, {VK_FORMAT_R8_UNORM, 'R'},
-    {VK_FORMAT_R16G16B16A16_SFLOAT, 'R'}, {VK_FORMAT_R16G16B16A16_SFLOAT, 'R'}, {VK_FORMAT_R8G8B8A8_UNORM, 'R'},
+    {VK_FORMAT_R8_UNORM, 'O'}, {VK_FORMAT_R8_UNORM, 'R'}, {VK_FORMAT_R8_UNORM, 'R'},
+    {VK_FORMAT_R16G16B16A16_SFLOAT, 'O'}, {VK_FORMAT_R16G16B16A16_SFLOAT, 'O'}, {VK_FORMAT_R8G8B8A8_UNORM, 'R'},
     {VK_FORMAT_R8G8B8A8_UNORM, 'R'}, {VK_FORMAT_R8_UNORM, '1'}, {VK_FORMAT_R32G32_SFLOAT, '1'},
 };
 #define SPD_VIEWS 6   // the SPD mip levels the pyramid passes write (FSR3UPSCALER_BIND_UAV_SPD_MIPS_LEVEL_0..5)
@@ -91,13 +99,13 @@ static struct {
     VkSampler samp[2];
     VkDescriptorSetLayout dsl[P_N];
     VkPipelineLayout layout[P_N];
-    VkPipeline pipe[P_N];
+    VkPipeline pipe[P_N][2];   // HDR, LDR colour input; the LDR ones made at their first use
     VkBuffer cb;
     VmaAllocation cb_mem;
     uint8_t *cb_map;
     uint32_t cb_stride, cb_spd, slot;
-    // the context: images for one size
-    uint32_t w, h, spd_levels;
+    // the context: images for one scene size and output size
+    uint32_t w, h, ow, oh, spd_levels;
     VkImage img[I_N];
     VmaAllocation mem[I_N];
     VkImageView view[I_N];
@@ -115,7 +123,7 @@ static void destroy_images(void) {
         vk_defer_view(F.view[i]), vk_defer_image(F.img[i], F.mem[i]);
         F.view[i] = VK_NULL_HANDLE, F.img[i] = VK_NULL_HANDLE, F.mem[i] = NULL;
     }
-    F.w = F.h = 0;
+    F.w = F.h = F.ow = F.oh = 0;
 }
 
 void vk_fsr3_release(void) {
@@ -138,7 +146,8 @@ void vk_fsr3_shutdown(void) {
     }
     if (F.cb) vmaDestroyBuffer(c->vma, F.cb, F.cb_mem);
     for (int p = 0; p < P_N; p++) {
-        if (F.pipe[p]) vkDestroyPipeline(c->device, F.pipe[p], NULL);
+        for (int v = 0; v < 2; v++)
+            if (F.pipe[p][v]) vkDestroyPipeline(c->device, F.pipe[p][v], NULL);
         if (F.layout[p]) vkDestroyPipelineLayout(c->device, F.layout[p], NULL);
         if (F.dsl[p]) vkDestroyDescriptorSetLayout(c->device, F.dsl[p], NULL);
     }
@@ -155,7 +164,7 @@ static VkImageView make_view(VkImage img, VkFormat f, uint32_t level, uint32_t l
     return vkCreateImageView(vk_ctx()->device, &vi, NULL, &v) == VK_SUCCESS ? v : VK_NULL_HANDLE;
 }
 
-static int make_images(VkCommandBuffer cb, uint32_t w, uint32_t h) {
+static int make_images(VkCommandBuffer cb, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     const VkCtx *c = vk_ctx();
     destroy_images();
     uint32_t hw = w / 2 ? w / 2 : 1, hh = h / 2 ? h / 2 : 1, big = hw > hh ? hw : hh;
@@ -163,8 +172,8 @@ static int make_images(VkCommandBuffer cb, uint32_t w, uint32_t h) {
     while (big >>= 1) F.spd_levels++;
     VkImageMemoryBarrier2 ib[I_N];
     for (int i = 0; i < I_N; i++) {
-        uint32_t iw = IMG[i].size == 'R' ? w : IMG[i].size == 'H' ? hw : 1;
-        uint32_t ih = IMG[i].size == 'R' ? h : IMG[i].size == 'H' ? hh : 1;
+        uint32_t iw = IMG[i].size == 'R' ? w : IMG[i].size == 'H' ? hw : IMG[i].size == 'O' ? ow : 1;
+        uint32_t ih = IMG[i].size == 'R' ? h : IMG[i].size == 'H' ? hh : IMG[i].size == 'O' ? oh : 1;
         uint32_t levels = i == I_SPD ? F.spd_levels : 1;
         VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
                                 .format = IMG[i].f, .extent = {iw, ih, 1}, .mipLevels = levels, .arrayLayers = 1,
@@ -198,27 +207,28 @@ static int make_images(VkCommandBuffer cb, uint32_t w, uint32_t h) {
     VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = I_N,
                            .pImageMemoryBarriers = ib};
     vkCmdPipelineBarrier2(cb, &di);
-    F.w = w, F.h = h, F.frame = 0, F.fresh = 1;
+    F.w = w, F.h = h, F.ow = ow, F.oh = oh, F.frame = 0, F.fresh = 1;
     memset(&F.k, 0, sizeof F.k);
-    rt_log("fsr3: work images for %ux%u (%u SPD levels)", w, h, F.spd_levels);
+    rt_log("fsr3: work images for %ux%u to %ux%u (%u SPD levels)", w, h, ow, oh, F.spd_levels);
     return 1;
 }
 
-static VkPipeline pipeline(int p) {
-    if (F.pipe[p]) return F.pipe[p];
+// v: 0 HDR colour input, 1 LDR.
+static VkPipeline pipeline(int p, int v) {
+    if (F.pipe[p][v]) return F.pipe[p][v];
     const VkCtx *c = vk_ctx();
-    VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = SPV_BYTES[p],
-                                   .pCode = SPV[p]};
+    VkShaderModuleCreateInfo mi = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = SPV_BYTES[p][v],
+                                   .pCode = SPV[p][v]};
     VkShaderModule m = VK_NULL_HANDLE;
     if (vkCreateShaderModule(c->device, &mi, NULL, &m) != VK_SUCCESS) return VK_NULL_HANDLE;
     VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
                                       .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                                                 .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
                                       .layout = F.layout[p]};
-    if (vkCreateComputePipelines(c->device, VK_NULL_HANDLE, 1, &ci, NULL, &F.pipe[p]) != VK_SUCCESS)
-        F.pipe[p] = VK_NULL_HANDLE;
+    if (vkCreateComputePipelines(c->device, VK_NULL_HANDLE, 1, &ci, NULL, &F.pipe[p][v]) != VK_SUCCESS)
+        F.pipe[p][v] = VK_NULL_HANDLE;
     vkDestroyShaderModule(c->device, m, NULL);
-    return F.pipe[p];
+    return F.pipe[p][v];
 }
 
 // Every internal format as a storage image (R16F, R8 and RG16F need shaderStorageImageExtendedFormats, which
@@ -279,14 +289,16 @@ static int init(void) {
     VmaAllocationInfo minfo;
     if (vmaCreateBuffer(c->vma, &bi, &ai, &F.cb, &F.cb_mem, &minfo) != VK_SUCCESS) return 0;
     F.cb_map = minfo.pMappedData;
-    // every pass now, not at the first FSR 3 frame's passes one after the other
+    // every pass of the variant the run uses now, not at the first FSR 3 frame's passes one after the other: LDR while
+    // the scene is upscaled from its tonemapped composite (vk_dlaa.c), HDR otherwise; the other is made if it is needed
     uint64_t t0 = plat_now_ns();
+    int v = res_scene_reduced() && !vk_hdr_wanted();
     for (int p = 0; p < P_N; p++)
-        if (!pipeline(p)) {
+        if (!pipeline(p, v)) {
             rt_log("fsr3: pass %d has no pipeline", p);
             return 0;
         }
-    rt_log("fsr3: AMD FSR 3.1.4 Native AA ready, %d pipelines in %.1f ms", P_N, (plat_now_ns() - t0) / 1e6);
+    rt_log("fsr3: AMD FSR 3.1.4 ready, %d %s pipelines in %.1f ms", P_N, v ? "LDR" : "HDR", (plat_now_ns() - t0) / 1e6);
     return F.ok = 1;
 }
 
@@ -317,7 +329,7 @@ static void clear(VkCommandBuffer cb, int i, VkClearColorValue v) {
 
 // One pass: its bindings in order (an image view per S or U binding; C bindings take the frame's constant blocks, the
 // main one first, then SPD's), then the dispatch and a barrier.
-static void pass(VkCommandBuffer cb, int p, const VkImageView *views, uint32_t slot, uint32_t gx, uint32_t gy) {
+static void pass(VkCommandBuffer cb, int p, int v, const VkImageView *views, uint32_t slot, uint32_t gx, uint32_t gy) {
     VkDescriptorImageInfo ii[15];
     VkDescriptorBufferInfo bi[2];
     VkWriteDescriptorSet w[15];
@@ -343,7 +355,7 @@ static void pass(VkCommandBuffer cb, int p, const VkImageView *views, uint32_t s
                                       .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
                                       .pImageInfo = &ii[n]};
     }
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, F.pipe[p]);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, F.pipe[p][v]);
     rec_push(vk_pipeline_push_fn(), cb, VK_PIPELINE_BIND_POINT_COMPUTE, F.layout[p], 0, n, w);
     vkCmdDispatch(cb, gx, gy, 1);
     barrier(cb);
@@ -359,8 +371,16 @@ static void device_to_view(const Fsr3Eval *e, float out[4]) {
 
 int vk_fsr3_evaluate(VkCommandBuffer cb, const Fsr3Eval *e) {
     if (!vk_fsr3_available()) return 0;
-    if ((F.w != e->w || F.h != e->h) && !make_images(cb, e->w, e->h)) {
-        rt_log("fsr3: the work images for %ux%u could not be made: FSR 3 off for this run", e->w, e->h);
+    uint32_t ow = e->ow ? e->ow : e->w, oh = e->oh ? e->oh : e->h;
+    int v = !e->hdr;   // the pipeline variant: LDR colour input for the tonemapped composite
+    for (int p = 0; p < P_N; p++)
+        if (!pipeline(p, v)) {
+            rt_log("fsr3: pass %d has no %s pipeline: FSR 3 off for this run", p, v ? "LDR" : "HDR");
+            F.failed = 1;
+            return 0;
+        }
+    if ((F.w != e->w || F.h != e->h || F.ow != ow || F.oh != oh) && !make_images(cb, e->w, e->h, ow, oh)) {
+        rt_log("fsr3: the work images for %ux%u to %ux%u could not be made: FSR 3 off for this run", e->w, e->h, ow, oh);
         F.failed = 1;
         return 0;
     }
@@ -371,19 +391,23 @@ int vk_fsr3_evaluate(VkCommandBuffer cb, const Fsr3Eval *e) {
     int ups_r = odd ? I_UPS1 : I_UPS0, ups_w = odd ? I_UPS0 : I_UPS1;
     int lh_r = odd ? I_LHIST1 : I_LHIST0, lh_w = odd ? I_LHIST0 : I_LHIST1;
     int luma = odd ? I_LUMA1 : I_LUMA0, luma_prev = odd ? I_LUMA0 : I_LUMA1;
-    int expo = I_FINFO;   // auto exposure on linear light: FRAME_INFO holds it (AMD's exposure input when none is given)
+    // auto exposure on linear light: FRAME_INFO holds it (AMD's exposure input when none is given); on the tonemapped
+    // composite an exposure of 1 (DEF_E, zero, which AMD's Exposure() reads as 1)
+    int expo = e->hdr ? I_FINFO : I_DEF_E;
 
-    // the constants (fsr3upscalerDispatch); input and output are the scene's size
+    // the constants (fsr3upscalerDispatch)
     Consts k = F.k;
     memcpy(k.prev_render, F.k.render, sizeof k.prev_render);
     memcpy(k.prev_upscale, F.k.upscale, sizeof k.prev_upscale);
     memcpy(k.prev_jitter, F.k.jitter, sizeof k.prev_jitter);
-    k.render[0] = k.upscale[0] = k.max_render[0] = k.max_upscale[0] = (int32_t)e->w;
-    k.render[1] = k.upscale[1] = k.max_render[1] = k.max_upscale[1] = (int32_t)e->h;
+    k.render[0] = k.max_render[0] = (int32_t)e->w;
+    k.render[1] = k.max_render[1] = (int32_t)e->h;
+    k.upscale[0] = k.max_upscale[0] = (int32_t)ow;
+    k.upscale[1] = k.max_upscale[1] = (int32_t)oh;
     device_to_view(e, k.device_to_view);
     k.jitter[0] = e->jx, k.jitter[1] = e->jy;
     k.mv_scale[0] = 1.0f / (float)e->w, k.mv_scale[1] = 1.0f / (float)e->h;   // pixels to UV
-    k.downscale[0] = k.downscale[1] = 1.0f;
+    k.downscale[0] = (float)e->w / (float)ow, k.downscale[1] = (float)e->h / (float)oh;
     k.mv_jitter_cancel[0] = k.mv_jitter_cancel[1] = 0;
     k.tan_half_fov = tanf(0.5f * e->fov_y) * (float)e->w / (float)e->h;   // horizontal, from the vertical one
     k.jitter_len = (float)e->phases;
@@ -418,6 +442,7 @@ int vk_fsr3_evaluate(VkCommandBuffer cb, const Fsr3Eval *e) {
     F.fresh = 0;
 
     uint32_t gx = (e->w + 7) / 8, gy = (e->h + 7) / 8, hx = (e->w / 2 + 7) / 8, hy = (e->h / 2 + 7) / 8;
+    uint32_t ox = (ow + 7) / 8, oy = (oh + 7) / 8;   // the accumulate pass writes the output
     const VkImageView v_inputs[] = {e->mv, e->depth, e->color, F.view[I_DMV], F.view[I_DDEPTH], F.view[I_RECON],
                                     F.view[I_INTER], F.view[luma]};
     const VkImageView v_luma_pyr[] = {F.view[luma], F.view[I_INTER], F.view[I_ATOMIC], F.view[I_FINFO], F.mip[0],
@@ -433,13 +458,13 @@ int vk_fsr3_evaluate(VkCommandBuffer cb, const Fsr3Eval *e) {
     const VkImageView v_accum[] = {F.view[expo], F.view[I_DREACT], F.view[I_DMV], F.view[ups_r], F.view[I_DEF_R],
                                    F.view[I_FDMIP1], F.view[luma], F.view[I_INTER], e->color, F.view[ups_w], e->out,
                                    F.view[I_NLOCK]};
-    pass(cb, P_PREPARE_INPUTS, v_inputs, slot, gx, gy);
-    pass(cb, P_LUMA_PYRAMID, v_luma_pyr, slot, sx, sy);
-    pass(cb, P_SHADING_PYRAMID, v_shade_pyr, slot, sx, sy);
-    pass(cb, P_SHADING_CHANGE, v_shade, slot, hx, hy);
-    pass(cb, P_PREPARE_REACTIVITY, v_react, slot, gx, gy);
-    pass(cb, P_LUMA_INSTABILITY, v_instab, slot, gx, gy);
-    pass(cb, P_ACCUMULATE, v_accum, slot, gx, gy);
+    pass(cb, P_PREPARE_INPUTS, v, v_inputs, slot, gx, gy);
+    pass(cb, P_LUMA_PYRAMID, v, v_luma_pyr, slot, sx, sy);
+    pass(cb, P_SHADING_PYRAMID, v, v_shade_pyr, slot, sx, sy);
+    pass(cb, P_SHADING_CHANGE, v, v_shade, slot, hx, hy);
+    pass(cb, P_PREPARE_REACTIVITY, v, v_react, slot, gx, gy);
+    pass(cb, P_LUMA_INSTABILITY, v, v_instab, slot, gx, gy);
+    pass(cb, P_ACCUMULATE, v, v_accum, slot, ox, oy);
     F.frame = (F.frame + 1) % 16u;   // AMD's FSR3UPSCALER_MAX_QUEUED_FRAMES; only its parity is used
     return 1;
 }

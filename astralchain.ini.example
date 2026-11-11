@@ -160,10 +160,14 @@
 # render-target budget grows with the pixels (310 MiB up to 1920x1080, 545 MiB at 2560x1440, 1100 MiB at 3840x2160) and
 # the application pool with it. It replaces the former ssaa setting, which enlarged the
 # game's 1080p render targets from outside the game; an ssaa = 1440p or 2160p line is read as output_res = 2560x1440 or
-# 3840x2160. Read at start.
+# 3840x2160. auto takes the largest of 1280x720 and 1920x1080 the screen holds (the window, when not fullscreen), and
+# while an upscaler runs from the start also 2560x1440 and 3840x2160, so the upscaler writes the screen's size and the
+# window only copies the picture; on a GPU with 4.5 GB of video memory or less it stops at 2560x1440. Read at start.
 # output_res = 1920x1080
 # Scaling to the window when it is larger than the game resolution: fsr (AMD FSR 1) or bilinear, and FSR's sharpening
-# from 0 (off) to 100. Changes while the game runs take effect at once.
+# from 0 (off) to 100. With fsr, a scene an upscaler enlarged is sharpened before the HUD is drawn when the window shows
+# the picture at its own size (except with HDR output), so the HUD stays as the game drew it. Changes while the game
+# runs take effect at once.
 # upscaler = fsr
 # sharpness = 80
 # Picture shape when the window's shape differs from the game resolution's (a 16:9 picture in a 21:9 fullscreen
@@ -211,18 +215,28 @@
 # patch 0010), so the shader cache is rebuilt once after an update. Read at start.
 # pcss = 0
 
-# The 3D scene's anti-aliasing: smaa (the game's own), dlaa (NVIDIA DLAA: NVIDIA RTX GPUs, with nvngx_dlss.dll from
-# NVIDIA's DLSS SDK next to astralchain.exe), xess (Intel XeSS Native AA: most GPUs of the last years, with libxess.dll
-# next to astralchain.exe, which the installer puts there, and the Microsoft Visual C++ runtime) or fsr3 (AMD FSR 3
-# Native AA: any GPU, built in). dlaa and xess are Windows only; the three temporal ones give smoother edges and less
-# shimmer for some GPU time (XeSS and FSR 3 about 5 to 6 ms a frame at 2560x1440 on an Arc 140T). The HUD is not touched.
-# smaa and fsr3 take effect at once; dlaa and xess load their library at start, so choosing one later waits for a
-# restart. One that cannot run here leaves SMAA on. Up to 1.10.1 this was dlaa = 1 / xess = 1, read as this setting.
+# The 3D scene's temporal upscaler, in place of the game's anti-aliasing: off (the default), auto (DLSS where it can
+# run, FSR 3 elsewhere), dlss (NVIDIA DLSS: NVIDIA RTX GPUs, with nvngx_dlss.dll from NVIDIA's DLSS SDK next to
+# astralchain.exe), xess (Intel XeSS: most GPUs of the last years, with libxess.dll next to astralchain.exe, which the
+# installer puts there, and the Microsoft Visual C++ runtime) or fsr3 (AMD FSR 3: any GPU, built in). dlss and xess are
+# Windows only. They give smoother edges and less shimmer, for some GPU time at the native mode (XeSS and FSR 3 about
+# 5 to 6 ms a frame at 2560x1440 on an Arc 140T); the HUD is not touched. Changes take effect at once between the
+# upscalers that came up at start: dlss and auto load NGX at start, xess libxess.dll, so choosing one later waits for a
+# restart.
+# upscaling = off
+# The upscaler's mode: native (the 3D scene at the game resolution: DLAA under DLSS, Native AA under XeSS and FSR 3),
+# quality, balanced, performance or ultra_performance (the scene at about 67, 58, 50 or 33 % of the game resolution, on
+# the sizes the game takes, at least 640x360 and in handheld at most 1280x720; the upscaler brings it to the game
+# resolution and texture filtering is sharpened to match: more frames per second). Read at start. When the chosen
+# upscaler cannot run here, the scene keeps the game's size; when it fails during play with a smaller scene, the first
+# upscaler that can (FSR 3 at worst) takes over until a restart. With output_res = auto an upscaler from the start also
+# raises the game resolution to the screen's.
+# upscaling_quality = native
+# The game's own anti-aliasing, for when no upscaler runs: smaa (the default) or off.
 # anti_aliasing = smaa
-# What DLSS works from: dlaa (the 3D scene at full size), quality, balanced or performance (the scene at 67, 58 or
-# 50 % of the output, scaled up by DLSS; these replace render_scale and sharpen texture filtering to match). Without
-# DLAA the game's own scaling is used at that size. Read at start.
-# dlss = dlaa
+# Up to 1.10.1 one setting, anti_aliasing = smaa | dlaa | xess | fsr3, chose the scene's anti-aliasing (and before it
+# dlaa = 1 / xess = 1): dlaa, xess and fsr3 are read as upscaling = dlss, xess or fsr3 with upscaling_quality = native,
+# the same picture as before, and saved so. The old dlss line is no longer read.
 
 # HDR output: hdr = 1 sends the picture as HDR10 (needs HDR on in Windows, "Use HDR", or a Wayland compositor with
 # colour management; without it the picture stays SDR). The game's tonemap keeps highlights up to hdr_peak_nits (your

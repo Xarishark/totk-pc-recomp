@@ -461,34 +461,95 @@ int probe_cfg(void) {
     CHECK(plat_file_write(path, old_layout_own, sizeof old_layout_own - 1) && cfg_load(path) == 1 &&
               EQ(cfg_get("AC_PAD_LAYOUT"), "nintendo") && EQ(cfg_get("AC_PROMPTS"), "nintendo"),
           "a prompts line of the file's own wins over 0.1.9's pad_layout = xbox_prompts");
-    // 1.10.1's dlaa = 1 / xess = 1 switches (cfg.c migrate_aa): read as anti_aliasing, saved in their place, on Windows;
-    // elsewhere neither ran, and the game's SMAA stays
+    // The anti-aliasing of 1.10.1 and before (cfg.c migrate_aa, migrate_upscaling): dlaa = 1 / xess = 1 and
+    // anti_aliasing = dlaa | xess | fsr3 are read as that upscaler in its native mode with SMAA behind it, saved in
+    // their place; elsewhere than Windows dlaa and xess never ran and read as SMAA
     plat_setenv("AC_ANTI_ALIASING", NULL);
+    plat_setenv("AC_UPSCALING", NULL);
+    plat_setenv("AC_UPSCALING_QUALITY", NULL);
     static const char old_dlaa[] = "[display]\r\ndlaa = 1\r\nxess = 1\r\n", old_xess[] = "[display]\nxess = 1\n";
     static const char old_aa_own[] = "[display]\nxess = 1\nanti_aliasing = fsr3\n";
+    static const char aa_dlaa[] = "[display]\nanti_aliasing = dlaa\ndlss = performance\n";
+    static const char aa_xess[] = "[display]\nanti_aliasing = xess\n", aa_fsr3[] = "[display]\nanti_aliasing = fsr3\n";
+    static const char aa_smaa[] = "[display]\nanti_aliasing = smaa\n";
+    static const char aa_new[] = "[display]\nanti_aliasing = off\nupscaling = fsr3\nupscaling_quality = performance\n";
+    static const char aa_stale[] = "[display]\nanti_aliasing = xess\nupscaling = off\n";
+#define UPS(up, q, aa) (EQ(cfg_upscaling(), up) && EQ(cfg_upscaling_quality(), q) && EQ(cfg_value("AC_ANTI_ALIASING"), aa))
 #ifdef _WIN32
-    CHECK(plat_file_write(path, old_dlaa, sizeof old_dlaa - 1) && cfg_load(path) == 1 &&
-              EQ(cfg_value("AC_ANTI_ALIASING"), "dlaa"),
-          "1.10.1's dlaa = 1 (with xess = 1, as DLAA ran then) reads as anti_aliasing = dlaa");
-    CHECK(cfg_save_to(path) == 1, "the read anti-aliasing saves");
+    CHECK(plat_file_write(path, old_dlaa, sizeof old_dlaa - 1) && cfg_load(path) == 1 && UPS("dlss", "native", "smaa"),
+          "1.10.1's dlaa = 1 (with xess = 1, as DLAA ran then) reads as upscaling = dlss, native, with smaa");
+    CHECK(cfg_save_to(path) == 1, "the read upscaling saves");
     saved = (char *)plat_file_read(path, &saved_n);
-    CHECK(saved && strstr(saved, "anti_aliasing = dlaa") && !strstr(saved, "dlaa = 1") && !strstr(saved, "xess = 1"),
-          "the next save writes anti_aliasing in place of dlaa and xess");
+    CHECK(saved && strstr(saved, "upscaling = dlss") && strstr(saved, "upscaling_quality = native") &&
+              strstr(saved, "anti_aliasing = smaa") && !strstr(saved, "dlaa = 1") && !strstr(saved, "xess = 1"),
+          "the next save writes upscaling in place of dlaa and xess");
     free(saved);
-    CHECK(plat_file_write(path, old_xess, sizeof old_xess - 1) && cfg_load(path) == 1 &&
-              EQ(cfg_value("AC_ANTI_ALIASING"), "xess"),
-          "1.10.1's xess = 1 reads as anti_aliasing = xess");
+    CHECK(plat_file_write(path, old_xess, sizeof old_xess - 1) && cfg_load(path) == 1 && UPS("xess", "native", "smaa"),
+          "1.10.1's xess = 1 reads as upscaling = xess, native");
+    CHECK(plat_file_write(path, aa_dlaa, sizeof aa_dlaa - 1) && cfg_load(path) == 1 && UPS("dlss", "native", "smaa"),
+          "anti_aliasing = dlaa reads as upscaling = dlss, native (a dlss = performance line is not read as a mode)");
+    CHECK(cfg_save_to(path) == 1, "the read anti_aliasing = dlaa saves");
+    saved = (char *)plat_file_read(path, &saved_n);
+    CHECK(saved && strstr(saved, "anti_aliasing = smaa") && strstr(saved, "upscaling = dlss") &&
+              strstr(saved, "upscaling_quality = native") && !strstr(saved, "dlss = performance"),
+          "the next save writes upscaling and drops the dlss line");
+    free(saved);
+    CHECK(plat_file_write(path, aa_xess, sizeof aa_xess - 1) && cfg_load(path) == 1 && UPS("xess", "native", "smaa"),
+          "anti_aliasing = xess reads as upscaling = xess, native");
+    plat_setenv("AC_ANTI_ALIASING", "dlaa");
+    CHECK(cfg_load(path) == 1 && EQ(cfg_upscaling(), "xess"),
+          "the environment's 1.10.1 anti_aliasing does not override a file's upscaling");
+    plat_file_write(path, "[display]\n", 10);
+    CHECK(cfg_load(path) == 1 && UPS("dlss", "native", "dlaa"),
+          "AC_ANTI_ALIASING=dlaa alone reads as upscaling = dlss, native for the run");
+    plat_setenv("AC_ANTI_ALIASING", NULL);
 #else
-    CHECK(plat_file_write(path, old_dlaa, sizeof old_dlaa - 1) && cfg_load(path) == 1 &&
-              EQ(cfg_value("AC_ANTI_ALIASING"), "smaa"),
-          "off Windows 1.10.1's dlaa = 1 and xess = 1 leave anti_aliasing = smaa");
-    (void)old_xess;
+    CHECK(plat_file_write(path, old_dlaa, sizeof old_dlaa - 1) && cfg_load(path) == 1 && UPS("off", "native", "smaa"),
+          "off Windows 1.10.1's dlaa = 1 and xess = 1 leave the upscaler off and SMAA on");
+    CHECK(plat_file_write(path, aa_dlaa, sizeof aa_dlaa - 1) && cfg_load(path) == 1 && UPS("off", "native", "smaa"),
+          "off Windows anti_aliasing = dlaa reads as smaa, which is what ran");
+    (void)old_xess, (void)aa_xess;
 #endif
-    CHECK(plat_file_write(path, old_aa_own, sizeof old_aa_own - 1) && cfg_load(path) == 1 &&
-              EQ(cfg_value("AC_ANTI_ALIASING"), "fsr3"),
-          "an anti_aliasing line of the file's own wins over 1.10.1's xess = 1");
-    // The Steam Deck's one-time move from a stored 1080p output_res to the profile's 1280x720 (cfg.c cfg_migrate_deck_res)
+    CHECK(plat_file_write(path, old_aa_own, sizeof old_aa_own - 1) && cfg_load(path) == 1 && UPS("fsr3", "native", "smaa"),
+          "an anti_aliasing line of the file's own wins over 1.10.1's xess = 1, and reads as upscaling = fsr3, native");
+    CHECK(plat_file_write(path, aa_fsr3, sizeof aa_fsr3 - 1) && cfg_load(path) == 1 && UPS("fsr3", "native", "smaa"),
+          "anti_aliasing = fsr3 reads as upscaling = fsr3, native");
+    CHECK(plat_file_write(path, aa_stale, sizeof aa_stale - 1) && cfg_load(path) == 1 && UPS("off", "native", "smaa"),
+          "a file that names an upscaler keeps it; only its old anti_aliasing value becomes smaa");
+    CHECK(plat_file_write(path, aa_smaa, sizeof aa_smaa - 1) && cfg_load(path) == 1 && UPS("off", "native", "smaa") &&
+              cfg_save_to(path) == 1,
+          "anti_aliasing = smaa reads as the upscaler off and SMAA");
+    got = plat_file_read(path, &got_n);
+    CHECK(got && got_n == sizeof aa_smaa - 1 && !memcmp(got, aa_smaa, got_n), "anti_aliasing = smaa: the file stays");
+    free(got);
+    CHECK(plat_file_write(path, aa_new, sizeof aa_new - 1) && cfg_load(path) == 1 && UPS("fsr3", "performance", "off") &&
+              cfg_save_to(path) == 1,
+          "the new layout reads as it is");
+    got = plat_file_read(path, &got_n);
+    CHECK(got && got_n == sizeof aa_new - 1 && !memcmp(got, aa_new, got_n), "the new layout: the file stays");
+    free(got);
+    plat_file_write(path, "[display]\n", 10);
+    CHECK(cfg_load(path) == 1 && UPS("off", "native", "smaa") && cfg_smaa(),
+          "no line: the upscaler off, native, SMAA");
+#undef UPS
+    // The former ssaa (cfg.c migrate_ssaa): read as output_res while that is the default, and dropped at the next save
+    // either way, so 1920x1080 picked afterwards stays
     plat_setenv("AC_OUTPUT_RES", NULL);
+    static const char ssaa_1080[] = "[display]\nssaa = 2160p\noutput_res = 1920x1080\n";
+    CHECK(plat_file_write(path, ssaa_1080, sizeof ssaa_1080 - 1) && cfg_load(path) == 1 &&
+              EQ(cfg_value("AC_OUTPUT_RES"), "3840x2160"),
+          "ssaa = 2160p with output_res = 1920x1080 reads as 3840x2160");
+    cfg_set("AC_OUTPUT_RES", "1920x1080");
+    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && EQ(cfg_value("AC_OUTPUT_RES"), "1920x1080"),
+          "1920x1080 picked after an ssaa line stays at the next start");
+    saved = (char *)plat_file_read(path, &saved_n);
+    CHECK(saved && !strstr(saved, "ssaa"), "the save drops the ssaa line");
+    free(saved);
+    static const char ssaa_own[] = "[display]\nssaa = 2160p\noutput_res = 2560x1440\n";
+    CHECK(plat_file_write(path, ssaa_own, sizeof ssaa_own - 1) && cfg_load(path) == 1 &&
+              EQ(cfg_value("AC_OUTPUT_RES"), "2560x1440"),
+          "an output_res of the file's own wins over ssaa");
+    // The Steam Deck's one-time move from a stored 1080p output_res to the profile's 1280x720 (cfg.c cfg_migrate_deck_res)
     static const char deck_1080[] = "[display]\noutput_res = 1920x1080\n";
     static const char deck_done[] = "[display]\ndeck_res_migrated = 1\n";
     CHECK(plat_file_write(path, deck_1080, sizeof deck_1080 - 1) && cfg_load(path) == 1 && cfg_migrate_deck_res(0) == 0 &&

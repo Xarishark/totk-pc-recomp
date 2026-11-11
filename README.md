@@ -12,7 +12,7 @@ application for Windows, built on the pipeline of [TotK Recomp](https://github.c
 > The game is built from your files on your machine, so the result contains the game. It is for your own use. Do not
 > share it.
 
-Special thanks to [@capibawa](https://github.com/capibawa) for their multiple contributions, the list is very long but it does include performances, code review, timing correctness, visuals or HDR
+Special thanks to [@capibawa](https://github.com/capibawa) for their multiple contributions, the list is very long but it does include performances, code review, timing correctness, visuals, HDR and upscaling
 
 ## Status
 
@@ -28,8 +28,10 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - 60 fps by default, in-engine cutscenes included, in sync with the voices and music; a 30 fps switch
 - HDR output (HDR10), with separate brightness for the game and the HUD
 - The game's own audio: music, effects and voices
-- Custom resolutions, AMD FSR 1 upscaling up to 4K and emulator-style 3D render scaling
-- Temporal anti-aliasing for the 3D scene: Intel XeSS Native AA on most recent GPUs, NVIDIA DLAA on RTX cards
+- Custom resolutions up to 4K, or the screen's own (Automatic), and AMD FSR 1 scaling to the window
+- Temporal upscaling and anti-aliasing for the 3D scene, from native (DLAA / Native AA) to Ultra Performance: NVIDIA
+  DLSS on RTX cards (with `nvngx_dlss.dll` next to `astralchain.exe`), Intel XeSS on most recent GPUs, AMD FSR 3 on any
+  GPU; the HUD stays at full resolution
 - Anisotropic texture filtering up to 16x, for sharp ground into the distance
 - In-game settings menu (F1) and performance overlay (F10)
 - Setup and in-game menu in English, Russian, Brazilian Portuguese and Simplified Chinese
@@ -67,7 +69,7 @@ started from. What was taken from each project, with its license, is listed in
 - [nxnative](https://github.com/seedds/nxnative)
 - [Ryujinx](https://github.com/Ryujinx/Ryujinx)
 - [deko3d](https://github.com/devkitPro/deko3d)
-- [SDL 3](https://libsdl.org), [Dear ImGui](https://github.com/ocornut/imgui), [AMD FSR 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR), [Intel XeSS](https://github.com/intel/xess), [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator), [libopus](https://opus-codec.org), [Zstandard](https://github.com/facebook/zstd)
+- [SDL 3](https://libsdl.org), [Dear ImGui](https://github.com/ocornut/imgui), [AMD FSR 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR), [AMD FSR 3](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), [Intel XeSS](https://github.com/intel/xess), [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator), [libopus](https://opus-codec.org), [Zstandard](https://github.com/facebook/zstd)
 - [Switchbrew](https://switchbrew.org) and the Switch homebrew community
 
 ## License

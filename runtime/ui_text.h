@@ -52,8 +52,15 @@ typedef enum {
     UI_MENU_SHADOW_RANGE, UI_MENU_SHADOW_RANGE_DESC,
     UI_MENU_CONTACT_SHADOWS, UI_MENU_CONTACT_SHADOWS_DESC,
     UI_MENU_PCSS, UI_MENU_PCSS_DESC,
-    UI_MENU_AA, UI_MENU_AA_DESC, UI_MENU_AA_DESC_OTHER, UI_MENU_AA_UNAVAILABLE, UI_MENU_DLSS, UI_MENU_DLSS_DESC, UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY,
-    UI_MENU_DLSS_BALANCED, UI_MENU_DLSS_PERFORMANCE,
+    // the upscaler (vk_dlaa.c), its mode (resolution.c) and the game's anti-aliasing for when none runs
+    UI_MENU_UPSCALING, UI_MENU_UPSCALING_DESC, UI_MENU_UPSCALING_DESC_OTHER, UI_MENU_UPSCALING_OFF, UI_MENU_UPSCALING_AUTO,
+    UI_MENU_UPSCALING_UNAVAILABLE,
+    UI_MENU_UPSCALING_UNTIL,   // "%s until a restart": what runs while the choice waits for one
+    UI_MENU_UPSCALING_QUALITY, UI_MENU_UPSCALING_QUALITY_DESC, UI_MENU_UPSCALING_NATIVE, UI_MENU_DLSS_QUALITY,
+    UI_MENU_DLSS_BALANCED, UI_MENU_DLSS_PERFORMANCE, UI_MENU_UPSCALING_ULTRA, UI_MENU_UPSCALING_MODE_OFF,
+    UI_MENU_AA, UI_MENU_AA_DESC, UI_MENU_AA_OFF, UI_MENU_AA_BY_UPSCALER,
+    UI_MENU_OUTPUT_RES_AUTO,
+    UI_MENU_OUTPUT_RES_NEXT,   // ", %s after restart": the size output_res = auto takes at the next start
 
 
     // Game
@@ -202,6 +209,7 @@ typedef enum {
     UI_MENU_OV_FMT_SCENE,     // "%ux%u, %.0f%%": the scene and its share of the game image's width
     UI_MENU_OV_FMT_FSR,       // "AMD FSR 1, sharpness %d%%"
     UI_MENU_OV_FMT_AREA,      // "area average, sharpness %d%%": a picture larger than the window (vk_fsr.c)
+    UI_MENU_OV_FMT_PRESHARP,  // "RCAS before the HUD, sharpness %d%%": an upscaled scene, then copied 1:1
     UI_MENU_OV_SCALE_NONE, UI_MENU_OV_SCALE_BILINEAR,
     // the Cheats tab (cheats.c): the file, the kinds of cheat and why one cannot be switched
     UI_MENU_TAB_CHEATS,

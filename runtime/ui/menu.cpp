@@ -51,12 +51,19 @@ void vk_queue_lock(void);
 void vk_queue_unlock(void);
 void res_sizes(unsigned out[2], unsigned scene[2]);
 void res_game_size(unsigned out[2]);
+void res_scene_size(unsigned out[2]);
+int res_scene_reduced(void);
+void res_scene_for(const char *mode, unsigned out[2]);
+const char *res_output_asked(void);
+void res_auto_next(unsigned out[2]);
 int rt_patch_set(const char *name);
 double frame_step_limit_hz(void);
 extern const int rt_game_version;
 extern const char rt_port_version[];
 void cheats_frame(uint64_t frame);   // cheats.c
-extern "C" int vk_dlaa_choice_state(const char *aa);   // vk_dlaa.h: 0 runs, 1 after restart, 2 not available
+extern "C" int vk_dlaa_choice_state(const char *up);   // vk_dlaa.h: 0 runs, 1 after restart, 2 not available
+extern "C" const char *vk_dlaa_upscaler_name(void);     // vk_dlaa.h: the upscaler that runs for the setting, or NULL
+extern "C" const char *vk_dlaa_running(void);           // vk_dlaa.h: the upscaler's name while it runs, NULL when off
 bool tab_cheats(float scale);        // ui/cheats_tab.cpp; true: restart into the rebuild
 }
 
@@ -487,16 +494,19 @@ static void row_window_size(void) {
     opt_choice_list("AC_WINDOW_SIZE", UI_MENU_WINDOW_SIZE, pv, pn, n, UI_MENU_WINDOW_SIZE_DESC);
 }
 
-// AC_OUTPUT_RES (resolution.c res_pick): the size the game renders itself, as in the TotK Recomp's menu: its 16:9 sizes
-// up to 3840x2160, the most the process heap leaves room for, 1280x720 for weak GPUs (resolution.c res_size takes 16:9
-// sizes of 32n x 18n only; the Steam Deck profile's default is 1280x720). Another size from the ini shows as it is. Read at
-// start; the row says "after restart" while the stored value differs from the size this run renders.
+// AC_OUTPUT_RES (resolution.c res_pick): the size the game renders itself, as in the TotK Recomp's menu: Automatic (the
+// screen's size, up to 1920x1080 without an upscaler and 3840x2160 with one: resolution.c res_size), then its 16:9
+// sizes up to 3840x2160, the most the process heap leaves room for, 1280x720 for weak GPUs (resolution.c res_size takes
+// 16:9 sizes of 32n x 18n only; the Steam Deck profile's default is 1280x720). Another size from the ini shows as it is.
+// Read at start; the row says "after restart" while the stored value differs from the size this run renders, and for
+// Automatic which size it took and, when the settings changed it, which it will take at the next start.
 static void row_output_res(void) {
-    static const char *const vals[] = {"1280x720", "1600x900", "1920x1080", "2560x1440", "3200x1800", "3840x2160"};
+    static const char *const vals[] = {"auto", "1280x720", "1600x900", "1920x1080", "2560x1440", "3200x1800", "3840x2160"};
     enum { N = sizeof vals / sizeof *vals };
     char shown[N][32];
     const char *names[N];
-    for (int i = 0; i < N; i++) {
+    names[0] = menu_text(UI_MENU_OUTPUT_RES_AUTO);
+    for (int i = 1; i < N; i++) {
         int w = 0, h = 0;
         sscanf(vals[i], "%dx%d", &w, &h);
         snprintf(shown[i], sizeof shown[i], "%d × %d", w, h);   // U+00D7, the multiplication sign
@@ -506,8 +516,83 @@ static void row_output_res(void) {
     res_game_size(g);
     char now[16];
     snprintf(now, sizeof now, "%ux%u", g[0], g[1]);
-    const char *note = strcmp(cfg_value("AC_OUTPUT_RES"), now) ? menu_text(UI_MENU_AFTER_RESTART) : nullptr;
+    const char *v = cfg_value("AC_OUTPUT_RES"), *note = nullptr;
+    static char buf[128];
+    if (!strcmp(v, "auto") && !strcmp(res_output_asked(), "auto")) {   // the size auto took, and the next start's
+        char in_use[32];
+        snprintf(in_use, sizeof in_use, "%u × %u", g[0], g[1]);
+        int n = snprintf(buf, sizeof buf, menu_text(UI_MENU_PRESENT_IN_USE), in_use);
+        unsigned next[2];
+        res_auto_next(next);
+        if ((next[0] != g[0] || next[1] != g[1]) && n > 0 && n < (int)sizeof buf) {
+            char after[32];
+            snprintf(after, sizeof after, "%u × %u", next[0], next[1]);
+            snprintf(buf + n, sizeof buf - n, menu_text(UI_MENU_OUTPUT_RES_NEXT), after);
+        }
+        note = buf;
+    } else if (strcmp(v, strcmp(v, "auto") ? now : res_output_asked())) {
+        note = menu_text(UI_MENU_AFTER_RESTART);
+    }
     opt_choice_list("AC_OUTPUT_RES", UI_MENU_OUTPUT_RES, vals, names, N, UI_MENU_OUTPUT_RES_DESC, -1, note);
+}
+
+// The upscaler, its mode and the game's anti-aliasing (vk_dlaa.c, resolution.c), laid out as in other games. The
+// upscaler is live among those that can run in this run (NGX and libxess.dll load at start for the choice made then);
+// the mode sizes the scene at start. A choice that waits for a restart says what runs until then, one that cannot run
+// here says so; the mode row shows the scene size its value gives at this game resolution. The game's anti-aliasing
+// (SMAA, or off) applies while no upscaler runs and is greyed out otherwise. Off Windows, DLSS and XeSS are not offered.
+static void rows_upscaling(void) {
+#ifdef _WIN32
+    static const char *const vals[] = {"off", "auto", "dlss", "xess", "fsr3"};
+    const char *names[] = {menu_text(UI_MENU_UPSCALING_OFF), menu_text(UI_MENU_UPSCALING_AUTO), "NVIDIA DLSS",
+                           "Intel XeSS", "AMD FSR 3"};
+    const UiTextId desc = UI_MENU_UPSCALING_DESC;
+#else
+    static const char *const vals[] = {"off", "auto", "fsr3"};
+    const char *names[] = {menu_text(UI_MENU_UPSCALING_OFF), menu_text(UI_MENU_UPSCALING_AUTO), "AMD FSR 3"};
+    const UiTextId desc = UI_MENU_UPSCALING_DESC_OTHER;
+#endif
+    enum { N = sizeof vals / sizeof *vals };
+    const char *up = cfg_upscaling(), *runs = vk_dlaa_upscaler_name();
+    int cur = -1;
+    for (int i = 0; i < N; i++)
+        if (!strcmp(up, vals[i])) cur = i;
+    int state = vk_dlaa_choice_state(up);
+    static char note_up[96];
+    const char *note = nullptr;
+    if (state == 2) {
+        note = menu_text(UI_MENU_UPSCALING_UNAVAILABLE);
+    } else if (state == 1) {
+        if (runs) snprintf(note_up, sizeof note_up, menu_text(UI_MENU_UPSCALING_UNTIL), runs), note = note_up;
+        else note = menu_text(UI_MENU_AFTER_RESTART);
+    } else if (!strcmp(up, "auto") && runs) {
+        snprintf(note_up, sizeof note_up, menu_text(UI_MENU_PRESENT_IN_USE), runs), note = note_up;
+    }
+    opt_choice_list("AC_UPSCALING", UI_MENU_UPSCALING, vals, names, N, desc, cur, note);
+    {
+        static const char *const qv[] = {"native", "quality", "balanced", "performance", "ultra_performance"};
+        const char *qn[] = {menu_text(UI_MENU_UPSCALING_NATIVE), menu_text(UI_MENU_DLSS_QUALITY),
+                            menu_text(UI_MENU_DLSS_BALANCED), menu_text(UI_MENU_DLSS_PERFORMANCE),
+                            menu_text(UI_MENU_UPSCALING_ULTRA)};
+        const char *q = cfg_upscaling_quality();
+        int qcur = -1;
+        for (int i = 0; i < 5; i++)
+            if (!strcmp(q, qv[i])) qcur = i;
+        static char note_q[48];
+        unsigned sz[2];
+        res_scene_for(q, sz);   // the scene this mode gives at the game resolution
+        snprintf(note_q, sizeof note_q, "%u × %u", sz[0], sz[1]);   // U+00D7, the multiplication sign
+        bool off = !strcmp(up, "off") && !res_scene_reduced();
+        if (off) opt_disable_next(UI_MENU_UPSCALING_MODE_OFF);
+        opt_choice_list("AC_UPSCALING_QUALITY", UI_MENU_UPSCALING_QUALITY, qv, qn, 5, UI_MENU_UPSCALING_QUALITY_DESC, qcur,
+                        off ? nullptr : note_q);
+    }
+    {
+        static const char *const av[] = {"off", "smaa"};
+        const char *an[] = {menu_text(UI_MENU_AA_OFF), "SMAA"};
+        if (vk_dlaa_running()) opt_disable_next(UI_MENU_AA_BY_UPSCALER);
+        opt_choice_list("AC_ANTI_ALIASING", UI_MENU_AA, av, an, 2, UI_MENU_AA_DESC, cfg_smaa() ? 1 : 0);
+    }
 }
 
 static void row_shadow_res(void) {
@@ -641,6 +726,7 @@ static void tab_screen(float scale) {
     opt_choice("AC_PERF_OVERLAY", UI_MENU_PERF_OVERLAY, perf, 3, UI_MENU_PERF_OVERLAY_DESC);
     opt_group(UI_MENU_GRAPHICS);
     row_output_res();
+    rows_upscaling();
     if (rt_patch_set("shadow") >= 0) row_shadow_res();
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
     opt_choice("AC_UPSCALER", UI_MENU_UPSCALER, up, 2, UI_MENU_UPSCALER_DESC);
@@ -655,26 +741,6 @@ static void tab_screen(float scale) {
     row_shadow_range();
     opt_slider("AC_PCSS", UI_MENU_PCSS, 0, 200, UI_MENU_PCSS_DESC, 10, "%.0f %%");
     opt_slider("AC_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
-    // One anti-aliasing for the scene (vk_dlaa.c vk_dlaa_frame): the game's SMAA or one temporal AA in its place. NGX
-    // and libxess.dll are Windows libraries, loaded at start for the choice made then: chosen later, the row says
-    // "after restart"; where one could not come up (no NVIDIA RTX GPU, a missing DLL) or FSR 3 failed, "not available
-    // here", and SMAA runs. Elsewhere only SMAA and FSR 3 are offered. DLSS's upscaling modes (AC_DLSS) have no row:
-    // the temporal AA runs at the scene's own size only.
-#ifdef _WIN32
-    static const char *const aa_values[] = {"smaa", "dlaa", "xess", "fsr3"};
-    static const char *const aa_names[] = {"SMAA", "NVIDIA DLAA", "Intel XeSS AA", "AMD FSR 3"};
-    const UiTextId aa_desc = UI_MENU_AA_DESC;
-#else
-    static const char *const aa_values[] = {"smaa", "fsr3"};
-    static const char *const aa_names[] = {"SMAA", "AMD FSR 3"};
-    const UiTextId aa_desc = UI_MENU_AA_DESC_OTHER;
-#endif
-    int aa_state = vk_dlaa_choice_state(cfg_value("AC_ANTI_ALIASING"));
-    const char *aa_note = aa_state == 1   ? menu_text(UI_MENU_AFTER_RESTART)
-                          : aa_state == 2 ? menu_text(UI_MENU_AA_UNAVAILABLE)
-                                          : nullptr;
-    opt_choice_list("AC_ANTI_ALIASING", UI_MENU_AA, aa_values, aa_names, (int)(sizeof aa_values / sizeof *aa_values),
-                    aa_desc, -1, aa_note);
     rows_color();
     opt_group(UI_MENU_HDR_GROUP);
     opt_toggle("AC_HDR", UI_MENU_HDR, UI_MENU_HDR_DESC);
@@ -1148,7 +1214,6 @@ static void perf_label(UiTextId label, const ImVec4 &c) {
 
 static float perf_gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
 
-extern "C" const char *vk_dlaa_running(void);   // vk_dlaa.h (which needs vk.h): the temporal AA's name, NULL when off
 
 // The picture lines: the window, the game image the present shows and the 3D scene it holds (resolution.c), the
 // temporal AA that resolved the scene (vk_dlaa.c) and how the present scales the image to the window (gfx_present.c,
@@ -1156,14 +1221,17 @@ extern "C" const char *vk_dlaa_running(void);   // vk_dlaa.h (which needs vk.h):
 static void perf_picture(const MenuTarget *t, const ImVec4 &c, const PerfStats &s) {
     unsigned out[2], scene[2];
     res_sizes(out, scene);
-    res_game_size(out);   // the res / res1062 sets: the game renders its scene at its output size
-    scene[0] = out[0], scene[1] = out[1];
+    res_game_size(out);     // the res / res1062 sets: the game resolution
+    res_scene_size(scene);  // the scene in it: smaller while an upscaling mode reduced it (resolution.c)
     unsigned rw = scene[0], rh = scene[1];
     char v[6][64];
     snprintf(v[0], sizeof v[0], menu_text(UI_MENU_OV_FMT_SIZE), t->width, t->height);
     snprintf(v[1], sizeof v[1], menu_text(UI_MENU_OV_FMT_SIZE), (unsigned)t->image_w, (unsigned)t->image_h);
     snprintf(v[2], sizeof v[2], menu_text(UI_MENU_OV_FMT_SCENE), rw, rh, rw * 100.0 / out[0]);
-    if (t->scaler >= 2) {
+    if (t->scaler == 4) {   // the upscaled scene was sharpened before the HUD, the present copies it
+        int s = cfg_int("AC_SHARPNESS");
+        snprintf(v[3], sizeof v[3], menu_text(UI_MENU_OV_FMT_PRESHARP), s < 0 ? 0 : s > 100 ? 100 : s);
+    } else if (t->scaler >= 2) {
         int s = cfg_int("AC_SHARPNESS");
         snprintf(v[3], sizeof v[3], menu_text(t->scaler == 3 ? UI_MENU_OV_FMT_AREA : UI_MENU_OV_FMT_FSR),
                  s < 0 ? 0 : s > 100 ? 100 : s);

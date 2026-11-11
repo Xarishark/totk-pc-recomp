@@ -64,3 +64,11 @@ const char *cfg_value(const char *name);
 int cfg_int(const char *name);
 double cfg_double(const char *name);
 int cfg_bool(const char *name);
+
+// The scene's temporal upscaler and its mode (vk_dlaa.c, resolution.c): AC_UPSCALING (off, auto, dlss, xess, fsr3) and
+// AC_UPSCALING_QUALITY (native, quality, balanced, performance, ultra_performance), with 1.10.1's environment variable
+// AC_ANTI_ALIASING=dlaa|xess|fsr3 read as that upscaler in its native mode while AC_UPSCALING is set nowhere.
+// cfg_smaa: the game's SMAA for when no upscaler runs (AC_ANTI_ALIASING other than off).
+const char *cfg_upscaling(void);
+const char *cfg_upscaling_quality(void);
+int cfg_smaa(void);

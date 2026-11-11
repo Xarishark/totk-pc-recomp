@@ -1,11 +1,11 @@
-// The scene's temporal anti-aliasing (vk_dlaa.c) at the scene's own size, chosen by AC_ANTI_ALIASING (astralchain.ini
-// anti_aliasing = smaa, dlaa, xess or fsr3): NVIDIA DLAA, Intel XeSS Native AA (vk_xess.c) or AMD FSR 3 Native AA
-// (vk_fsr3.c) in place of the game's SMAA.
+// The scene's temporal upscaler (vk_dlaa.c), chosen by AC_UPSCALING (astralchain.ini upscaling = off, auto, dlss, xess or
+// fsr3) in the mode AC_UPSCALING_QUALITY sized the scene for at start: NVIDIA DLSS / DLAA, Intel XeSS (vk_xess.c) or AMD
+// FSR 3 (vk_fsr3.c), at the scene's own size or from a smaller scene, in place of the game's SMAA.
 #pragma once
 #include "vk.h"
 #include "vk_exec.h"   // VkExec, VkExecTarget, p_bind_buf
 
-int vk_dlaa_wanted(void);   // dlaa is on at start (the device may still lack DLSS)
+int vk_dlaa_wanted(void);   // upscaling is dlss or auto at start: NGX is loaded (the device may still lack DLSS)
 // vk_device.c, after the instance exists (the NGX core is found through the loaded NVIDIA Vulkan driver): NGX's
 // device extensions join the list (room for max names); vk_dlaa_init after the device exists brings NGX up and checks
 // that DLSS is available.
@@ -13,21 +13,29 @@ void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, cons
 void vk_dlaa_init(void);
 void vk_dlaa_release(void);   // vk_device.c destroy_all, the device idle
 // vk_exec.c vk_exec_pass_begin, once the pass's targets are resolved and before its barrier: follows the scene's passes
-// and, at the first pass a quarter as wide as the scene's light target, runs the AA on that target. Each present ends
-// the frame and picks the backend (vk_dlaa_frame).
+// and, at the first pass a quarter as wide as the scene's light target, makes the motion vectors and runs the upscaler
+// on that target; with a scene smaller than the game resolution, runs it on the composite at the begin of the game's
+// scaling pass instead. Each present ends the frame and picks the backend (vk_dlaa_frame), which returns 1 when that
+// frame's upscaled scene was sharpened before its HUD (the present then copies it without RCAS).
 void vk_dlaa_pass(VkExec *ex);
-void vk_dlaa_frame(void);
+int vk_dlaa_frame(void);
 // vk_exec_draw.c, each draw before its fixed state is recorded: notes the scene camera block (vk_dlaa_draw), and moves
 // the viewport of the scene's draws by the frame's jitter (vk_dlaa_viewport, when the viewport is recorded).
 void vk_dlaa_draw(VkExec *ex);
 void vk_dlaa_viewport(VkExec *ex, VkViewport *v);
-// vk_exec_draw.c, once a draw's fragment shader is known: 1 skips the draw (the game's SMAA while the AA runs).
+// vk_exec_draw.c, once a draw's fragment shader is known: 1 skips the draw (the game's SMAA while an upscaler runs, or
+// with anti_aliasing = off).
 int vk_dlaa_skip_draw(VkExec *ex, const GfxShader *fs);
-const char *vk_dlaa_running(void);   // "DLAA", "XeSS Native AA" or "FSR 3 Native AA" while it runs, else NULL
-int vk_dlaa_choice_state(const char *aa);   // the menu: 0 runs or can, 1 after a restart, 2 not available here
+// While it runs: "DLAA", "XeSS Native AA", "FSR 3 Native AA", or upscaling "DLSS", "XeSS", "FSR 3"; else NULL.
+const char *vk_dlaa_running(void);
+int vk_dlaa_choice_state(const char *up);   // the menu's upscaler row: 0 runs or can, 1 after a restart, 2 not here
+const char *vk_dlaa_upscaler_name(void);    // the upscaler that runs or would at once for the setting, NULL: none
+// resolution.c res_settle (boot.c), the device up: the upscaler the setting asks for can run here
+int vk_dlaa_upscaler_ok(void);
+extern VkImage vk_dlaa_swap_pic;            // the image behind vk_dlaa_swap_view (vk_exec.h): vk_hdr.c's scene
 
 // ---- per-object motion (vk_exec_draw.c "per-object motion", vk_mvprev.c), for either backend
-int vk_dlaa_available(void);   // a temporal AA backend is chosen and up
+int vk_dlaa_available(void);   // an upscaler is chosen and up
 // A draw of this frame's scene, not yet at the AA point: its depth is the scene depth (the armed pair's, or before
 // arming the one the AA ran on last frame).
 int vk_dlaa_scene_draw(const VkExec *ex);

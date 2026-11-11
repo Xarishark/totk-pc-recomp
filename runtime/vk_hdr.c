@@ -38,6 +38,7 @@
 #include "hdr_ui_spv.h"
 #include "host.h"
 #include "nvn_api.h"
+#include "vk_dlaa.h"
 #include "vk_exec.h"
 #include "platform/platform.h"
 
@@ -222,6 +223,10 @@ void vk_hdr_draw(VkExec *ex, const VkPipeInfo *info) {
             src = s->image, fmt = s->format;
     }
     if (!src) return;
+    // An upscaled scene (vk_dlaa.c): the blend draw reads the upscaler's picture in the composite's place
+    // (vk_exec_draw.c tex_info), so that picture, of the window's size, is the scene the window texture holds.
+    if (src == vk_dlaa_swap_img && vk_dlaa_swap_pic && t->width > vk_dlaa_swap_w + 1)
+        src = vk_dlaa_swap_pic, fmt = VK_FORMAT_R16G16B16A16_SFLOAT;
     plat_mutex_lock(&rec_lock);
     for (int i = 0; i < nrecs; i++)
         if (recs[i].win == t->image) recs[i].src = src, recs[i].fmt = fmt, recs[i].fresh = 1;

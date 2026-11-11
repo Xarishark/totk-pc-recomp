@@ -134,10 +134,12 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   in-game menu is drawn into an RGBA8 image and blended on at the HUD's white. Without an HDR10 surface format
   (Windows with "Use HDR" off, a compositor without colour management) the swapchain stays SDR and the tonemap writes
   the game's own result. `AC_SHOTS` reads the window texture, so its pictures clip highlights in HDR.
-- Temporal anti-aliasing at the scene's own size (`vk_dlaa.c`, off by default): one setting, `anti_aliasing`, keeps the
-  game's SMAA (`smaa`) or puts NVIDIA DLAA (`dlaa`, through the driver's NGX core loaded at run time, Windows only), Intel
-  XeSS Native AA (`xess`, `vk_xess.c`, `libxess.dll` loaded at run time, Windows only) or AMD FSR 3 Native AA (`fsr3`,
-  `vk_fsr3.c`, every OS) in its place; no SDK header or code of NVIDIA's
+- Temporal upscaling (`vk_dlaa.c`, off by default): `upscaling` puts NVIDIA DLSS (`dlss`, through the driver's NGX core
+  loaded at run time, Windows only), Intel XeSS (`xess`, `vk_xess.c`, `libxess.dll` loaded at run time, Windows only) or
+  AMD FSR 3 (`fsr3`, `vk_fsr3.c`, every OS; `auto` is DLSS where it can run, else FSR 3) in place of the game's SMAA
+  (`anti_aliasing = smaa | off`, for when none runs), in the mode `upscaling_quality` gives (`native`: DLAA, XeSS or FSR
+  3 Native AA at the scene's own size; `quality` ... `ultra_performance`: a smaller scene, below); no SDK header or
+  code of NVIDIA's
   or Intel's is compiled in. FSR 3's passes are AMD's GLSL, unmodified and not in the repository: `tools/ffx_sdk.py`
   fetches the pinned files of the FidelityFX SDK (commit and per-file SHA-256) into `toolchain/ffx-sdk/` and compiles
   them into `fsr3_spv.h` in the build directory, and `vk_fsr3.c` is our own host for them (internal images, constant
@@ -163,6 +165,27 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   measured frame time. After 600 presents without DLSS its features are released, and without any temporal AA the work
   images too, without waiting for the GPU; at exit NGX is shut down before the device goes. The performance overlay's
   Scaling line names the AA while it resolves frames.
+  A smaller scene (`resolution.c`, the `scene` patch set of `recomp/patches-v101.txt`): the six `csel` of the game's
+  dynamic-resolution ladder (main+0x40f18c..0x40f1dc) take every level's size from the patch page, so the game makes
+  its scene targets (depth prepass, light target, bloom, composite) at the mode's share of the game resolution, on the
+  32n x 18n grid the game takes (off it the first 3D frame lost the device), at least 640x360 and in handheld at most
+  1280x720; the output and HUD stay at the game resolution. Decided once at start from the settings and the files
+  next to the exe (`scene_init`), and checked with the device up before the game runs (`res_settle`, `boot.c`): an
+  upscaler that cannot run here gives the game's size back. Upscaled, the motion vectors are still made where the
+  scene ends, and the upscaler runs at the begin of SMAA's blending pass, the game's only scaling pass, on the
+  composite (LDR colour, or HDR with HDR output), into an image of the game resolution; passes wider than the
+  composite that sample it then sample that image (`vk_exec_draw.c` `tex_info`, part of the descriptor build
+  signature), so the blend copies the upscaled picture and the HUD is drawn over it unjittered. The jitter sequence
+  has 8 x (output / scene)^2 phases (16 to 72), DLSS gets the quality value and model per mode, XeSS the quality
+  setting whose input range holds the scene (`xessGetOptimalInputResolution`), FSR 3 its output-size images and an
+  LDR build of its passes (`tools/ffx_sdk.py`). Material textures (filtered, mipmapped, repeating) get a LOD bias of
+  log2(scene / output) while an upscaler scales (`vk_sampler_dlss_bias`, part of the sampler key). With `upscaler =
+  fsr`, sharpness above 0, no HDR and a window that shows the picture 1:1, RCAS sharpens the upscaled picture before
+  the HUD and the present copies the frame (`vk_fsr_rcas`, `vk_fsr_presharp_set`). A backend that fails during play
+  with a smaller scene leaves the first that can of DLSS, XeSS and FSR 3 until a restart, so the game's plain scaling
+  never shows. HDR output records the upscaled picture as the frame's scene (`vk_hdr.c` `vk_hdr_draw`).
+  `output_res = auto` takes the screen's size, up to 1920x1080 without an upscaler and 3840x2160 with one (2560x1440 on
+  a GPU with 4.5 GB of video memory or less).
 - Occlusion queries never block the CPU; a result that is not ready counts as visible.
 - ASTC textures are uploaded as they are where the device reports `textureCompressionASTC_LDR`, and decoded by a
   compute shader everywhere else (`vk_astc.c`, `AC_ASTC`). A discrete GPU with 6 GB of video memory or more keeps

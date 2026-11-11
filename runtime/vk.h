@@ -110,6 +110,13 @@ void vk_present_blit(VkImage src, VkImageLayout layout, VkFormat fmt, int w, int
 // bilinear, or FSR is not available): the caller blits.
 int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, int sw, int sh, const int crop[4],
                   VkImage dst, const int out[4]);
+// RCAS alone, from src (sampled) into dst (an RGBA16F storage view), both w x h and in GENERAL, on the replay's command
+// buffer (vk_dlaa.c sharpens an upscaled scene with it before the HUD). 1 = recorded; 0 = nothing (vk_fsr_rcas_on 0).
+int vk_fsr_rcas(VkCommandBuffer cb, VkImageView src, VkImageView dst, uint32_t w, uint32_t h);
+int vk_fsr_rcas_on(void);          // sharpness above 0, upscaler = fsr, and FSR's pipelines made
+int vk_fsr_present_scales(void);   // the last present scaled the picture with FSR's passes: RCAS belongs after them
+void vk_fsr_presharp_set(int on);  // the present thread, per present: its picture was sharpened before the HUD
+int vk_fsr_presharp_copied(void);  // the last vk_fsr_record left such a picture for its caller to copy 1:1
 void vk_fsr_release(void);   // before the device goes away
 // Colour adjustment on the present (vk_color.c): with AC_COLOR_* away from their defaults, records a pass that writes
 // src's crop rectangle {x, y, w, h}, adjusted, into an RGBA16F image of that size in GENERAL and returns it (the caller
@@ -156,6 +163,9 @@ int vk_present_captured(const uint8_t **px, int *w, int *h, VkFormat *fmt);
 int gfx_window_vk_extensions(const char **out, int max);
 int gfx_window_vk_presentable(VkInstance inst, VkPhysicalDevice pd, uint32_t family);
 void gfx_window_resize(int client_w, int client_h);   // programmatic resize; returns after the swapchain is rebuilt
+// Height in pixels of the screen the game shows on: the window's monitor, or before the window exists the primary one
+// (where it opens). 0 when unknown.
+int gfx_display_height(void);
 void gfx_vsync_bind_counter(volatile int32_t *counter);  // host-side stand-in for a bound event: incremented per tick
 unsigned gfx_window_focus_messages(void);          // OE_MSG_FOCUS_STATE_CHANGED pushes made by the window thread
 void gfx_window_release_vk(void);                  // vk_shutdown calls it first: destroys swapchain, surface, present objects
@@ -413,6 +423,7 @@ void vk_texture_new_submit(void);                   // a queue submit starts: dr
 uint32_t vk_texture_epoch(void);                    // the write-watch snapshot epoch vk_texture_new_submit started
 VkSampler vk_sampler_by_id(int id);                 // VK_NULL_HANDLE for an empty slot
 VkSampler vk_sampler_for(const samp_par *s);        // cached by content
+void vk_sampler_dlss_bias(float b);                 // vk_dlaa.c: LOD bias of the scene's material textures (<= 0)
 int vk_sampler_params(int id, samp_par *out);       // parameters of a sampler slot; 0 for an empty slot
 
 // 8-bit RGBA PNG with stored deflate blocks (boot.c); stops with rt_fatal when the file cannot be written.

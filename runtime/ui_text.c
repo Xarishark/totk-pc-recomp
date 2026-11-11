@@ -55,7 +55,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_OUTPUT_RES] = "Game resolution",
     [UI_MENU_OUTPUT_RES_DESC] = "The size the game draws its picture and interface in. 1280 x 720 is the lightest, for "
                                 "weaker GPUs. Above 1920 x 1080 the game needs more memory (about 240 MB more at "
-                                "2560 x 1440, 790 MB at 3840 x 2160) and GPU time. Takes effect after a restart.",
+                                "2560 x 1440, 790 MB at 3840 x 2160) and GPU time. Takes effect after a restart. "
+                                "Automatic takes the screen's size: up to 1920 x 1080, and up to 3840 x 2160 while an "
+                                "upscaler runs.",
     [UI_MENU_UPSCALER] = "Scaling to the window",
     [UI_MENU_UPSCALER_DESC] = "How the picture is scaled to the window. FSR keeps edges and detail sharper than "
                               "bilinear, and sharpens the picture even when it already fits the window.",
@@ -120,21 +122,35 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Moves the steps where shadows turn softer (the game's 20, 40, 80 and 160 m) further "
                                   "away. Spreads the shadow map over more ground: raise Shadow resolution with it. "
                                   "Takes effect at the next start.",
+    [UI_MENU_UPSCALING] = "Upscaler",
+    [UI_MENU_UPSCALING_DESC] = "A temporal upscaler in place of the game's anti-aliasing: smoother edges and less "
+                               "shimmer, and with a mode below Native more frames per second. NVIDIA DLSS needs an NVIDIA "
+                               "RTX GPU and nvngx_dlss.dll next to astralchain.exe, Intel XeSS a recent GPU and "
+                               "libxess.dll next to astralchain.exe; AMD FSR 3 runs on any GPU. Automatic takes DLSS "
+                               "where it can run and FSR 3 elsewhere. DLSS and XeSS chosen here take effect after a "
+                               "restart. The HUD is not touched.",
+    [UI_MENU_UPSCALING_DESC_OTHER] = "A temporal upscaler in place of the game's anti-aliasing: smoother edges and less "
+                                     "shimmer, and with a mode below Native more frames per second. AMD FSR 3 runs on "
+                                     "any GPU; Automatic is FSR 3 here (NVIDIA DLSS and Intel XeSS are Windows only). "
+                                     "The HUD is not touched.",
+    [UI_MENU_UPSCALING_OFF] = "Off", [UI_MENU_UPSCALING_AUTO] = "Automatic",
+    [UI_MENU_UPSCALING_UNAVAILABLE] = "not available here",
+    [UI_MENU_UPSCALING_UNTIL] = "%s until a restart",
+    [UI_MENU_UPSCALING_QUALITY] = "Upscaler mode",
+    [UI_MENU_UPSCALING_QUALITY_DESC] = "The size the 3D scene is drawn at before the upscaler brings it to the game "
+                                       "resolution (shown under the value). Native draws it at full size, the sharpest "
+                                       "(DLAA under DLSS). Quality, Balanced, Performance and Ultra performance draw it at "
+                                       "about 67, 58, 50 and 33 % for more frames per second; Ultra performance is meant "
+                                       "for 3840 x 2160. Takes effect after a restart.",
+    [UI_MENU_UPSCALING_NATIVE] = "Native", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
+    [UI_MENU_DLSS_PERFORMANCE] = "Performance", [UI_MENU_UPSCALING_ULTRA] = "Ultra performance",
+    [UI_MENU_UPSCALING_MODE_OFF] = "no upscaler",
     [UI_MENU_AA] = "Game anti-aliasing",
-    [UI_MENU_AA_DESC] = "How the edges of the 3D scene are smoothed. SMAA is the game's own. NVIDIA DLAA (NVIDIA RTX GPUs; "
-                        "nvngx_dlss.dll next to astralchain.exe), Intel XeSS AA (most recent GPUs; libxess.dll next to "
-                        "astralchain.exe) and AMD FSR 3 (any GPU, built in) are temporal: smoother edges and less shimmer, "
-                        "for some GPU time. The HUD is not touched. DLAA and XeSS chosen here take effect after a restart.",
-    [UI_MENU_AA_DESC_OTHER] = "How the edges of the 3D scene are smoothed. SMAA is the game's own. AMD FSR 3 is temporal: "
-                              "smoother edges and less shimmer, for some GPU time. The HUD is not touched. NVIDIA DLAA and "
-                              "Intel XeSS are Windows only.",
-    [UI_MENU_AA_UNAVAILABLE] = "not available here: SMAA runs",
-    [UI_MENU_DLSS] = "DLSS mode",
-    [UI_MENU_DLSS_DESC] = "DLAA draws the 3D scene at full resolution. Quality, Balanced and Performance draw it at 67, 58 "
-                          "and 50 % and let DLSS scale it up, for more frames per second; they replace the 3D render "
-                          "scale. Takes effect after a restart.",
-    [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
-    [UI_MENU_DLSS_PERFORMANCE] = "Performance",
+    [UI_MENU_AA_DESC] = "The game's own anti-aliasing, SMAA, for when no upscaler runs. Off leaves the edges jagged.",
+    [UI_MENU_AA_OFF] = "Off",
+    [UI_MENU_AA_BY_UPSCALER] = "the upscaler smooths the edges",
+    [UI_MENU_OUTPUT_RES_AUTO] = "Automatic",
+    [UI_MENU_OUTPUT_RES_NEXT] = ", %s after restart",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS runs the game's 60 fps patch; 30 FPS switches it off. Read live.",
@@ -377,6 +393,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_OV_FMT_FSR] = "AMD FSR 1, sharpness %d%%", [UI_MENU_OV_SCALE_NONE] = "none (1:1)",
     [UI_MENU_OV_SCALE_BILINEAR] = "bilinear",
     [UI_MENU_OV_FMT_AREA] = "area average, sharpness %d%%",
+    [UI_MENU_OV_FMT_PRESHARP] = "RCAS before the HUD, sharpness %d%%",
     [UI_MENU_TAB_CHEATS] = "Cheats",
     [UI_MENU_CHEATS_NONE] = "No cheats for this game version. A mod's cheats are an Atmosphere cheat file in its "
                             "cheats folder, named after the game's build: mods\\<mod>\\cheats\\%s. Restart the game to "
@@ -441,7 +458,9 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_OUTPUT_RES] = "Разрешение игры",
     [UI_MENU_OUTPUT_RES_DESC] = "Размер, в котором игра рисует картинку и интерфейс. 1280 × 720 — самый лёгкий, для "
                                 "слабых видеокарт. Выше 1920 × 1080 игре нужно больше памяти (примерно на 240 МБ при "
-                                "2560 × 1440 и на 790 МБ при 3840 × 2160) и времени GPU. Действует после перезапуска.",
+                                "2560 × 1440 и на 790 МБ при 3840 × 2160) и времени GPU. Действует после перезапуска. "
+                                "«Автоматически» берёт размер экрана: до 1920 × 1080, а с апскейлером — до 3840 × "
+                                "2160.",
     [UI_MENU_UPSCALER] = "Масштабирование под окно",
     [UI_MENU_UPSCALER_DESC] = "Как картинка подгоняется под окно. FSR сохраняет края и детали чётче билинейного и "
                               "повышает резкость, даже когда картинка уже совпадает с окном.",
@@ -507,22 +526,36 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Отодвигает границы, за которыми тени становятся мягче (в игре 20, 40, 80 и 160 м). "
                                   "Карта теней растягивается на большую площадь, поэтому вместе с этим поднимайте "
                                   "разрешение теней. Действует после перезапуска.",
+    [UI_MENU_UPSCALING] = "Апскейлер",
+    [UI_MENU_UPSCALING_DESC] = "Временной апскейлер вместо сглаживания игры: ровнее края и меньше мерцания, а в режиме "
+                               "ниже «Родного» — больше кадров в секунду. NVIDIA DLSS нужна видеокарта NVIDIA RTX и "
+                               "nvngx_dlss.dll рядом с astralchain.exe, Intel XeSS — современная видеокарта и libxess.dll "
+                               "рядом с astralchain.exe; AMD FSR 3 работает на любой видеокарте. «Автоматически» берёт "
+                               "DLSS, где он может работать, иначе FSR 3. DLSS и XeSS, выбранные здесь, действуют после "
+                               "перезапуска. Интерфейс не затрагивается.",
+    [UI_MENU_UPSCALING_DESC_OTHER] = "Временной апскейлер вместо сглаживания игры: ровнее края и меньше мерцания, а в "
+                                     "режиме ниже «Родного» — больше кадров в секунду. AMD FSR 3 работает на любой "
+                                     "видеокарте; «Автоматически» здесь — FSR 3 (NVIDIA DLSS и Intel XeSS — только в "
+                                     "Windows). Интерфейс не затрагивается.",
+    [UI_MENU_UPSCALING_OFF] = "Выкл.", [UI_MENU_UPSCALING_AUTO] = "Автоматически",
+    [UI_MENU_UPSCALING_UNAVAILABLE] = "недоступно здесь",
+    [UI_MENU_UPSCALING_UNTIL] = "%s до перезапуска",
+    [UI_MENU_UPSCALING_QUALITY] = "Режим апскейлера",
+    [UI_MENU_UPSCALING_QUALITY_DESC] = "Размер, в котором рисуется 3D-сцена, прежде чем апскейлер доведёт её до разрешения "
+                                       "игры (показан под значением). «Родной» рисует её в полном размере, чётче всего "
+                                       "(DLAA у DLSS). «Качество», «Баланс», «Производительность» и «Ультрапроизводительность» "
+                                       "рисуют её примерно в 67, 58, 50 и 33 % ради большего числа кадров; "
+                                       "«Ультрапроизводительность» рассчитана на 3840 × 2160. Действует после перезапуска.",
+    [UI_MENU_UPSCALING_NATIVE] = "Родной", [UI_MENU_DLSS_QUALITY] = "Качество", [UI_MENU_DLSS_BALANCED] = "Баланс",
+    [UI_MENU_DLSS_PERFORMANCE] = "Производительность", [UI_MENU_UPSCALING_ULTRA] = "Ультрапроизводительность",
+    [UI_MENU_UPSCALING_MODE_OFF] = "апскейлер выключен",
     [UI_MENU_AA] = "Сглаживание игры",
-    [UI_MENU_AA_DESC] = "Как сглаживаются края 3D-сцены. SMAA — собственное сглаживание игры. NVIDIA DLAA (видеокарты NVIDIA "
-                        "RTX; nvngx_dlss.dll рядом с astralchain.exe), Intel XeSS AA (большинство современных видеокарт; "
-                        "libxess.dll рядом с astralchain.exe) и AMD FSR 3 (любая видеокарта, встроено) — временные: ровнее "
-                        "края и меньше мерцания ценой части времени видеокарты. Интерфейс не затрагивается. DLAA и XeSS, "
-                        "выбранные здесь, действуют после перезапуска.",
-    [UI_MENU_AA_DESC_OTHER] = "Как сглаживаются края 3D-сцены. SMAA — собственное сглаживание игры. AMD FSR 3 — временное: "
-                              "ровнее края и меньше мерцания ценой части времени видеокарты. Интерфейс не затрагивается. "
-                              "NVIDIA DLAA и Intel XeSS — только в Windows.",
-    [UI_MENU_AA_UNAVAILABLE] = "недоступно здесь: работает SMAA",
-    [UI_MENU_DLSS] = "Режим DLSS",
-    [UI_MENU_DLSS_DESC] = "DLAA рисует 3D-сцену в полном разрешении. «Качество», «Баланс» и «Производительность» рисуют её "
-                          "в 67, 58 и 50 % и масштабируют через DLSS ради большего числа кадров; они заменяют масштаб "
-                          "3D-отрисовки. Действует после перезапуска.",
-    [UI_MENU_DLSS_DLAA] = "DLAA (родное)", [UI_MENU_DLSS_QUALITY] = "Качество", [UI_MENU_DLSS_BALANCED] = "Баланс",
-    [UI_MENU_DLSS_PERFORMANCE] = "Производительность",
+    [UI_MENU_AA_DESC] = "Собственное сглаживание игры, SMAA, когда апскейлер не работает. «Выкл.» оставляет края "
+                        "зубчатыми.",
+    [UI_MENU_AA_OFF] = "Выкл.",
+    [UI_MENU_AA_BY_UPSCALER] = "края сглаживает апскейлер",
+    [UI_MENU_OUTPUT_RES_AUTO] = "Автоматически",
+    [UI_MENU_OUTPUT_RES_NEXT] = ", %s после перезапуска",
 
     [UI_MENU_FPS_LIMIT] = "Частота кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS включает патч игры на 60 кадров; 30 FPS отключает его. Читается на лету.",
@@ -771,6 +804,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_OV_FMT_FSR] = "AMD FSR 1, резкость %d%%", [UI_MENU_OV_SCALE_NONE] = "нет (1:1)",
     [UI_MENU_OV_SCALE_BILINEAR] = "билинейное",
     [UI_MENU_OV_FMT_AREA] = "усреднение по площади, резкость %d%%",
+    [UI_MENU_OV_FMT_PRESHARP] = "RCAS до интерфейса, резкость %d%%",
     [UI_MENU_TAB_CHEATS] = "Читы",
     [UI_MENU_CHEATS_NONE] = "Для этой версии игры читов нет. Читы мода — это файл читов Atmosphere в его папке cheats "
                             "с именем по сборке игры: mods\\<мод>\\cheats\\%s. Перезапустите игру, чтобы они "
@@ -857,7 +891,9 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_OUTPUT_RES_DESC] = "O tamanho em que o jogo desenha a imagem e a interface. 1280 × 720 é o mais leve, "
                                 "para GPUs mais fracas. Acima de 1920 × 1080 o jogo precisa de mais memória (cerca de "
                                 "240 MB a mais em 2560 × 1440, 790 MB em 3840 × 2160) e tempo de GPU. Vale após "
-                                "reiniciar.",
+                                "reiniciar. "
+                                "Automático usa o tamanho da tela: até 1920 × 1080 e, com um upscaler, até 3840 × "
+                                "2160.",
     [UI_MENU_UPSCALER] = "Escala para a janela",
     [UI_MENU_UPSCALER_DESC] = "Como a imagem é ajustada à janela. O FSR mantém bordas e detalhes mais nítidos que o "
                               "bilinear e aumenta a nitidez mesmo quando a imagem já tem o tamanho da janela.",
@@ -1085,6 +1121,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_OV_FMT_FSR] = "AMD FSR 1, nitidez %d%%", [UI_MENU_OV_SCALE_NONE] = "nenhuma (1:1)",
     [UI_MENU_OV_SCALE_BILINEAR] = "bilinear",
     [UI_MENU_OV_FMT_AREA] = "média por área, nitidez %d%%",
+    [UI_MENU_OV_FMT_PRESHARP] = "RCAS antes do HUD, nitidez %d%%",
     [UI_MENU_FOV] = "Campo de visão",
     [UI_MENU_FOV_DESC] = "Quanto do mundo a câmera mostra, em porcentagem do original do jogo (50 graus na vertical "
                          "durante o jogo). As cenas mantêm o enquadramento original.",
@@ -1168,24 +1205,39 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "Sombras suaves",
     [UI_MENU_PCSS_DESC] = "Sombras do sol nítidas onde um objeto toca o chão e mais suaves quanto mais longe a sombra "
                           "cai (PCSS). 0 mantém o filtro do jogo. Vale no próximo início.",
-    [UI_MENU_AA] = "Antisserrilhado do jogo",
-    [UI_MENU_AA_DESC] = "Como as bordas da cena 3D são suavizadas. SMAA é o do próprio jogo. NVIDIA DLAA (placas NVIDIA RTX; "
-                        "nvngx_dlss.dll ao lado do astralchain.exe), Intel XeSS AA (a maioria das placas recentes; "
-                        "libxess.dll ao lado do astralchain.exe) e AMD FSR 3 (qualquer placa, embutido) são temporais: "
-                        "bordas mais suaves e menos cintilação, ao custo de algum tempo de GPU. O HUD não é afetado. DLAA e "
-                        "XeSS escolhidos aqui valem após reiniciar.",
-    [UI_MENU_AA_DESC_OTHER] = "Como as bordas da cena 3D são suavizadas. SMAA é o do próprio jogo. AMD FSR 3 é temporal: "
-                              "bordas mais suaves e menos cintilação, ao custo de algum tempo de GPU. O HUD não é afetado. "
-                              "NVIDIA DLAA e Intel XeSS são somente no Windows.",
-    [UI_MENU_AA_UNAVAILABLE] = "indisponível aqui: roda o SMAA",
-    [UI_MENU_DLSS] = "Modo do DLSS",
-    [UI_MENU_DLSS_DESC] = "DLAA desenha a cena 3D na resolução cheia. Qualidade, Equilibrado e Desempenho a desenham "
-                          "em 67, 58 e 50 % e deixam o DLSS ampliá-la, para mais quadros por segundo; eles substituem "
-                          "a escala 3D. Vale após reiniciar.",
-    [UI_MENU_DLSS_DLAA] = "DLAA (nativo)",
+    [UI_MENU_UPSCALING] = "Upscaler",
+    [UI_MENU_UPSCALING_DESC] = "Um upscaler temporal no lugar do antisserrilhado do jogo: bordas mais suaves e menos "
+                               "cintilação e, com um modo abaixo de Nativo, mais quadros por segundo. NVIDIA DLSS precisa "
+                               "de uma placa NVIDIA RTX e do nvngx_dlss.dll ao lado do astralchain.exe, Intel XeSS de uma "
+                               "placa recente e do libxess.dll ao lado do astralchain.exe; AMD FSR 3 roda em qualquer "
+                               "placa. Automático usa o DLSS onde ele pode rodar e o FSR 3 nos outros casos. DLSS e XeSS "
+                               "escolhidos aqui valem após reiniciar. O HUD não é afetado.",
+    [UI_MENU_UPSCALING_DESC_OTHER] = "Um upscaler temporal no lugar do antisserrilhado do jogo: bordas mais suaves e menos "
+                                     "cintilação e, com um modo abaixo de Nativo, mais quadros por segundo. AMD FSR 3 roda "
+                                     "em qualquer placa; Automático é o FSR 3 aqui (NVIDIA DLSS e Intel XeSS são somente "
+                                     "no Windows). O HUD não é afetado.",
+    [UI_MENU_UPSCALING_OFF] = "Desligado", [UI_MENU_UPSCALING_AUTO] = "Automático",
+    [UI_MENU_UPSCALING_UNAVAILABLE] = "indisponível aqui",
+    [UI_MENU_UPSCALING_UNTIL] = "%s até reiniciar",
+    [UI_MENU_UPSCALING_QUALITY] = "Modo do upscaler",
+    [UI_MENU_UPSCALING_QUALITY_DESC] = "O tamanho em que a cena 3D é desenhada antes que o upscaler a leve à resolução do "
+                                       "jogo (mostrado sob o valor). Nativo a desenha no tamanho cheio, o mais nítido "
+                                       "(DLAA no DLSS). Qualidade, Equilibrado, Desempenho e Ultradesempenho a desenham em "
+                                       "cerca de 67, 58, 50 e 33 % para mais quadros por segundo; Ultradesempenho é "
+                                       "pensado para 3840 × 2160. Vale após reiniciar.",
+    [UI_MENU_UPSCALING_NATIVE] = "Nativo",
     [UI_MENU_DLSS_QUALITY] = "Qualidade",
     [UI_MENU_DLSS_BALANCED] = "Equilibrado",
     [UI_MENU_DLSS_PERFORMANCE] = "Desempenho",
+    [UI_MENU_UPSCALING_ULTRA] = "Ultradesempenho",
+    [UI_MENU_UPSCALING_MODE_OFF] = "sem upscaler",
+    [UI_MENU_AA] = "Antisserrilhado do jogo",
+    [UI_MENU_AA_DESC] = "O antisserrilhado do próprio jogo, SMAA, para quando nenhum upscaler roda. Desligado deixa as "
+                        "bordas serrilhadas.",
+    [UI_MENU_AA_OFF] = "Desligado",
+    [UI_MENU_AA_BY_UPSCALER] = "o upscaler suaviza as bordas",
+    [UI_MENU_OUTPUT_RES_AUTO] = "Automático",
+    [UI_MENU_OUTPUT_RES_NEXT] = ", %s após reiniciar",
     [UI_MENU_TAB_CHEATS] = "Cheats",
     [UI_MENU_CHEATS_NONE] = "Nenhum cheat para esta versão do jogo. Os cheats de um mod são um arquivo de cheats do "
                             "Atmosphere na pasta cheats dele, com o nome da build do jogo: mods\\<mod>\\cheats\\%s. "
@@ -1287,7 +1339,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_OUTPUT_RES] = "游戏分辨率",
     [UI_MENU_OUTPUT_RES_DESC] = "游戏绘制画面和界面的尺寸。1280 × 720 负担最轻，适合较弱的 GPU。高于 1920 × 1080 时，"
                                 "游戏需要更多内存（2560 × 1440 约多 240 MB，3840 × 2160 约多 790 MB）和 GPU 时间。"
-                                "重启后生效。",
+                                "重启后生效。"
+                                "“自动”使用屏幕尺寸：最高 1920 × 1080；运行超分辨率时最高 3840 × 2160。",
     [UI_MENU_UPSCALER] = "放大到窗口",
     [UI_MENU_UPSCALER_DESC] = "画面缩放到窗口的方式。"
                               "FSR 比双线性更能保留边缘和细节，即使画面已与窗口同样大小也会锐化。",
@@ -1646,6 +1699,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_OV_SCALE_NONE] = "无（1:1）",
     [UI_MENU_OV_SCALE_BILINEAR] = "双线性",
     [UI_MENU_OV_FMT_AREA] = "面积平均，锐度 %d%%",
+    [UI_MENU_OV_FMT_PRESHARP] = "在 HUD 之前 RCAS，锐度 %d%%",
     [UI_MENU_SHADOW_RES] = "阴影贴图尺寸",
     [UI_MENU_SHADOW_RES_DESC] = "太阳阴影贴图的尺寸。游戏自身的尺寸随视角变化，靠近地面时降到约 400，因此树叶阴影显得块状并且跳动；固定尺寸能让阴影稳定、更清晰。高于 1024 时阴影会占用更多 "
                                 "GPU 时间和显存。",
@@ -1686,20 +1740,33 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_CONTACT_SHADOWS_DESC] = "阴影贴图遗漏的细小太阳阴影：脚下、石头下、草丛和褶皱中。在光照之后于屏幕空间追踪。下次启动时生效。",
     [UI_MENU_PCSS] = "柔和阴影",
     [UI_MENU_PCSS_DESC] = "物体接触地面处的太阳阴影锐利，阴影投得越远越柔和（PCSS）。0 保留游戏自身的过滤。下次启动时生效。",
-    [UI_MENU_AA] = "游戏抗锯齿",
-    [UI_MENU_AA_DESC] = "3D 场景边缘的平滑方式。SMAA 是游戏自带的。NVIDIA DLAA（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 "
-                        "astralchain.exe 旁）、Intel XeSS AA（大多数较新的显卡；libxess.dll 放在 astralchain.exe 旁）和 AMD "
-                        "FSR 3（任何显卡，内置）是时间性抗锯齿：边缘更平滑，闪烁更少，但会占用一些 GPU 时间。HUD 不受影响。"
-                        "在此选择的 DLAA 和 XeSS 重启后生效。",
-    [UI_MENU_AA_DESC_OTHER] = "3D 场景边缘的平滑方式。SMAA 是游戏自带的。AMD FSR 3 是时间性抗锯齿：边缘更平滑，闪烁更少，但会"
-                              "占用一些 GPU 时间。HUD 不受影响。NVIDIA DLAA 和 Intel XeSS 仅限 Windows。",
-    [UI_MENU_AA_UNAVAILABLE] = "此处不可用：使用 SMAA",
-    [UI_MENU_DLSS] = "DLSS 模式",
-    [UI_MENU_DLSS_DESC] = "DLAA 以全分辨率绘制 3D 场景。质量、平衡和性能分别以 67%、58% 和 50% 绘制，再由 DLSS 放大，以获得更高帧率；它们会取代 3D 渲染比例。重启后生效。",
-    [UI_MENU_DLSS_DLAA] = "DLAA（原生）",
+    [UI_MENU_UPSCALING] = "超分辨率",
+    [UI_MENU_UPSCALING_DESC] = "以时间性超分辨率取代游戏的抗锯齿：边缘更平滑、闪烁更少；选择低于“原生”的模式还能提高帧率。"
+                               "NVIDIA DLSS 需要 NVIDIA RTX 显卡，并将 nvngx_dlss.dll 放在 astralchain.exe 旁；Intel XeSS "
+                               "需要较新的显卡，并将 libxess.dll 放在 astralchain.exe 旁；AMD FSR 3 可在任何显卡上运行。"
+                               "“自动”在可运行时使用 DLSS，否则使用 FSR 3。在此选择的 DLSS 和 XeSS 重启后生效。HUD 不受影响。",
+    [UI_MENU_UPSCALING_DESC_OTHER] = "以时间性超分辨率取代游戏的抗锯齿：边缘更平滑、闪烁更少；选择低于“原生”的模式还能提高"
+                                     "帧率。AMD FSR 3 可在任何显卡上运行；此处“自动”即 FSR 3（NVIDIA DLSS 和 Intel XeSS "
+                                     "仅限 Windows）。HUD 不受影响。",
+    [UI_MENU_UPSCALING_OFF] = "关闭", [UI_MENU_UPSCALING_AUTO] = "自动",
+    [UI_MENU_UPSCALING_UNAVAILABLE] = "此处不可用",
+    [UI_MENU_UPSCALING_UNTIL] = "重启前使用 %s",
+    [UI_MENU_UPSCALING_QUALITY] = "超分辨率模式",
+    [UI_MENU_UPSCALING_QUALITY_DESC] = "3D 场景在超分辨率放大到游戏分辨率之前的绘制尺寸（显示在数值下方）。“原生”以全尺寸"
+                                       "绘制，画面最清晰（DLSS 下即 DLAA）。质量、平衡、性能和超级性能分别以约 67%、58%、"
+                                       "50% 和 33% 绘制，以获得更高帧率；超级性能适用于 3840 × 2160。重启后生效。",
+    [UI_MENU_UPSCALING_NATIVE] = "原生",
     [UI_MENU_DLSS_QUALITY] = "质量",
     [UI_MENU_DLSS_BALANCED] = "平衡",
     [UI_MENU_DLSS_PERFORMANCE] = "性能",
+    [UI_MENU_UPSCALING_ULTRA] = "超级性能",
+    [UI_MENU_UPSCALING_MODE_OFF] = "未使用超分辨率",
+    [UI_MENU_AA] = "游戏抗锯齿",
+    [UI_MENU_AA_DESC] = "游戏自带的抗锯齿 SMAA，用于未运行超分辨率时。关闭会使边缘出现锯齿。",
+    [UI_MENU_AA_OFF] = "关闭",
+    [UI_MENU_AA_BY_UPSCALER] = "边缘由超分辨率平滑",
+    [UI_MENU_OUTPUT_RES_AUTO] = "自动",
+    [UI_MENU_OUTPUT_RES_NEXT] = "，重启后为 %s",
     [UI_MENU_TAB_CHEATS] = "金手指",
     [UI_MENU_CHEATS_NONE] = "此游戏版本没有金手指。模组的金手指是它的 cheats 文件夹中以游戏构建命名的 Atmosphere "
                             "金手指文件：mods\\<模组>\\cheats\\%s。重启游戏后才会读取。对于修改游戏代码的金手指，"

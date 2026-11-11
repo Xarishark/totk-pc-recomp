@@ -4,6 +4,11 @@
 // reduced by an area average (runtime/shaders/downscale.comp) in EASU's place, then sharpened by RCAS: EASU and the
 // bilinear blit read only the texels around each pixel's centre and would throw part of the supersampling away.
 // AC_UPSCALER=fsr|bilinear picks it, AC_SHARPNESS (0..100, 0 = no RCAS pass) sets RCAS; both apply at the next frame.
+// A scene an upscaler (DLSS, XeSS, FSR 3) scaled is sharpened by vk_dlaa.c before the game draws its HUD, with RCAS
+// from here (vk_fsr_rcas), when the window copies the picture 1:1: the present then copies it without RCAS
+// (vk_fsr_presharp_set), so the HUD stays as the game drew it and the scene is not sharpened twice. Where the window
+// scales the picture, RCAS stays the present's last step (vk_fsr_present_scales): sharpened first, EASU would enlarge
+// the sharpening's halos and the area average would smooth it away again.
 //
 // Per frame: EASU reads the source through a view of its own format (the same colour conversion the blit does) and
 // writes an RGBA16F image of the picture's size on the swapchain (all of it, or the part between black bars,
@@ -29,6 +34,7 @@
 
 static struct {
     int tried, ok;
+    int32_t claimed;               // ready: a thread is making the pipelines
     PFN_vkCmdPushDescriptorSetKHR push;
     VkDescriptorSetLayout dsl;
     VkPipelineLayout layout;
@@ -58,7 +64,6 @@ static VkPipeline make_pipeline(VkCtx *c, const uint32_t *code, size_t size) {
 }
 
 static int init(VkCtx *c) {
-    F.tried = 1;
     F.push = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(c->device, "vkCmdPushDescriptorSetKHR");
     if (!F.push) {
         rt_log("vk: FSR off: no VK_KHR_push_descriptor; the present scales bilinearly");
@@ -149,6 +154,45 @@ static void barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkImage
     vkCmdPipelineBarrier2(cb, &d);
 }
 
+// The pipelines are made once, by whichever of the present (vk_fsr_record) and the replay (vk_fsr_rcas, under
+// vk_dlaa.c) asks first; the other sees nothing ready until that is done and skips FSR for that frame.
+static int ready(VkCtx *c) {
+    if (!__atomic_load_n(&F.tried, __ATOMIC_ACQUIRE)) {
+        if (__atomic_exchange_n(&F.claimed, 1, __ATOMIC_ACQ_REL)) return 0;
+        init(c);
+        __atomic_store_n(&F.tried, 1, __ATOMIC_RELEASE);
+    }
+    return F.ok;
+}
+
+static int sharpness(void) {
+    int s = cfg_int("AC_SHARPNESS");
+    return s < 0 ? 0 : s > 100 ? 100 : s;
+}
+
+static void bind_pass(VkCommandBuffer cb, VkPipeline p, VkImageView in, VkImageView out, const float pc[8]);
+
+int vk_fsr_rcas_on(void) { return sharpness() > 0 && !strcmp(cfg_value("AC_UPSCALER"), "fsr") && ready(vk_ctx()); }
+
+int vk_fsr_rcas(VkCommandBuffer cb, VkImageView src, VkImageView dst, uint32_t w, uint32_t h) {
+    if (!vk_fsr_rcas_on()) return 0;
+    // the whole source: fsr_rcas.comp clamps its reads to the rectangle in the last four constants
+    float rcas[8] = {(float)w, (float)h, (float)(100 - sharpness()) / 50.0f, 0, 0, 0, (float)w, (float)h};
+    bind_pass(cb, F.rcas, src, dst, rcas);
+    vkCmdDispatch(cb, (w + 15) / 16, (h + 15) / 16, 1);
+    return 1;
+}
+
+// The last present scaled the picture with FSR's passes, up (EASU) or down (the area average): vk_dlaa.c then leaves
+// the sharpening to it. Written by the present thread, read by the replay's.
+static volatile int32_t present_scales;
+int vk_fsr_present_scales(void) { return __atomic_load_n(&present_scales, __ATOMIC_RELAXED); }
+
+// The present thread, before each present's blit: the picture it presents was sharpened before its HUD.
+static int presharp, presharp_copied;   // presharp_copied: the last vk_fsr_record left a sharpened picture to copy
+void vk_fsr_presharp_set(int on) { presharp = on; }
+int vk_fsr_presharp_copied(void) { return presharp_copied; }
+
 static void bind_pass(VkCommandBuffer cb, VkPipeline p, VkImageView in, VkImageView out, const float pc[8]) {
     VkDescriptorImageInfo ii = {F.sampler, in, VK_IMAGE_LAYOUT_GENERAL}, oi = {VK_NULL_HANDLE, out, VK_IMAGE_LAYOUT_GENERAL};
     VkWriteDescriptorSet w[2] = {
@@ -165,12 +209,20 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
                   VkImage dst, const int out[4]) {
     int cw = crop[2], ch = crop[3];
     uint32_t dw = (uint32_t)out[2], dh = (uint32_t)out[3];
-    if (strcmp(cfg_value("AC_UPSCALER"), "fsr") || !fmt) return 0;
     int down = dw < (uint32_t)cw || dh < (uint32_t)ch;   // a smaller window: the area downscale in EASU's place
     int same = dw + 2 >= (uint32_t)cw && dw <= (uint32_t)cw + 2 && dh + 2 >= (uint32_t)ch && dh <= (uint32_t)ch + 2;
+    int fsr = !strcmp(cfg_value("AC_UPSCALER"), "fsr") && fmt;
+    presharp_copied = 0;
+    __atomic_store_n(&present_scales, fsr && !same, __ATOMIC_RELAXED);
+    if (!fsr) return 0;
+    static int pre_seen, lines;   // the last state, and the changes logged (menus over no scene flip it)
+    int pre = presharp && same;
+    if (pre != pre_seen && lines < 20)
+        lines++, rt_log("vk: %dx%d to the window at 1:1: %s", cw, ch, pre ? "copied, sharpened before the HUD" : "RCAS here");
+    pre_seen = pre;
+    if (pre) return presharp_copied = 1, 0;   // the caller copies it
     VkCtx *c = vk_ctx();
-    if (!F.tried) init(c);
-    if (!F.ok || !ensure_images(c, dw, dh)) return 0;
+    if (!ready(c) || !ensure_images(c, dw, dh)) return 0;
     slot %= SLOTS;
     if (F.src_view[slot]) vkDestroyImageView(c->device, F.src_view[slot], NULL);
     VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = src,
@@ -182,9 +234,7 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
         F.src_view[slot] = VK_NULL_HANDLE;
         return 0;
     }
-    int sharp = cfg_int("AC_SHARPNESS");
-    if (sharp < 0) sharp = 0;
-    if (sharp > 100) sharp = 100;
+    int sharp = sharpness();
     if (same && sharp == 0) return 0;   // nothing to do: the source and the window are the same size
     if (F.lcw != cw || F.lch != ch || F.ldw != dw || F.ldh != dh) {
         F.lcw = cw, F.lch = ch, F.ldw = dw, F.ldh = dh;

@@ -54,7 +54,8 @@ static const char *const known[] = {
     "SHADER_MEMO", "SHADOW_RANGE", "SHADOW_RES", "SHADOW_SCALE", "SHARED_FONTS", "SHARPNESS", "SHOTS", "SHOTS_DIR",
     "SHOTS_FULL", "SKIP_FS", "SKIP_VS", "SPEED_PROBE", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "STICK_SENS",
     "SWKBD_ANSWER",
-    "SWKBD_TEST", "TEST_HITCH", "TEST_PAD", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_CACHE_MB", "TEX_MEMO", "TEX_MIP_SKIP", "TEX_PREFETCH", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
+    "SWKBD_TEST", "TEST_HITCH", "TEST_PAD", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_CACHE_MB", "TEX_MEMO", "TEX_MIP_SKIP", "TEX_PREFETCH", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "UPSCALING", "UPSCALING_FAIL",
+    "UPSCALING_QUALITY", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS",
     "WALK_KEY", "WALK_SCALE", "WB_EXACT", "WB_FENCE_LIMIT", "WINDOW_SIZE", "XESS", "XESS_JITTER_SCALE", "XESS_MV_SCALE",
     "XLATE", "XLATE_ID", "XLATE_PROCS",
@@ -72,7 +73,8 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"HDR_HUE", "display"}, {"SHADOW_RES", "display"},
-    {"ANTI_ALIASING", "display"}, {"DLAA", "display"}, {"DLSS", "display"}, {"XESS", "display"},
+    {"ANTI_ALIASING", "display"}, {"UPSCALING", "display"}, {"UPSCALING_QUALITY", "display"}, {"DLAA", "display"},
+    {"DLSS", "display"}, {"XESS", "display"},
     {"DEVICE_PROFILE", "display"}, {"DECK_RES_MIGRATED", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
@@ -115,11 +117,13 @@ static const CfgMeta metas[] = {
     // the size the game renders itself (resolution.c: TotK's output set, or on 1.0.1 the res set, res_pick)
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
-    // the scene's anti-aliasing (vk_dlaa.c vk_dlaa_frame): the game's SMAA, or a temporal AA in its place. Live: NGX
-    // (dlaa) and libxess.dll (xess) are loaded at start for the choice made then, and the menu says when one waits for a
-    // restart; FSR 3 is built in.
-    {"ANTI_ALIASING", "smaa", "smaa|dlaa|xess|fsr3", LIVE},
-    {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART},
+    // the scene's temporal upscaler and its mode (vk_dlaa.c taa_pick, resolution.c scene_init), native (DLAA, XeSS or
+    // FSR 3 Native AA) first, and the game's anti-aliasing for when none runs. The upscaler is live between what can run
+    // in this run: NGX (dlss, auto) and libxess.dll (xess) are loaded at start for the choice made then; FSR 3 is built
+    // in. The mode sets the size the game makes its scene targets at, once, at start. The values are in the menu's order.
+    {"UPSCALING", "off", "off|auto|dlss|xess|fsr3", LIVE},
+    {"UPSCALING_QUALITY", "native", "native|quality|balanced|performance|ultra_performance", RESTART},
+    {"ANTI_ALIASING", "smaa", "off|smaa", LIVE},
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "auto", "auto|game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
@@ -222,14 +226,18 @@ static void add(char *key, char *value, int line) {
 
 // ssaa (the host-side render scale: off, 1440p or 2160p, or a factor from 0.2.x/0.3.0) is gone: output_res makes the game
 // render the size itself. A 1440p or 2160p line is read as output_res = 2560x1440 or 3840x2160, which the next cfg_save
-// writes; an output_res line of the file's own other than the default 1920x1080 wins.
+// writes in place of the ssaa line; an output_res line of the file's own other than the default 1920x1080 wins.
 static void migrate_ssaa(void) {
     CfgEntry *ssaa = NULL, *out = NULL;
     for (int i = 0; i < n_entries; i++) {
         if (!strcmp(entries[i].key, "SSAA")) ssaa = &entries[i];
         if (!strcmp(entries[i].key, "OUTPUT_RES")) out = &entries[i];
     }
-    if (!ssaa || (out && strcmp(out->value, "1920x1080"))) return;
+    if (!ssaa) return;
+    // The ssaa line goes at the next cfg_save, read or not: kept, it was read again at every start, so a game resolution
+    // of 1920x1080 picked in the menu (the default, which the line overrides) came back as its 1440p or 2160p.
+    ssaa->removed = 1;
+    if (out && strcmp(out->value, "1920x1080")) return;
     const char *v = ssaa->value, *to = NULL;
     double k = atof(v);
     if (!strcmp(v, "1440p") || (strcmp(v, "2160p") && k > 1.01 && k < 1.75)) to = "2560x1440";
@@ -245,24 +253,77 @@ static void migrate_ssaa(void) {
     }
 }
 
+static CfgEntry *entry(const char *key) {
+    for (int i = 0; i < n_entries; i++)
+        if (entries[i].value && !entries[i].removed && !strcmp(entries[i].key, key)) return &entries[i];
+    return NULL;
+}
+
+static void put_new(const char *key, const char *value) {
+    if (n_entries < CFG_MAX_KEYS) entries[n_entries++] = (CfgEntry){strdup(key), strdup(value), 1, 0};
+}
+
+static void put_value(const char *key, const char *value) {   // the file's line changed, or a new one
+    CfgEntry *e = entry(key);
+    if (!e) return put_new(key, value);
+    if (!strcmp(e->value, value)) return;
+    free(e->value), e->value = strdup(value), e->dirty = 1;
+}
+
+static void drop(CfgEntry *e) {   // cfg_save_to deletes the line
+    if (e) e->removed = 1;
+}
+
 // Up to 1.10.1 DLAA and XeSS were two switches, dlaa = 1 and xess = 1 (with both on, DLAA ran). They are read as
-// anti_aliasing = dlaa or xess, which the next cfg_save writes in their place; an anti_aliasing line of the file's own
-// wins. Windows only: elsewhere neither ever ran, and the file keeps the game's SMAA.
+// anti_aliasing = dlaa or xess, which migrate_upscaling then reads as that upscaler in its native mode; an
+// anti_aliasing line of the file's own wins. Windows only: elsewhere neither ever ran, and the file keeps the game's SMAA.
 static void migrate_aa(void) {
 #ifdef _WIN32
-    CfgEntry *dlaa = NULL, *xess = NULL, *aa = NULL;
-    for (int i = 0; i < n_entries; i++) {
-        if (!strcmp(entries[i].key, "DLAA")) dlaa = &entries[i];
-        if (!strcmp(entries[i].key, "XESS")) xess = &entries[i];
-        if (!strcmp(entries[i].key, "ANTI_ALIASING")) aa = &entries[i];
-    }
+    CfgEntry *dlaa = entry("DLAA"), *xess = entry("XESS");
     const char *to = dlaa && !strcmp(dlaa->value, "1") ? "dlaa" : xess && !strcmp(xess->value, "1") ? "xess" : NULL;
-    if (aa || !to || n_entries == CFG_MAX_KEYS) return;
-    entries[n_entries++] = (CfgEntry){strdup("ANTI_ALIASING"), strdup(to), 1, 0};
-    if (dlaa) dlaa->removed = 1;   // cfg_save_to deletes their lines
-    if (xess) xess->removed = 1;
+    if (entry("ANTI_ALIASING") || !to || n_entries == CFG_MAX_KEYS) return;
+    put_new("ANTI_ALIASING", to);
+    drop(dlaa), drop(xess);
     rt_log("cfg: astralchain.ini %s = 1 is read as anti_aliasing = %s", to, to);
 #endif
+}
+
+// Up to 1.10.1 one row, anti_aliasing = smaa | dlaa | xess | fsr3, chose the scene's anti-aliasing, the temporal ones
+// at the scene's own size. Now upscaling (off, auto, dlss, xess, fsr3) chooses the temporal upscaler, upscaling_quality
+// its mode (native: DLAA, XeSS or FSR 3 Native AA, the same picture as before) and anti_aliasing (off, smaa) the game's
+// own for when no upscaler runs. A temporal anti_aliasing is read as that upscaler in its native mode with smaa behind
+// it, so a player keeps what they chose; the next cfg_save writes the new lines in place of the old one. A file that
+// already names an upscaler keeps its own, and only its stale anti_aliasing value becomes smaa. dlaa and xess were
+// Windows libraries: elsewhere they never ran, and they are read as smaa, which is what ran. The dlss line (its
+// quality, balanced and performance never scaled anything on 1.0.1, the menu had no row for it) is dropped, not read
+// as a mode: honouring it would shrink those players' scene.
+static void migrate_upscaling(void) {
+    CfgEntry *dlss = entry("DLSS");
+    if (dlss) {
+        rt_log("cfg: astralchain.ini dlss = %s is no longer read: upscaling_quality sets the upscaler's mode", dlss->value);
+        drop(dlss);
+    }
+    CfgEntry *aa = entry("ANTI_ALIASING");
+    if (!aa) return;
+    const char *v = aa->value, *up = NULL;
+#ifdef _WIN32
+    if (!strcasecmp(v, "dlaa")) up = "dlss";
+    else if (!strcasecmp(v, "xess")) up = "xess";
+#endif
+    if (!strcasecmp(v, "fsr3")) up = "fsr3";
+    if (!up && (!strcasecmp(v, "dlaa") || !strcasecmp(v, "xess"))) up = "";   // never ran here: SMAA
+    if (!up) return;
+    char old[16];
+    snprintf(old, sizeof old, "%s", v);
+    if (*up && !entry("UPSCALING")) {
+        put_value("UPSCALING", up);
+        put_value("UPSCALING_QUALITY", "native");
+        rt_log("cfg: astralchain.ini anti_aliasing = %s is read as upscaling = %s, upscaling_quality = native and "
+               "anti_aliasing = smaa", old, up);
+    } else {
+        rt_log("cfg: astralchain.ini anti_aliasing = %s is read as anti_aliasing = smaa", old);
+    }
+    put_value("ANTI_ALIASING", "smaa");
 }
 
 // 0.1.9 had the Xbox prompts as a pad layout: pad_layout = xbox_prompts is pad_layout = nintendo with prompts = xbox.
@@ -271,6 +332,7 @@ static void migrate_aa(void) {
 static void migrate(void) {
     migrate_ssaa();
     migrate_aa();
+    migrate_upscaling();
     CfgEntry *layout = NULL, *prompts = NULL;
     for (int i = 0; i < n_entries; i++) {
         if (!strcmp(entries[i].key, "PAD_LAYOUT")) layout = &entries[i];
@@ -802,8 +864,33 @@ int cfg_migrate_deck_res(int deck) {
     return reset ? 2 : 1;
 }
 
+// The environment's anti_aliasing of 1.10.1 (AC_ANTI_ALIASING=dlaa, xess or fsr3: scripts, docs/building.md's checks),
+// which migrate_upscaling cannot rewrite: read as that upscaler in its native mode while upscaling is set nowhere, for
+// the run, not saved. NULL: none. The upscaler's name, "dlss", "xess" or "fsr3" (dlss and xess on Windows only).
+static const char *legacy_upscaler(void) {
+    const char *aa = getenv(PREFIX "ANTI_ALIASING");
+    if (!aa || raw_get(PREFIX "UPSCALING")) return NULL;
+#ifdef _WIN32
+    if (!strcasecmp(aa, "dlaa")) return "dlss";
+    if (!strcasecmp(aa, "xess")) return "xess";
+#endif
+    return !strcasecmp(aa, "fsr3") ? "fsr3" : NULL;
+}
+
+const char *cfg_upscaling(void) {
+    const char *l = legacy_upscaler();
+    return l ? l : cfg_value(PREFIX "UPSCALING");
+}
+
+const char *cfg_upscaling_quality(void) { return legacy_upscaler() ? "native" : cfg_value(PREFIX "UPSCALING_QUALITY"); }
+
+int cfg_smaa(void) { return strcmp(cfg_value(PREFIX "ANTI_ALIASING"), "off") != 0; }
+
 void cfg_init(void) {
     load_ini();
+    if (legacy_upscaler())
+        rt_log("cfg: " PREFIX "ANTI_ALIASING=%s is read as " PREFIX "UPSCALING=%s with " PREFIX
+               "UPSCALING_QUALITY=native for this run", getenv(PREFIX "ANTI_ALIASING"), legacy_upscaler());
     if (profile_of())
         rt_log("cfg: device profile Steam Deck: defaults for the keys astralchain.ini does not set (AC_DEVICE_PROFILE=desktop "
                "turns it off)");

@@ -1271,11 +1271,12 @@ static struct {
     VkDescriptorImageInfo out;
 } TD[TD_N];
 
+// *image: the texture's image (VK_NULL_HANDLE for none or a dummy).
 static void tex_info_lookup(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate,
-                            VkDescriptorImageInfo *out) {
+                            VkDescriptorImageInfo *out, VkImage *image_out) {
     int td_on = td_mode();
     VkImage image;
-    if (!h || storage || !td_on) return tex_info_full(ex, r, h, storage, separate, out, &image);
+    if (!h || storage || !td_on) return tex_info_full(ex, r, h, storage, separate, out, image_out);
     uint32_t gen = vk_texture_slots_gen(), ep = vk_texture_epoch(), sg = vk_sampler_gen();   // before any lookup
     typeof(TD[0]) *m = &TD[(h * 0x9E3779B97F4A7C15ull ^ (uint64_t)r->type << 7 ^ (uint64_t)separate) >> 51];
     if (m->valid && m->h == h && m->type == r->type && m->separate == separate && m->sgen == sg &&
@@ -1285,6 +1286,7 @@ static void tex_info_lookup(VkExec *ex, const GfxShaderRes *r, uint64_t h, int s
             m->epoch = ep;
         }
         *out = m->out;
+        *image_out = m->image;
         out->imageLayout = m->image && ex->nfbl && in_fbl(ex, m->image) ? VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT
                                                                           : VK_IMAGE_LAYOUT_GENERAL;
         if (td_on == 2) {
@@ -1298,6 +1300,7 @@ static void tex_info_lookup(VkExec *ex, const GfxShaderRes *r, uint64_t h, int s
     }
     uint64_t tok = token_of(h);   // before the lookup
     tex_info_full(ex, r, h, storage, separate, out, &image);
+    *image_out = image;
     *m = (typeof(*m)){.h = h, .tok = tok, .gen = gen, .epoch = ep, .sgen = sg, .type = r->type,
                       .separate = (uint8_t)separate, .valid = 1, .image = image, .out = *out};
 }
@@ -1491,10 +1494,23 @@ static Twin *twin_update(VkExec *ex, const VkTexImage *img) {
     return t;
 }
 
-// The image descriptor of slot h; in a dispatch, a compare-sampled colour image the driver cannot compare is swapped
-// for its depth twin.
+// The upscaler's picture (vk_dlaa.c) for this pass: once it scaled the scene this frame, a pass wider than the scene's
+// composite (the game's scaling pass, which reads the composite, and any later one) samples the picture in the
+// composite's place. VK_NULL_HANDLE: no swap in this pass.
+static VkImageView swap_view(const VkExec *ex) {
+    return vk_dlaa_swap_img && ex->in_pass && ex->pass_w > vk_dlaa_swap_w + 1 ? vk_dlaa_swap_view : VK_NULL_HANDLE;
+}
+
+// The image descriptor of slot h; in a pass after the upscaler, the scene's composite is swapped for the upscaler's
+// picture (swap_view); in a dispatch, a compare-sampled colour image the driver cannot compare is swapped for its depth
+// twin.
 static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage, int separate, VkDescriptorImageInfo *out) {
-    tex_info_lookup(ex, r, h, storage, separate, out);
+    VkImage image;
+    tex_info_lookup(ex, r, h, storage, separate, out, &image);
+    if (image && !storage && image == vk_dlaa_swap_img) {
+        VkImageView v = swap_view(ex);
+        if (v) out->imageView = v, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
     if (!twin_dispatch || storage || separate || !h || !(r->type & 0x400)) return;
     VkImageViewType vt = res_view_type(r->type);
     if (vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY) return;
@@ -1826,6 +1842,7 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
     PUT((uint64_t)vk_sampler_gen() << 32 | (uint32_t)ex->nfbl);
     PUT(vk_mem_gen() + vk_usnap_gen());   // both only grow
     for (int i = 0; i < ex->nfbl && i < 9; i++) PUT((uintptr_t)ex->fbl_img[i]);
+    PUT((uintptr_t)swap_view(ex));   // the upscaler's picture in the composite's place (tex_info)
     if (l->sup) {
         float in[3];
         support_in(ex, in);

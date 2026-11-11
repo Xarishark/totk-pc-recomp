@@ -92,6 +92,8 @@ void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical a
 void rt_res_w8(Cpu *c), rt_res_h8(Cpu *c), rt_res_w9(Cpu *c), rt_res_h9(Cpu *c), rt_res_h22(Cpu *c);
 uint64_t rt_res_cmp_w0(Cpu *c);
 void rt_res_budget_w8(Cpu *c);
+// scene size for upscaling (resolution.c, set scene): a dynamic-resolution level's width into w1, its height into w2
+void rt_res_scene_w1(Cpu *c), rt_res_scene_h2(Cpu *c);
 
 
 #if defined(__aarch64__)

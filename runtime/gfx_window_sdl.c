@@ -137,6 +137,25 @@ int gfx_window_monitor_size(int *w, int *h) {
     return 1;
 }
 
+static int video_up(void);
+
+static void primary_height(void *arg) {
+    const SDL_DisplayMode *m = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+    *(int *)arg = m ? (int)(m->h * m->pixel_density + 0.5f) : 0;
+}
+
+int gfx_display_height(void) {
+    int w, h;
+    if (gfx_window_monitor_size(&w, &h)) return h;
+    // Before the window (resolution.c res_size, output_res = auto, from mem_init, ahead of the Vulkan instance): the
+    // primary display. SDL's video is brought up now if it is not yet, on the window's thread as always (video_up), and
+    // the question is asked there: a height of 0 here would fix output_res = auto at 1920x1080 for the whole run.
+    if (!video_up()) return 0;
+    int height = 0;
+    run_on_window(primary_height, &height);
+    return height;
+}
+
 static void density_update(void) {
     float d = SDL_GetWindowPixelDensity(g_win);
     __atomic_store_n(&g_density_milli, (int32_t)((d > 0 ? d : 1) * 1000 + 0.5f), __ATOMIC_RELAXED);

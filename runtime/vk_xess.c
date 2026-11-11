@@ -1,5 +1,6 @@
-// XeSS: Intel XeSS Super Resolution (XeSS-SR 2.0, the library of SDK 3.0.2) as the scene's temporal anti-aliasing at
-// its own size (its Native AA quality setting), behind AC_ANTI_ALIASING=xess (astralchain.ini anti_aliasing = xess).
+// XeSS: Intel XeSS Super Resolution (XeSS-SR 2.0, the library of SDK 3.0.2) as the scene's temporal upscaler, behind
+// AC_UPSCALING=xess (astralchain.ini upscaling = xess): at the scene's own size (its Native AA quality setting) or from a
+// smaller scene to the game resolution (the quality setting whose input range holds the scene, init_size).
 // libxess.dll (from Intel's XeSS SDK, shipped beside astralchain.exe by the release; Intel Simplified Software License) is loaded at run time
 // from the folder of the exe. No Intel header
 // is compiled in: the SDK's headers are under Intel's own license, so the few types and entry points used are declared
@@ -37,8 +38,11 @@ typedef int XessResult;   // xess_result_t: 0 success, 1..2 warnings, negative e
 typedef struct XessCtx *XessHandle;   // xess_context_handle_t
 typedef struct { uint16_t major, minor, patch, reserved; } XessVersion;
 typedef struct { uint32_t x, y; } Xess2d;
-enum { XESS_QUALITY_AA = 106 };                     // XESS_QUALITY_SETTING_AA: input and output of one size
-enum { XESS_FLAG_AUTOEXPOSURE = 1 << 8 };           // XESS_INIT_FLAG_ENABLE_AUTOEXPOSURE
+// xess_quality_settings_t: ULTRA_PERFORMANCE 100, PERFORMANCE 101, BALANCED 102, QUALITY 103, ULTRA_QUALITY 104,
+// ULTRA_QUALITY_PLUS 105, AA 106 (input and output of one size)
+enum { XESS_QUALITY_FIRST = 100, XESS_QUALITY_LAST_SCALED = 105, XESS_QUALITY_AA = 106 };
+// xess_init_flags_t: LDR_INPUT_COLOR (colour 0..1, tonemapped), ENABLE_AUTOEXPOSURE
+enum { XESS_FLAG_LDR = 1 << 6, XESS_FLAG_AUTOEXPOSURE = 1 << 8 };
 enum { XESS_LOG_DEBUG, XESS_LOG_INFO, XESS_LOG_WARNING, XESS_LOG_ERROR };
 typedef struct {   // xess_vk_image_view_info
     VkImageView imageView;
@@ -79,6 +83,7 @@ typedef XessResult (*PFN_Execute)(XessHandle, VkCommandBuffer, const XessExec *)
 typedef XessResult (*PFN_Destroy)(XessHandle);
 typedef XessResult (*PFN_SetLog)(XessHandle, int, XessLogFn);
 typedef XessResult (*PFN_SetScale)(XessHandle, float, float);
+typedef XessResult (*PFN_Optimal)(XessHandle, const Xess2d *, int, Xess2d *, Xess2d *, Xess2d *);
 
 static struct {
     void *lib;
@@ -93,17 +98,21 @@ static struct {
     PFN_Destroy destroy;
     PFN_SetLog set_log;
     PFN_SetScale jitter_scale, velocity_scale;
+    PFN_Optimal optimal;   // xessGetOptimalInputResolution; NULL in a library without it
     int tried, loaded;
     int device_ok;        // vk_xess_device_exts: the device is made with what XeSS needs
     int failed;           // a call failed: off for the rest of the run
     XessHandle ctx;
-    uint32_t w, h;        // the size the context is initialised for, 0: not yet
+    uint32_t ow, oh;      // the output size the context is initialised for, 0: not yet
+    int quality;          // and its quality setting (XESS_QUALITY_*)
+    uint32_t flags;       // and its init flags
+    uint32_t w, h;        // the input size that setting was picked for
     uint64_t evals, inits;
 } X;
 
 int vk_xess_wanted(void) {
     static int wanted = -1;
-    if (wanted < 0) wanted = !strcmp(cfg_value("AC_ANTI_ALIASING"), "xess");
+    if (wanted < 0) wanted = !strcmp(cfg_upscaling(), "xess");
     return wanted;
 }
 
@@ -137,6 +146,7 @@ static int lib_load(void) {
     FN(set_log, "xessSetLoggingCallback");
     FN(jitter_scale, "xessSetJitterScale");
     FN(velocity_scale, "xessSetVelocityScale");
+    FN(optimal, "xessGetOptimalInputResolution");
 #undef FN
     if (!X.version || !X.inst_exts || !X.dev_exts || !X.dev_feats || !X.create || !X.init || !X.execute || !X.destroy) {
         rt_log("xess: %s lacks Vulkan entry points: XeSS off", path);
@@ -286,16 +296,16 @@ static int fail(const char *what, XessResult r) {
     return 0;
 }
 
-// The context, made on the replay thread at the first evaluation; its pipelines are built right away (the JIT of
-// XeSS's kernels: a hitch the first time a session turns it on, logged with its length).
-static int context(void) {
+// The context, made on the replay thread at the first evaluation; its pipelines are built right away for the init flags
+// the run uses (the JIT of XeSS's kernels: a hitch the first time a session turns it on, logged with its length).
+static int context(uint32_t flags) {
     if (X.ctx) return 1;
     const VkCtx *c = vk_ctx();
     uint64_t t0 = kern_now_ns();
     XessResult r = X.create(c->instance, c->phys, c->device, &X.ctx);
     if (!XESS_OK(r) || !X.ctx) return fail("context creation", r);
     if (X.set_log) X.set_log(X.ctx, XESS_LOG_WARNING, on_log);
-    if (X.build && !XESS_OK(r = X.build(X.ctx, VK_NULL_HANDLE, true, XESS_FLAG_AUTOEXPOSURE)))
+    if (X.build && !XESS_OK(r = X.build(X.ctx, VK_NULL_HANDLE, true, flags)))
         return fail("pipeline build", r);
     // Signs of the jitter and of the motion vectors (AC_XESS_JITTER_SCALE, AC_XESS_MV_SCALE: test knobs, "1" or "-1").
     // The defaults follow XeSS's documented conventions, which are DLSS's: the jitter is the shift of the picture in
@@ -308,19 +318,51 @@ static int context(void) {
     return 1;
 }
 
-// xessVKInit for the scene size. XeSS may submit copies of its own while it initialises and requires the GPU done with
-// its previous work before a new size, so it runs with the queues locked and, for a new size, after the device is idle.
-static int init_size(uint32_t w, uint32_t h) {
-    if (X.w == w && X.h == h) return 1;
+// The quality setting for input w x h and output ow x oh: Native AA at one size; else the setting whose input range
+// (xessGetOptimalInputResolution: XeSS takes any input between its minimum and maximum, of the output's shape) holds
+// the scene, the one whose optimal input is nearest when several do. Without the query, or when no range holds it, by
+// the ratio and Intel's documented factors (1.3x Ultra Quality Plus ... 3.0x Ultra Performance).
+static int pick_quality(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
+    if (w >= ow && h >= oh) return XESS_QUALITY_AA;
+    int best = 0;
+    uint32_t best_d = ~0u;
+    Xess2d out = {ow, oh};
+    for (int q = XESS_QUALITY_FIRST; X.optimal && q <= XESS_QUALITY_LAST_SCALED; q++) {
+        Xess2d opt = {0}, lo = {0}, hi = {0};
+        if (!XESS_OK(X.optimal(X.ctx, &out, q, &opt, &lo, &hi))) continue;
+        if (w < lo.x || h < lo.y || w > hi.x || h > hi.y) continue;
+        uint32_t d = opt.x > w ? opt.x - w : w - opt.x;
+        if (d < best_d) best = q, best_d = d;
+    }
+    if (best) return best;
+    double r = (double)ow / w;
+    return r >= 2.65 ? 100 : r >= 2.15 ? 101 : r >= 1.85 ? 102 : r >= 1.6 ? 103 : r >= 1.4 ? 104 : 105;
+}
+
+// xessVKInit for the output size, quality setting and flags. XeSS may submit copies of its own while it initialises and
+// requires the GPU done with its previous work before a new size, so it runs with the queues locked and, when it was
+// initialised before, after the device is idle (once a run: the scene size is fixed at start).
+static int init_size(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh, uint32_t flags) {
+    if (X.ow == ow && X.oh == oh && X.flags == flags && X.w == w && X.h == h) return 1;
+    int q = pick_quality(w, h, ow, oh);
+    if (X.ow == ow && X.oh == oh && X.flags == flags && X.quality == q) {   // another input in the same range
+        X.w = w, X.h = h;
+        return 1;
+    }
     uint64_t t0 = kern_now_ns();
-    XessInit ip = {.outputResolution = {w, h}, .qualitySetting = XESS_QUALITY_AA, .initFlags = XESS_FLAG_AUTOEXPOSURE};
+    XessInit ip = {.outputResolution = {ow, oh}, .qualitySetting = q, .initFlags = flags};
     vk_queue_lock();
-    if (X.w) vkDeviceWaitIdle(vk_ctx()->device);
+    if (X.ow) vkDeviceWaitIdle(vk_ctx()->device);
     XessResult r = X.init(X.ctx, &ip);
     vk_queue_unlock();
     if (!XESS_OK(r)) return fail("initialisation", r);
-    X.w = w, X.h = h, X.inits++;
-    rt_log("xess: Native AA at %ux%u (initialised in %.0f ms)", w, h, (double)(kern_now_ns() - t0) / 1e6);
+    X.ow = ow, X.oh = oh, X.quality = q, X.flags = flags, X.w = w, X.h = h, X.inits++;
+    if (q == XESS_QUALITY_AA)
+        rt_log("xess: Native AA at %ux%u (initialised in %.0f ms)", ow, oh, (double)(kern_now_ns() - t0) / 1e6);
+    else
+        rt_log("xess: %ux%u to %ux%u (%.2fx), quality setting %d%s, %s colour (initialised in %.0f ms)", w, h, ow, oh,
+               (double)ow / w, q, X.optimal ? "" : " by the ratio", flags & XESS_FLAG_LDR ? "LDR" : "HDR",
+               (double)(kern_now_ns() - t0) / 1e6);
     return 1;
 }
 
@@ -363,13 +405,16 @@ static void inputs_layout(VkCommandBuffer cb, const XessFrame *f, int to_read) {
 }
 
 int vk_xess_evaluate(VkCommandBuffer cb, const XessFrame *f) {
-    if (!vk_xess_available() || !context() || !init_size(f->w, f->h)) return 0;
+    uint32_t ow = f->ow ? f->ow : f->w, oh = f->oh ? f->oh : f->h;
+    // linear scene light with auto exposure, or the tonemapped composite (0..1) as LDR colour
+    uint32_t flags = f->ldr ? XESS_FLAG_LDR : XESS_FLAG_AUTOEXPOSURE;
+    if (!vk_xess_available() || !context(flags) || !init_size(f->w, f->h, ow, oh, flags)) return 0;
     XessExec p;
     memset(&p, 0, sizeof p);
     p.color = view_of(&f->color, VK_IMAGE_ASPECT_COLOR_BIT, f->w, f->h);
     p.velocity = view_of(&f->mv, VK_IMAGE_ASPECT_COLOR_BIT, f->w, f->h);
     p.depth = view_of(&f->depth, VK_IMAGE_ASPECT_DEPTH_BIT, f->w, f->h);
-    p.output = view_of(&f->out, VK_IMAGE_ASPECT_COLOR_BIT, f->w, f->h);
+    p.output = view_of(&f->out, VK_IMAGE_ASPECT_COLOR_BIT, ow, oh);
     p.jitterX = f->jx, p.jitterY = f->jy;
     p.exposureScale = 1.0f;
     p.resetHistory = f->reset ? 1u : 0u;
@@ -387,7 +432,7 @@ int vk_xess_evaluate(VkCommandBuffer cb, const XessFrame *f) {
 
 void vk_xess_release(void) {
     if (X.ctx) X.destroy(X.ctx);   // the device is idle (vk_device.c destroy_all)
-    X.ctx = NULL, X.w = X.h = 0;
+    X.ctx = NULL, X.w = X.h = X.ow = X.oh = 0;
 }
 
 // ---------------------------------------------------------------- --probe-xess
@@ -414,7 +459,7 @@ static double half_to_double(uint16_t h) {
 }
 
 int probe_xess(void) {
-    cfg_set("AC_ANTI_ALIASING", "xess");
+    cfg_set("AC_UPSCALING", "xess");
     if (!vk_init()) {
         printf("probe-xess: FAILED (no Vulkan device)\n");
         return 1;

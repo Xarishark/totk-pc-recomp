@@ -38,6 +38,7 @@ typedef struct {
     VkImage image, scene;   // scene: AC_HDR's float scene beside the window texture (vk_hdr_present_source), or none
     VkFormat format, scene_format;
     int w, h, has_crop, crop[4];
+    int presharp;           // the upscaled scene was sharpened before the HUD (vk_dlaa.c): the present copies it
     uint64_t frame, at, queued, value;
 } PresentJob;
 
@@ -66,6 +67,7 @@ static void present_main(void *arg) {
         plat_mutex_unlock(&pl);
         if (flight_on) vk_thumbs_frame(j.frame);
         vk_hdr_set_scene(j.scene, j.scene_format);   // read by the HDR encode in this blit
+        vk_fsr_presharp_set(j.presharp);             // and by FSR's step in it
         vk_present_blit(j.image, VK_IMAGE_LAYOUT_GENERAL, j.format, j.w, j.h, j.has_crop ? j.crop : NULL);
         uint64_t f = vk_sync_submit(NULL, 0);   // a timeline value after the blit: deferred destruction waits for the blit too
         if (j.value && f != j.value)
@@ -108,7 +110,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
                           uint64_t value) {
     static volatile int32_t n_skipped;
     vk_exec_frame_log(t, frame);
-    vk_dlaa_frame();
+    int presharp = vk_dlaa_frame();
     vk_mem_census(frame);
     if (vk_dump_armed) vk_dump_present(frame);
     __atomic_store_n(&gfx_counters.validation_errors, (uint64_t)vk_validation_errors_total(), __ATOMIC_RELAXED);
@@ -130,7 +132,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
                img->scale);
     }
     PresentJob j = {.image = img->image, .format = img->format, .w = (int)img->width, .h = (int)img->height, .frame = frame,
-                    .at = at_ns, .queued = queued, .value = value};
+                    .at = at_ns, .queued = queued, .value = value, .presharp = presharp};
     vk_hdr_present_source(img, &j.scene, &j.scene_format);   // AC_HDR: the scene the game drew into it, same size
     if (crop) {
         j.has_crop = 1;
