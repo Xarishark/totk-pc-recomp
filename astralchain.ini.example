@@ -172,8 +172,10 @@
 # sharpness = 80
 # Picture shape when the window's shape differs from the game resolution's (a 16:9 picture in a 21:9 fullscreen
 # window): fit, the default, keeps the shape, with black bars at the sides or above and below, so a 16:9 game in a wider
-# window is no longer stretched as it used to be; stretch fills the window. Changes while the game runs take effect at
-# once.
+# window is no longer stretched as it used to be; stretch fills the window; wide widens the camera's view so the game
+# fills a window wider than 16:9 (21:9, 32:9, up to 48:9): the game still renders at the game resolution, more of the
+# world shows at the sides, the interface keeps its shape in the middle of the screen, and full-screen movies stay
+# 16:9 between black bars. Changes while the game runs take effect at once.
 # aspect = fit
 # Field of view, in percent of the game's own: 70 to 140, 100 (the default) leaves the camera as it is. Higher shows
 # more of the world around Link. Game version 1.4.3 only. Changes while the game runs take effect at once.

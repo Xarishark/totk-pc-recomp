@@ -601,8 +601,11 @@ void res_settle(int upscaler_ok, unsigned vram_mib) {
     }
 }
 
+static void wide_init(void);
+
 void res_init(void) {
     res_pick();
+    wide_init();
     res_shadow_range();
     if (!output_set()) {   // 1.0.1: the res set took output_res above, the scene set scales the scene for upscaling
         scene_init();
@@ -730,4 +733,215 @@ void res_sizes(unsigned out[2], unsigned scene[2]) {
     }
     out[0] = BASE_W, out[1] = BASE_H;
     scene[0] = SCENE_W, scene[1] = SCENE_H;
+}
+
+// ---- wide pictures (the aspect setting's wide; recomp/patches-v101.txt, set wide). The game's targets stay 16:9; a
+// 16:9 lens takes the frame's ratio where its matrices are built (rt_wide_dirty_w8), and the present shows the frame in
+// that shape (res_wide_tick hands it to vk_backend.c with the present). The frame's ratio is the window's, from 16:9 up
+// to 48:9; a window of 16:9 or narrower keeps 16:9, and so does every frame while a full-screen movie plays
+// (frame_rate.c rt_movie_showing), which is a 16:9 picture. It changes between frames only, at the game's present, so
+// the lenses of one frame and its present agree. The interface camera's lens takes the ratio too: what is drawn
+// through it keeps its proportions, in the middle 16:9 of the picture (ui_camera_refresh, rt_wide_view_x8).
+// The set is switched on the first time the setting is wide and stays on, so lenses go back to 16:9 through the same
+// site when the setting leaves wide.
+#define WIDE_16X9 (16.0f / 9.0f)
+#define WIDE_MAX (48.0f / 9.0f)
+#define LENS_VIEW_W 0x268    // the lens's viewport width and height (int32), as main+0x9a30a0 got them
+#define LENS_VIEW_H 0x26c
+#define LENS_ASPECT 0x278    // float
+#define UI_CAMERA 0xDC1910ull   // main: the pointer to the interface camera's handle (main+0x9044f0)
+#define FLAT_CAMERAS 0xDC2D50ull   // main: the pointer to the pointer to the flat cameras' array (main+0x9e4030)
+
+static struct {
+    int set;            // the wide set (rt_patch_set), -1 when the generated C lacks it
+    int on;             // the set is on
+    unsigned seen;      // cfg_version the setting was read at
+    int wanted;         // the aspect setting is wide
+    uint32_t now;       // the ratio 16:9 lenses take in the frame the game is building (a float's bits)
+    uint32_t window;    // the window's width / height (a float's bits; res_wide_window), 0 before the first swapchain
+} W = {.set = -1, .seen = ~0u};
+
+static float bits_f(const uint32_t *p) {
+    uint32_t b = __atomic_load_n(p, __ATOMIC_RELAXED);
+    float f;
+    memcpy(&f, &b, sizeof f);
+    return f;
+}
+
+static void f_bits(uint32_t *p, float f) {
+    uint32_t b;
+    memcpy(&b, &f, sizeof b);
+    __atomic_store_n(p, b, __ATOMIC_RELAXED);
+}
+
+// The present thread, for each new swapchain: the window's shape.
+void res_wide_window(unsigned w, unsigned h) {
+    if (h) f_bits(&W.window, (float)w / (float)h);
+}
+
+// The ratio the window asks for: its own shape from 16:9 (more than 1 % wider) to 48:9. Before the first swapchain,
+// the window size setting's when the window is not fullscreen.
+static float wide_target(void) {
+    if (!W.wanted) return WIDE_16X9;
+    float r = bits_f(&W.window);
+    if (r <= 0 && !cfg_bool("AC_FULLSCREEN")) {
+        unsigned w = 0, h = 0;
+        char tail;
+        if (sscanf(cfg_value("AC_WINDOW_SIZE"), "%ux%u%c", &w, &h, &tail) == 2 && h) r = (float)w / (float)h;
+    }
+    if (r <= WIDE_16X9 * 1.01f) return WIDE_16X9;
+    return r > WIDE_MAX ? WIDE_MAX : r;
+}
+
+static void wide_settings(void) {
+    unsigned v = cfg_version();
+    if (v == W.seen) return;
+    W.seen = v;
+    W.wanted = W.set >= 0 && !strcmp(cfg_value("AC_ASPECT"), "wide");
+    if (W.wanted && !W.on) {
+        W.on = 1;
+        rt_patch_switch(W.set, 1);
+        rt_log("resolution: wide pictures on: 16:9 lenses take the window's shape (aspect = wide)");
+    }
+}
+
+static void wide_init(void) {
+    W.set = rt_patch_set("wide");
+    f_bits(&W.now, WIDE_16X9);
+    wide_settings();
+    if (!strcmp(cfg_value("AC_ASPECT"), "wide") && W.set < 0)
+        rt_log("resolution: aspect = wide needs the wide patch set, which the generated C lacks: the picture is fitted");
+    f_bits(&W.now, wide_target());
+}
+
+// The game's present (vk_backend.c vk_be_present, the game's thread): the shape of the frame it presents, 0 for the
+// picture's own; then the ratio of the frame it builds next.
+float res_wide_tick(void) {
+    wide_settings();
+    if (!W.on) return 0;
+    float shown = bits_f(&W.now), next = rt_movie_showing() ? WIDE_16X9 : wide_target();
+    if (next != shown) {
+        f_bits(&W.now, next);
+        if (rt_trace & RT_TRACE_PERF) rt_log("resolution: wide: lens ratio %.4f -> %.4f", shown, next);
+    }
+    return shown;
+}
+
+static int lens_16x9(const uint8_t *lens) {
+    int32_t w, h;
+    memcpy(&w, lens + LENS_VIEW_W, sizeof w);
+    memcpy(&h, lens + LENS_VIEW_H, sizeof h);
+    return w > 0 && (int64_t)w * 9 == (int64_t)h * 16;
+}
+
+// The interface camera's matrices are built once, at main+0x9045f4, from the position the message system gives it
+// there: 2040 units in front of the middle of the 1280x720 plane, looking at it, y down. When its lens holds another
+// ratio than the frame's, the same call again (main+0x9a2fa0: handle, eye, target, up, 0, 1), from a game thread that
+// is building a game camera's matrices: the call comes back through rt_wide_dirty_w8 with the interface lens, which
+// takes the ratio there. The registers the caller still needs are put back.
+static void ui_camera_refresh(Cpu *c, float want) {
+    static const _Alignas(16) float eye[4] = {640, 360, -2040, 1}, target[4] = {640, 360, -2039, 1},
+                                    up[4] = {0, -1, 0, 1};
+    uint64_t handle = *(const uint64_t *)((uintptr_t)MOD_MAIN_BASE + UI_CAMERA);
+    const uint8_t *lens = handle ? *(const uint8_t *const *)(uintptr_t)handle : NULL;
+    float have;
+    if (!lens || !lens_16x9(lens)) return;   // not made yet, or gone
+    memcpy(&have, lens + LENS_ASPECT, sizeof have);
+    if (have == want) return;
+    uint64_t x[31], nzcv = c->nzcv;
+    __uint128_t v[32];
+    memcpy(x, c->x, sizeof x);
+    memcpy(v, c->v, sizeof v);
+    rt_call(c, (uint64_t)MOD_MAIN_BASE + 0x9a2fa0ull, 6, handle, (uint64_t)(uintptr_t)eye, (uint64_t)(uintptr_t)target,
+            (uint64_t)(uintptr_t)up, (uint64_t)0, (uint64_t)1);
+    memcpy(c->x, x, sizeof x);
+    memcpy(c->v, v, sizeof v);
+    c->nzcv = nzcv;
+}
+
+// main+0x9a3004 (ldr w8,[x24,#0x28c]), in the function that builds a lens's matrices: x24 = the lens, x23 = its
+// handle. A lens made 16:9 (its viewport says so, whatever ratio it holds now) takes the frame's ratio; when that
+// differs from the one it holds, the projection is built anew as for a dirty lens. w8 = the lens's dirty word.
+void rt_wide_dirty_w8(Cpu *c) {
+    uint8_t *lens = (uint8_t *)(uintptr_t)c->x[24];
+    uint32_t dirty;
+    memcpy(&dirty, lens + 0x28c, sizeof dirty);
+    if (lens_16x9(lens)) {
+        int ui = c->x[23] == *(const uint64_t *)((uintptr_t)MOD_MAIN_BASE + UI_CAMERA);
+        float want = bits_f(&W.now), have;
+        if (!ui) ui_camera_refresh(c, want);
+        memcpy(&have, lens + LENS_ASPECT, sizeof have);
+        if (have != want) {
+            memcpy(lens + LENS_ASPECT, &want, sizeof want);
+            dirty = 1;
+            if (rt_trace & RT_TRACE_PERF)
+                rt_log("resolution: wide: %s lens %p ratio %.4f -> %.4f", ui ? "interface" : "game", (void *)lens, have,
+                       want);
+        }
+    }
+    c->x[8] = dirty;
+}
+
+// main+0x9a320c and main+0x9a327c (add x8,x4,#0x260), in world to screen and screen to world: x4 = the lens, x8 = its
+// viewport {x, y, width, height} (int32). For a lens that holds a wider ratio than its viewport's, a viewport of the
+// ratio's width at the same height, centred on the lens's own: the interface plane's units for that picture.
+void rt_wide_view_x8(Cpu *c) {
+    static _Thread_local int32_t view[4];   // read by the callee these sites are the arguments of, on this thread
+    uint8_t *lens = (uint8_t *)(uintptr_t)c->x[4];
+    int32_t own[4];
+    float ratio;
+    memcpy(own, lens + 0x260, sizeof own);
+    memcpy(&ratio, lens + LENS_ASPECT, sizeof ratio);
+    c->x[8] = (uint64_t)(uintptr_t)(lens + 0x260);
+    if (!lens_16x9(lens) || ratio <= WIDE_16X9 * 1.001f) return;
+    view[2] = (int32_t)lroundf((float)own[3] * ratio);
+    view[3] = own[3];
+    view[0] = own[0] + (own[2] - view[2]) / 2;
+    view[1] = own[1];
+    c->x[8] = (uint64_t)(uintptr_t)view;
+}
+
+// main+0x99132c, in the visibility cone test: s0 = the lens's vertical angle, from which the game takes half plus 20
+// degrees as the cone's half angle, enough for a 16:9 picture's corners. The angle that gives a 16:9 picture the width
+// this frame's ratio shows, so the cone holds the wider picture's corners as well.
+void rt_wide_cone_s0(Cpu *c) {
+    float r = bits_f(&W.now);
+    if (r > WIDE_16X9) FP_SETS(0, 2.0f * atanf(tanf(VSF32(0) * 0.5f) * (r / WIDE_16X9)));
+}
+
+// main+0x9e3f84 (ldr w8,[x19,#0x30]), in the function that writes a flat camera's matrices when it is dirty, called
+// for each of them every frame: x19 = the camera, 0x40 bytes: its bounds {left, right, bottom, top, near, far} (floats)
+// at +0x18, the dirty word at +0x30. The game draws through the first one only, the 1280x720 plane; the second one,
+// which the set's sites bind for what is drawn onto the screen, is kept as the first one's plane at the width this
+// frame's ratio shows, around the same middle, and written as a dirty one when that changed.
+// w8 = the camera's dirty word.
+void rt_wide_flat_w8(Cpu *c) {
+    uint8_t *cam = (uint8_t *)(uintptr_t)c->x[19];
+    const uint8_t *first = **(uint8_t *const *const *)((uintptr_t)MOD_MAIN_BASE + FLAT_CAMERAS);
+    uint32_t dirty;
+    memcpy(&dirty, cam + 0x30, sizeof dirty);
+    if (first && cam == first + 0x40) {
+        float want[6], have[6], r = bits_f(&W.now), k = r > WIDE_16X9 ? r / WIDE_16X9 : 1;
+        memcpy(want, first + 0x18, sizeof want);
+        memcpy(have, cam + 0x18, sizeof have);
+        float mid = (want[0] + want[1]) * 0.5f, half = (want[1] - want[0]) * 0.5f * k;
+        want[0] = mid - half, want[1] = mid + half;
+        if (memcmp(have, want, sizeof want)) {
+            memcpy(cam + 0x18, want, sizeof want);
+            dirty = 1;
+            if (rt_trace & RT_TRACE_PERF)
+                rt_log("resolution: wide: flat camera %p columns %.1f..%.1f -> %.1f..%.1f", (void *)cam, have[0],
+                       have[1], want[0], want[1]);
+        }
+    }
+    c->x[8] = dirty;
+}
+
+// main+0x3defd0 (mov w2,wzr), in the draw of a flat interface piece, before it binds flat camera w2 (main+0x9e2080):
+// x20 = the piece, whose byte 1 is the layer it is drawn in. The layers of the interface drawn onto the screen take
+// the second camera (rt_wide_flat_w8); the ones drawn into the interface's 1280x720 textures (0x67 and 0x6d, which
+// main+0x403590 and main+0x4036a0 start; 6 and 7, the minimap's, are below the range) and the rest keep the first.
+void rt_wide_flat_w2(Cpu *c) {
+    uint8_t layer = ((const uint8_t *)(uintptr_t)c->x[20])[1];
+    c->x[2] = layer >= 0x5d && layer <= 0x6e && layer != 0x67 && layer != 0x6d;
 }

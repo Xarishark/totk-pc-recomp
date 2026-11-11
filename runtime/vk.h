@@ -116,6 +116,9 @@ int vk_fsr_rcas(VkCommandBuffer cb, VkImageView src, VkImageView dst, uint32_t w
 int vk_fsr_rcas_on(void);          // sharpness above 0, upscaler = fsr, and FSR's pipelines made
 int vk_fsr_present_scales(void);   // the last present scaled the picture with FSR's passes: RCAS belongs after them
 void vk_fsr_presharp_set(int on);  // the present thread, per present: its picture was sharpened before the HUD
+// The present thread, per present: the shape (width / height) the picture is shown in, 0 for its own (gfx_present.c
+// gfx_fit_rect; resolution.c res_wide_tick).
+void vk_present_shape_set(float shape);
 int vk_fsr_presharp_copied(void);  // the last vk_fsr_record left such a picture for its caller to copy 1:1
 void vk_fsr_release(void);   // before the device goes away
 // Colour adjustment on the present (vk_color.c): with AC_COLOR_* away from their defaults, records a pass that writes
@@ -152,7 +155,7 @@ void vk_queue_unlock(void);
 // Copy of the last presented swapchain image, for probes: on, the next presents read the image back into a host buffer
 // and wait for the GPU. *px stays valid until the next present; the format is the swapchain's. Returns 0 with no frame.
 // The rectangle {x, y, w, h} of a dw x dh swapchain image a cw x ch picture is presented in (gfx_present.c,
-// AC_ASPECT); the rest is black.
+// AC_ASPECT; in the shape of vk_present_shape_set when one is set); the rest is black.
 void gfx_fit_rect(int cw, int ch, int dw, int dh, int out[4]);
 void vk_present_capture(int on);
 void vk_present_shot(const char *path);   // the next present's swapchain image goes to path as a PNG

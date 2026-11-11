@@ -64,8 +64,10 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
     [UI_MENU_ASPECT] = "Picture shape",
     [UI_MENU_ASPECT_DESC] = "When the window's shape differs from the game resolution's (a 16:9 picture on a 21:9 "
-                            "screen): keep the picture's shape with black bars, or stretch it over the window.",
-    [UI_MENU_ASPECT_FIT] = "Black bars", [UI_MENU_ASPECT_STRETCH] = "Stretch",
+                            "screen): keep the picture's shape with black bars, stretch it over the window, or widen "
+                            "the camera's view so the game fills a wider window (the interface keeps its shape in "
+                            "the middle; movies stay 16:9).",
+    [UI_MENU_ASPECT_FIT] = "Black bars", [UI_MENU_ASPECT_STRETCH] = "Stretch", [UI_MENU_ASPECT_WIDE] = "Wide view",
     [UI_MENU_FOV] = "Field of view",
     [UI_MENU_FOV_DESC] = "How much of the world the camera shows, in percent of the game's own (50 degrees vertically in play). Cutscenes keep the game's own framing.",
     [UI_MENU_SHADOW_RES] = "Shadow map size",
@@ -467,8 +469,11 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Билинейное",
     [UI_MENU_ASPECT] = "Форма картинки",
     [UI_MENU_ASPECT_DESC] = "Когда форма окна отличается от разрешения игры (картинка 16:9 на экране 21:9): сохранить "
-                            "форму картинки с чёрными полосами или растянуть её на всё окно.",
+                            "форму картинки с чёрными полосами, растянуть её на всё окно или расширить обзор камеры, "
+                            "чтобы игра заполнила более широкое окно (интерфейс сохраняет форму в центре; ролики "
+                            "остаются 16:9).",
     [UI_MENU_ASPECT_FIT] = "Чёрные полосы", [UI_MENU_ASPECT_STRETCH] = "Растянуть",
+    [UI_MENU_ASPECT_WIDE] = "Широкий обзор",
     [UI_MENU_FOV] = "Поле зрения",
     [UI_MENU_FOV_DESC] = "Сколько мира показывает камера, в процентах от игрового (50 градусов по вертикали в игре). Ролики сохраняют исходное кадрирование.",
     [UI_MENU_SHADOW_RES] = "Размер карты теней",
@@ -900,8 +905,11 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
     [UI_MENU_ASPECT] = "Formato da imagem",
     [UI_MENU_ASPECT_DESC] = "Quando o formato da janela difere do da resolução do jogo (uma imagem 16:9 numa tela "
-                            "21:9): manter o formato da imagem com barras pretas ou esticá-la sobre a janela.",
+                            "21:9): manter o formato da imagem com barras pretas, esticá-la sobre a janela ou ampliar a "
+                            "visão da câmera para o jogo preencher uma janela mais larga (a interface mantém o "
+                            "formato no centro; os vídeos permanecem em 16:9).",
     [UI_MENU_ASPECT_FIT] = "Barras pretas", [UI_MENU_ASPECT_STRETCH] = "Esticar",
+    [UI_MENU_ASPECT_WIDE] = "Visão ampla",
     [UI_MENU_SHARPNESS] = "Nitidez do FSR",
     [UI_MENU_SHARPNESS_DESC] = "Aumento de nitidez após a ampliação do FSR; 0 desliga.",
 
@@ -1348,9 +1356,11 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_BILINEAR] = "双线性",
     [UI_MENU_ASPECT] = "画面宽高比",
     [UI_MENU_ASPECT_DESC] = "当窗口宽高比和游戏分辨率不同时（21:9 屏幕上显示 16:9 画面）："
-                            "用黑边保持画面比例，或拉伸铺满窗口。",
+                            "用黑边保持画面比例、拉伸铺满窗口，或扩大镜头视野让游戏铺满更宽的窗口"
+                            "（界面在中间保持原比例；影片保持 16:9）。",
     [UI_MENU_ASPECT_FIT] = "黑边",
     [UI_MENU_ASPECT_STRETCH] = "拉伸",
+    [UI_MENU_ASPECT_WIDE] = "宽视野",
     [UI_MENU_FOV] = "视野",
     [UI_MENU_FOV_DESC] = "镜头能看到多大范围，以游戏自身视野的百分比表示。"
                           "游戏中垂直视角为 50 度；过场动画保持原有构图。",

@@ -357,3 +357,50 @@ site movies main 9bf26c 97f502cd @fn:rt_movie_close 97f502cd    # bl BinkClose; 
 site movies main 9bf430 97f503ec @fn:rt_movie_wait 97f503ec     # bl BinkWait
 site movies main 9bf514 97f503b3 @fn:rt_movie_wait 97f503b3     # bl BinkWait
 site movies main 9bf6a8 97f5034e @fn:rt_movie_wait 97f5034e     # bl BinkWait
+
+# Wide pictures (the aspect setting's wide, AC_ASPECT=wide; runtime/resolution.c res_wide_tick). The game renders 16:9
+# whatever the window's shape (off the 32n x 18n grid it loses the device, resolution.c res_output_grid), so a wider
+# window gets the same 16:9 targets drawn with a wider camera, and the present stretches that picture back to the
+# camera's shape (gfx_present.c gfx_fit_rect). A camera's lens (*(handle), handle = camera+0x58 for the game's cameras)
+# keeps its viewport {x, y, width, height} at +0x260 and the aspect ratio at +0x278; main+0x9a30a0 fills both from a
+# width and a height and has three callers: the game camera (main+0x3a2398, 1280x720), the interface camera
+# (main+0x9045d4, 1280x720, a 20 degree lens 2040 units in front of the 1280x720 plane, made by the message system) and
+# a 256x256 one (main+0x3c0ccc). main+0x9a2fa0 builds a lens's view matrix, and its projection while the lens is dirty
+# (+0x28c); the game camera goes through it each frame (main+0x88f730). The site there hands a 16:9 lens the frame's
+# ratio and marks it dirty when its ratio differs, so the ratio follows the window, and goes back to 16:9 while a
+# full-screen movie plays (frame_rate.c rt_movie_showing): the movie is a 16:9 picture, shown between black bars.
+# The interface camera's matrices are built once, when the message system starts (main+0x9045f4); the interface drawn
+# through it keeps its proportions when its lens has the frame's ratio too, in the middle 16:9 of the picture, so the
+# site's helper builds them again, with the game's own call, whenever the frame's ratio changed (resolution.c
+# rt_wide_dirty_w8).
+# The idea and the lens function are from TLin-Y's aspect-ratio pchtxt for 1.0.1 (Fl4sh9174/Switch-Emulator-Ultrawide-
+# FPS-Mods, pull request 286), which writes one constant ratio into every lens and leaves the interface camera's
+# matrices unbuilt, the interface stretched with the picture; no code copied.
+# The game's visibility cone (main+0x991240: an object outside it and beyond its own distance is not shown) is the
+# lens's vertical half angle plus 20 degrees around the camera's axis, 45 degrees in play, which holds a 16:9 picture's
+# corners (43.4 degrees) and no more; a 21:9 picture's are at 50.4. Its site widens the half angle by the ratio's
+# share over 16:9 (rt_wide_cone_s0).
+set  wide AC_WIDE_PATCH 0
+site wide main 9a3004 b9428f08 @fn:rt_wide_dirty_w8   # ldr w8,[x24,#0x28c] -> the lens's ratio brought up to date; w8 = dirty
+site wide main 99132c 1e2c1001 @fn:rt_wide_cone_s0 1e2c1001   # fmov s1,#0.5; before it s0 = the angle for the frame's ratio
+# World to screen and back (main+0x9a31f0, main+0x9a3270; the game cameras' main+0x88f760 and main+0x88f770) map a
+# lens's picture onto its viewport, 1280x720 for the game camera, and what they return is used as a place on the
+# interface's 1280x720 plane. With the interface camera at the frame's ratio that plane shows 720 x ratio units across,
+# so the picture's edges are no longer at 0 and 1280: both sites hand over a viewport of that width, centred.
+site wide main 9a320c 91098088 @fn:rt_wide_view_x8    # add x8,x4,#0x260 -> the viewport for the frame's ratio
+site wide main 9a327c 91098088 @fn:rt_wide_view_x8    # add x8,x4,#0x260 -> the same
+# What is not drawn through the interface camera (the mission banner, the dialogue's lines, the civilians' markers)
+# goes through a flat camera. The game makes three (main+0x9e4030; the array's address at *(main+0xdc2d50), 0x40 bytes
+# each: bounds {left, right, bottom, top, near, far} at +0x18, a dirty word at +0x30) and uses the first only, which
+# main+0x3bb7f4 gives the 1280x720 plane; main+0x9e3f70, called for each every frame (main+0x9e4420), writes a dirty
+# one's matrices into its uniform block, and main+0x9e2080 binds camera w2's block for the draws that follow. That
+# camera serves the screen and the interface's 1280x720 layers alike (the minimap's picture is drawn into one), so it
+# keeps its plane; the site in main+0x9e3f70 keeps the second camera as the same plane at the width the frame's ratio
+# shows (resolution.c rt_wide_flat_w8), and the passes drawn onto the screen bind that one.
+site wide main 9e3f84 b9403268 @fn:rt_wide_flat_w8    # ldr w8,[x19,#0x30] -> camera 1 brought up to date; w8 = dirty
+site wide main 3defd0 2a1f03e2 @fn:rt_wide_flat_w2    # mov w2,wzr -> the camera for the piece's layer
+site wide main 3ffa94 2a1f03e2 52800022               # mov w2,wzr -> mov w2,#1: layer 0x5d's camera (main+0x3ffa90)
+site wide main 403670 2a1f03e2 52800022               # the same, layer 0x63's (main+0x403660)
+site wide main 403424 2a1f03e2 52800022               # layer 0x66's (main+0x403420)
+site wide main 403644 2a1f03e2 52800022               # layer 0x69's (main+0x403640)
+site wide main 403704 2a1f03e2 52800022               # layer 0x6e's (main+0x403700)

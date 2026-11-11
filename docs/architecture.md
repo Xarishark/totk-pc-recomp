@@ -108,7 +108,7 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   carved from the process heap; above 1080p's pixel count `rt_res_budget_w8` raises it with the pixels (`res_budget`:
   the measured 87 MiB and 110 bytes a pixel, 15 % to spare) and `res_heap_extra_bytes` grows the application pool by
   the same amount (TotK's HeapDef growth does not apply there). 1.0.1 has no `aspect` set and no HUD layouts for other
-  shapes yet. The
+  shapes; its wider pictures come from the `wide` set below. The
   game always renders its picture at its own size: nothing enlarges its render targets from outside (the former
   `ssaa`). When the window is larger than the output, `vk_fsr.c` runs AMD FSR 1 (EASU, RCAS) on the present. An
   `output_res` that is not 16:9 (more than 1% off, `res_is_16x9`) also switches on the
@@ -117,9 +117,30 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   `tools/ultrawide_layout.py`; the installer builds ten sizes: 21:9 2560x1080, 3440x1440, 3840x1600, 5120x2160, 32:9
   3840x1080, 5120x1440 and 16:10 1280x800, 1680x1050, 1920x1200, 2560x1600). A wider layout moves the HUD to the
   screen's corners, a narrower one to its top and bottom edges. Other sizes get the camera of their shape and the 16:9
-  HUD stretched over it. The `aspect` setting (`fit`, the default; `stretch`) decides what the present does
+  HUD stretched over it. The `aspect` setting (`fit`, the default; `stretch`; `wide`) decides what the present does
   when the window's shape differs from the output's: `fit` letterboxes, where a 16:9 game in a wider window used to be
   stretched.
+- Wide pictures on 1.0.1 (`aspect = wide`, `resolution.c` `res_wide_tick`, set `wide` of `recomp/patches-v101.txt`).
+  The game's targets stay 16:9, since sizes off the 32n x 18n grid lose the device; a window wider than 16:9 (up to
+  48:9) gets them drawn with a wider camera instead, and the present stretches the picture to the camera's shape, so
+  the pixel count does not change. Each frame has a shape: the ratio its lenses were built with. `rt_wide_dirty_w8`,
+  where the game builds a lens's matrices, hands every lens made 16:9 the ratio of the frame being built; the game's
+  present (`vk_backend.c` `vk_be_present`) takes that frame's shape along to the present thread
+  (`gfx_present.c` `gfx_fit_rect`) and decides the next frame's. The ratio is the window's, and 16:9 while a
+  full-screen movie plays (`frame_rate.c` `rt_movie_showing`, counted in presents so it holds at 30 fps too): a movie
+  is a 16:9 picture and is shown between black bars, with the camera back at 16:9 for those frames. The interface is
+  drawn through a camera of its own (a 20 degree lens in front of the 1280x720 plane); with the frame's ratio in its
+  lens too, the interface keeps its proportions in the middle 16:9 of the picture. Its matrices are built once by the
+  game, so the helper calls the game's own build again when the ratio changes (`ui_camera_refresh`). World to screen
+  (`rt_wide_view_x8`) then maps onto that wider plane, and the visibility cone (`rt_wide_cone_s0`) is widened to the
+  picture's corners. The rest of the interface (the mission banner, the dialogue's lines, the civilians' markers) is
+  drawn through a flat camera over the same 1280x720 plane, the first of three the game makes; it also draws the
+  interface's 1280x720 textures (the minimap's picture), so it keeps its plane, and the passes that draw onto the
+  screen bind the second one instead, which `rt_wide_flat_w8` keeps as that plane at the frame's width. Not done:
+  anchoring the HUD's blocks to the screen's edges (their places come from the game's code and the `.uid` files of
+  `ui/ui.pkz`, not from one layout table), and widening what is meant to cover the whole screen from inside the
+  interface's layers, which covers the middle 16:9. `--shot` and `AC_SHOTS` save the
+  game's 16:9 texture; `AC_PRESENT_SHOT` saves the window's picture.
 - HDR (`hdr = 1`, `vk_hdr.c`). The game tonemaps its scene (Uchimura's curve, or Hable's, then a 16³ colour LUT) into
   an R11G11B10F target at the output's size, sRGB-encoded; its SMAA reads that target and writes the 8-bit window
   texture it presents, and the HUD and menus draw into the window texture afterwards. With HDR on, the tonemap's

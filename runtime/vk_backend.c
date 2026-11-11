@@ -39,6 +39,7 @@ typedef struct {
     VkFormat format, scene_format;
     int w, h, has_crop, crop[4];
     int presharp;           // the upscaled scene was sharpened before the HUD (vk_dlaa.c): the present copies it
+    float shape;            // the shape the frame is shown in (resolution.c res_wide_tick), 0 for the picture's own
     uint64_t frame, at, queued, value;
 } PresentJob;
 
@@ -68,6 +69,7 @@ static void present_main(void *arg) {
         if (flight_on) vk_thumbs_frame(j.frame);
         vk_hdr_set_scene(j.scene, j.scene_format);   // read by the HDR encode in this blit
         vk_fsr_presharp_set(j.presharp);             // and by FSR's step in it
+        vk_present_shape_set(j.shape);               // and where the picture goes in the window
         vk_present_blit(j.image, VK_IMAGE_LAYOUT_GENERAL, j.format, j.w, j.h, j.has_crop ? j.crop : NULL);
         uint64_t f = vk_sync_submit(NULL, 0);   // a timeline value after the blit: deferred destruction waits for the blit too
         if (j.value && f != j.value)
@@ -107,7 +109,7 @@ void vk_present_drain(void) {
 // The present after the frame count: resolves the image and hands the blit to the present thread. queued: when the game
 // presented; value: the timeline value queued for this present (asynchronous replay), 0 for the next one (synchronous).
 static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uint64_t queued, uint64_t frame,
-                          uint64_t value) {
+                          uint64_t value, float shape) {
     static volatile int32_t n_skipped;
     vk_exec_frame_log(t, frame);
     int presharp = vk_dlaa_frame();
@@ -132,7 +134,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
                img->scale);
     }
     PresentJob j = {.image = img->image, .format = img->format, .w = (int)img->width, .h = (int)img->height, .frame = frame,
-                    .at = at_ns, .queued = queued, .value = value, .presharp = presharp};
+                    .at = at_ns, .queued = queued, .value = value, .presharp = presharp, .shape = shape};
     vk_hdr_present_source(img, &j.scene, &j.scene_format);   // AC_HDR: the scene the game drew into it, same size
     if (crop) {
         j.has_crop = 1;
@@ -156,6 +158,7 @@ static void present_image(const tex_t *t, const int crop[4], uint64_t at_ns, uin
 enum { RI_SUBMIT, RI_PRESENT, RI_RELEASE };
 typedef struct {
     int kind, n, has_crop, crop[4];
+    float shape;        // RI_PRESENT: the frame's shape, taken when the game presented (PresentJob)
     uint64_t value, submit_no, at, queued;
     uint64_t *h;
     const tex_t *tex;   // RI_RELEASE: a copy the item owns (the game may reuse the object's memory)
@@ -233,7 +236,7 @@ static void replay_main(void *arg) {
             free((void *)it.tex);
         } else {
             uint64_t frame = __atomic_add_fetch(&gfx_counters.frames, 1, __ATOMIC_RELAXED);
-            present_image(it.tex, it.has_crop ? it.crop : NULL, it.at, it.queued, frame, it.value);
+            present_image(it.tex, it.has_crop ? it.crop : NULL, it.at, it.queued, frame, it.value, it.shape);
         }
         plat_mutex_lock(&rl);
         if (it.kind == RI_SUBMIT) r_submit_done = it.submit_no;
@@ -337,10 +340,11 @@ void gfx_exit_log(void) {
 
 static void vk_be_present(const tex_t *t, const int crop[4], uint64_t at_ns) {
     vk_sync_start();
+    float shape = res_wide_tick();   // on the game's thread: this frame's shape, and the next frame's lens ratio
     if (!gfx_replay_async()) {
         uint64_t frame = __atomic_add_fetch(&gfx_counters.frames, 1, __ATOMIC_RELAXED);
         perf_present(frame);   // before vk_exec_frame_log, which resets the frame's exec counts the flight recorder reads
-        present_image(t, crop, at_ns, kern_now_ns(), frame, 0);
+        present_image(t, crop, at_ns, kern_now_ns(), frame, 0, shape);
         return;
     }
     // Frame bound: the replay thread handled the previous present before this one is queued.
@@ -356,7 +360,7 @@ static void vk_be_present(const tex_t *t, const int crop[4], uint64_t at_ns) {
     uint64_t frame = ++game_frames;
     perf_present(frame);
     if (frame % 1800 == 0) replay_log(frame, 0);
-    ReplayItem it = {.kind = RI_PRESENT, .tex = t, .at = at_ns, .queued = kern_now_ns()};
+    ReplayItem it = {.kind = RI_PRESENT, .tex = t, .at = at_ns, .queued = kern_now_ns(), .shape = shape};
     if (crop) {
         it.has_crop = 1;
         for (int i = 0; i < 4; i++) it.crop[i] = crop[i];

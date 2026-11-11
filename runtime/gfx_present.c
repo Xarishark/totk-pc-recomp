@@ -354,6 +354,7 @@ static int create_swapchain(void) {
     vk_hdr_set_active(hdr);
     if (hdr) vk_hdr_metadata(g_sc, 1);
     g_sc_ext = ext;
+    res_wide_window(ext.width, ext.height);
     g_sc_n = MAX_IMAGES;
     vkGetSwapchainImagesKHR(c->device, g_sc, &g_sc_n, g_sc_img);
     static VkExtent2D logged_ext;
@@ -556,15 +557,28 @@ static void save_capture(const char *path) {
     rt_log("gfx: swapchain shot %s (%dx%d)", path, g_cap_w, g_cap_h);
 }
 
+// The shape the next present's picture is shown in, width / height; 0 for the picture's own. A frame drawn with a
+// wider camera into the game's 16:9 targets has the camera's shape (resolution.c res_wide_tick; the present thread
+// sets it from the present job, vk_backend.c).
+static float g_shape;
+void vk_present_shape_set(float shape) { g_shape = shape; }
+
 // The rectangle {x, y, w, h} of a dw x dh swapchain image the cw x ch picture goes into: the whole image with
-// AC_ASPECT=stretch, else (fit, the default) the largest one of the picture's own aspect ratio, centred (a 16:9 picture
-// on the Steam Deck's 1280x800 screen gets bars of 40 rows above and below; a 16:9 picture in a 21:9 window, bars at the
-// sides).
+// AC_ASPECT=stretch, else the largest one of the picture's shape, centred (a 16:9 picture on the Steam Deck's 1280x800
+// screen gets bars of 40 rows above and below; a 16:9 picture in a 21:9 window, bars at the sides). The shape is the
+// picture's own aspect ratio, or the one vk_present_shape_set gave.
 void gfx_fit_rect(int cw, int ch, int dw, int dh, int out[4]) {
     out[0] = out[1] = 0, out[2] = dw, out[3] = dh;
     if (cw <= 0 || ch <= 0 || !strcmp(cfg_value("AC_ASPECT"), "stretch")) return;
-    if ((int64_t)dw * ch > (int64_t)dh * cw) out[2] = (int)(((int64_t)dh * cw + ch / 2) / ch);   // window wider: pillarbox
-    else out[3] = (int)(((int64_t)dw * ch + cw / 2) / cw);                                        // taller: letterbox
+    if (g_shape > 0) {
+        double w = (double)dh * g_shape;                      // the picture's width at the window's height
+        if (w < dw - 0.5) out[2] = (int)(w + 0.5);            // window wider: pillarbox
+        else if (w > dw + 0.5) out[3] = (int)(dw / (double)g_shape + 0.5);   // taller: letterbox
+    } else if ((int64_t)dw * ch > (int64_t)dh * cw) {
+        out[2] = (int)(((int64_t)dh * cw + ch / 2) / ch);     // window wider: pillarbox
+    } else {
+        out[3] = (int)(((int64_t)dw * ch + cw / 2) / cw);     // taller: letterbox
+    }
     // A side of the window's parity keeps the two bars equal; a picture one pixel short of the window fills it
     out[2] += (dw - out[2]) & 1, out[3] += (dh - out[3]) & 1;
     out[0] = (dw - out[2]) / 2, out[1] = (dh - out[3]) / 2;

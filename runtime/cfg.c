@@ -57,7 +57,7 @@ static const char *const known[] = {
     "SWKBD_TEST", "TEST_HITCH", "TEST_PAD", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_CACHE_MB", "TEX_MEMO", "TEX_MIP_SKIP", "TEX_PREFETCH", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "UPSCALING", "UPSCALING_FAIL",
     "UPSCALING_QUALITY", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS",
-    "WALK_KEY", "WALK_SCALE", "WB_EXACT", "WB_FENCE_LIMIT", "WINDOW_SIZE", "XESS", "XESS_JITTER_SCALE", "XESS_MV_SCALE",
+    "WALK_KEY", "WALK_SCALE", "WB_EXACT", "WB_FENCE_LIMIT", "WIDE_PATCH", "WINDOW_SIZE", "XESS", "XESS_JITTER_SCALE", "XESS_MV_SCALE",
     "XLATE", "XLATE_ID", "XLATE_PROCS",
     "ZSTD_CHECK", "ZSTD_NATIVE",
 };
@@ -124,7 +124,7 @@ static const CfgMeta metas[] = {
     {"UPSCALING", "off", "off|auto|dlss|xess|fsr3", LIVE},
     {"UPSCALING_QUALITY", "native", "native|quality|balanced|performance|ultra_performance", RESTART},
     {"ANTI_ALIASING", "smaa", "off|smaa", LIVE},
-    {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
+    {"ASPECT", "fit", "fit|stretch|wide", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "auto", "auto|game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},

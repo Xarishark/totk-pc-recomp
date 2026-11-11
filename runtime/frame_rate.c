@@ -626,6 +626,16 @@ void rt_cut_state(Cpu *c) {
 #define MOVIE_MIN_PIXELS (1280u * 720u)
 static _Atomic uintptr_t g_movies[MOVIE_SLOTS];   // the open full-screen movies' Bink handles
 static _Atomic uint64_t g_movie_wait_frame;      // the game frame (g_timer_frames) of the last BinkWait on one; 0 none
+// The same in presents, which count at 30 fps too (rt_fps_timer runs with the 60 fps patch only): the present count
+// plus one at the last open or BinkWait of a full-screen movie, 0 none (rt_movie_showing).
+static _Atomic uint64_t g_presents, g_movie_wait_present;
+
+static void movie_seen(void) {
+    atomic_store_explicit(&g_movie_wait_frame, atomic_load_explicit(&g_timer_frames, memory_order_relaxed),
+                          memory_order_relaxed);
+    atomic_store_explicit(&g_movie_wait_present, atomic_load_explicit(&g_presents, memory_order_relaxed) + 1,
+                          memory_order_relaxed);
+}
 
 // x0 = the handle BinkOpen returned. HBINK starts with the width, the height and the frame count.
 void rt_movie_opened(Cpu *c) {
@@ -638,8 +648,7 @@ void rt_movie_opened(Cpu *c) {
         if (atomic_compare_exchange_strong(&g_movies[i], &none, h)) {
             // It counts as playing from here on: the timer ran before the player in this frame, so without this the
             // frames up to the first BinkWait would step at 60.
-            atomic_store_explicit(&g_movie_wait_frame, atomic_load_explicit(&g_timer_frames, memory_order_relaxed),
-                                  memory_order_relaxed);
+            movie_seen();
             rt_log("frame rate: movie opened, %ux%u, %u frames (wall %.3f s); a cutscene holds 30 fps while it plays",
                    hb[0], hb[1], hb[2], wall_s());
             return;
@@ -662,7 +671,7 @@ void rt_movie_close(Cpu *c) {
         else if (atomic_load(&g_movies[i])) open = 1;
     }
     if (!closed) return;
-    if (!open) atomic_store(&g_movie_wait_frame, 0);
+    if (!open) atomic_store(&g_movie_wait_frame, 0), atomic_store(&g_movie_wait_present, 0);
     rt_log("frame rate: movie closed (wall %.3f s)", wall_s());
 }
 
@@ -670,8 +679,7 @@ void rt_movie_wait(Cpu *c) {
     uintptr_t h = (uintptr_t)c->x[0];
     for (int i = 0; i < MOVIE_SLOTS; i++)
         if (h && atomic_load_explicit(&g_movies[i], memory_order_relaxed) == h) {
-            atomic_store_explicit(&g_movie_wait_frame, atomic_load_explicit(&g_timer_frames, memory_order_relaxed),
-                                  memory_order_relaxed);
+            movie_seen();
             return;
         }
 }
@@ -682,6 +690,13 @@ void rt_movie_wait(Cpu *c) {
 static int movie_playing(void) {
     uint64_t w = atomic_load_explicit(&g_movie_wait_frame, memory_order_relaxed);
     return w && atomic_load_explicit(&g_timer_frames, memory_order_relaxed) - w <= MOVIE_HOLD_FRAMES;
+}
+
+// A full-screen movie is on screen: one was opened or waited for its next frame within the last MOVIE_HOLD_FRAMES
+// presents. For the picture's shape (resolution.c res_wide_tick), at 30 fps as well as 60; any thread.
+int rt_movie_showing(void) {
+    uint64_t w = atomic_load_explicit(&g_movie_wait_present, memory_order_relaxed);
+    return w && atomic_load_explicit(&g_presents, memory_order_relaxed) + 1 - w <= MOVIE_HOLD_FRAMES;
 }
 
 
@@ -790,6 +805,7 @@ static void world_clock(double dt, double step) {
 }
 
 void frame_step_present(uint64_t display_ns, int interval) {
+    atomic_fetch_add_explicit(&g_presents, 1, memory_order_relaxed);
     frame_limit_live();
     cutscene_rate();
     double dt = last_ns ? (double)(display_ns - last_ns) * 1e-9 : 0;
