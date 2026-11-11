@@ -310,6 +310,36 @@ const uint8_t *vk_usnap_bytes(uint64_t addr, uint64_t n) {
     return U.arena->map + bi.offset;
 }
 
+// A copy out of write-combined memory: ordinary loads from it are uncached, each one a separate trip to memory (235 KiB
+// of per-object blocks a frame took 1.1 ms on an Arc 140T that way), while SSE4.1's streaming loads (MOVNTDQA) fetch a
+// whole 64-byte line into a fill buffer and serve the next three loads from it. On cached memory they are ordinary
+// loads. Both CPU levels the runtime builds for (x86-64-v2 and v3) have SSE4.1.
+#if defined(__x86_64__) || defined(_M_X64)
+#include <smmintrin.h>
+__attribute__((target("sse4.1"))) static void copy_from_wc(uint8_t *d, const uint8_t *s, size_t n) {
+    size_t head = (16 - ((uintptr_t)s & 15)) & 15;   // the streaming load needs a 16-byte aligned source
+    if (head > n) head = n;
+    memcpy(d, s, head), d += head, s += head, n -= head;
+    for (; n >= 64; n -= 64, s += 64, d += 64) {   // one line: four loads, then the stores
+        __m128i a = _mm_stream_load_si128((__m128i *)(s)), b = _mm_stream_load_si128((__m128i *)(s + 16));
+        __m128i c = _mm_stream_load_si128((__m128i *)(s + 32)), e = _mm_stream_load_si128((__m128i *)(s + 48));
+        _mm_storeu_si128((__m128i *)d, a), _mm_storeu_si128((__m128i *)(d + 16), b);
+        _mm_storeu_si128((__m128i *)(d + 32), c), _mm_storeu_si128((__m128i *)(d + 48), e);
+    }
+    for (; n >= 16; n -= 16, s += 16, d += 16) _mm_storeu_si128((__m128i *)d, _mm_stream_load_si128((__m128i *)s));
+    memcpy(d, s, n);
+}
+#else
+static void copy_from_wc(uint8_t *d, const uint8_t *s, size_t n) { memcpy(d, s, n); }
+#endif
+
+int vk_usnap_copy(uint64_t addr, uint64_t n, void *dst) {
+    const uint8_t *src = vk_usnap_bytes(addr, n);
+    if (!src) return 0;
+    copy_from_wc(dst, src, n);
+    return 1;
+}
+
 // The arenas back on the free list (vk_exec_draw_shutdown: the device is idle, every completion ran).
 void vk_usnap_shutdown(void) {
     plat_mutex_lock(&free_lock);

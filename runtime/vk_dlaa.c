@@ -642,10 +642,9 @@ void vk_dlaa_draw(VkExec *ex) {
     if (i == 4) i = low, D.cams[i].addr = 0;   // full: the rarest makes room
     struct Cam *c = &D.cams[i];
     if (c->addr != b->addr) {
-        const uint8_t *src = vk_usnap_bytes(b->addr, CAM_BYTES);
-        if (!src) src = (const uint8_t *)(uintptr_t)b->addr;   // no snapshot (AC_UBO_SNAPSHOT=0): guest memory
+        if (!vk_usnap_copy(b->addr, CAM_BYTES, c->block))   // no snapshot (AC_UBO_SNAPSHOT=0): guest memory
+            memcpy(c->block, (const void *)(uintptr_t)b->addr, CAM_BYTES);
         c->addr = b->addr, c->n = 0;
-        memcpy(c->block, src, CAM_BYTES);
         c->have = 1;
     }
     c->n++;

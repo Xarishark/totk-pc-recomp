@@ -123,23 +123,20 @@ static int64_t copy_block(uint64_t addr, uint32_t size) {
     Ent *e = ent(f->blocks, addr ^ (uint64_t)size << 48, 1);
     if (!e) return -1;
     if (e->v >= 0) return e->v;
-    // The snapshot's bytes: with the replay on the submitting thread (replay_async = 0) guest memory still holds them
-    // and is cached memory; the snapshot arena is write-combined video memory, slow to read (1.7 ms a frame here).
-    const uint8_t *src = NULL;
-    if (vk_replay_async()) {
-        src = vk_usnap_bytes(addr, size);   // NULL: not in the snapshot
-    } else {
-        VkDescriptorBufferInfo bi;
-        if (vk_usnap_find(addr, size, 1, &bi)) src = (const uint8_t *)(uintptr_t)addr;
-    }
-    if (!src) return e->k = 0, -1;   // not kept: the next draw tries again
     uint32_t at = (f->used + ALIGN - 1) & ~(ALIGN - 1);
     if (at + size > SLOT_BYTES) {
         M.full++;
-        e->k = 0;
+        e->k = 0;   // not kept: the next draw tries again
         return -1;
     }
-    memcpy(M.map + (size_t)f->slot * SLOT_BYTES + at, src, size);
+    // The snapshot's bytes. With the replay on the submitting thread (replay_async = 0) guest memory still holds them
+    // and is cached memory; the snapshot arena is write-combined video memory, which vk_usnap_copy reads with streaming
+    // loads (a plain memcpy from it cost 1.1 ms a frame here).
+    uint8_t *dst = M.map + (size_t)f->slot * SLOT_BYTES + at;
+    VkDescriptorBufferInfo bi;
+    int ok = vk_replay_async() ? vk_usnap_copy(addr, size, dst)
+                               : vk_usnap_find(addr, size, 1, &bi) && (memcpy(dst, (const void *)(uintptr_t)addr, size), 1);
+    if (!ok) return e->k = 0, -1;   // not in the snapshot
     f->used = at + size;
     M.bytes += size, M.nblocks++;
     return e->v = (int32_t)at;
