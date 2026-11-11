@@ -652,9 +652,10 @@ static void tab_screen(float scale) {
     row_shadow_range();
     opt_slider("AC_PCSS", UI_MENU_PCSS, 0, 200, UI_MENU_PCSS_DESC, 10, "%.0f %%");
     opt_slider("AC_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
-    // One temporal AA at a time: DLSS's rows are greyed out while XeSS is on and XeSS's while DLAA is on (both on from
+    // One temporal AA at a time: DLSS's row is greyed out while XeSS is on and XeSS's while DLAA is on (both on from
     // astralchain.ini: DLAA runs, so only XeSS's row is greyed and DLAA can still be switched off). NGX and XeSS are
-    // Windows libraries (vk_dlaa.c): elsewhere all three rows are.
+    // Windows libraries (vk_dlaa.c): elsewhere both rows are. DLSS's upscaling modes (AC_DLSS) have no row: the temporal
+    // AA runs at the scene's own size only.
 #ifdef _WIN32
     bool dlaa_on = cfg_bool("AC_DLAA") != 0, xess_on = cfg_bool("AC_XESS") != 0;
     UiTextId dlss_off = xess_on && !dlaa_on ? UI_MENU_TAA_XESS_ON : UI_TEXT_COUNT;
@@ -664,10 +665,6 @@ static void tab_screen(float scale) {
 #endif
     if (dlss_off != UI_TEXT_COUNT) opt_disable_next(dlss_off);
     opt_toggle("AC_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);
-    static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
-                                    UI_MENU_DLSS_PERFORMANCE};
-    if (dlss_off != UI_TEXT_COUNT) opt_disable_next(dlss_off);
-    opt_choice("AC_DLSS", UI_MENU_DLSS, dlss, 4, UI_MENU_DLSS_DESC);
     if (xess_off != UI_TEXT_COUNT) opt_disable_next(xess_off);
     opt_toggle("AC_XESS", UI_MENU_XESS, UI_MENU_XESS_DESC);
     rows_color();

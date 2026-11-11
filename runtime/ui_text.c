@@ -120,7 +120,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Moves the steps where shadows turn softer (the game's 20, 40, 80 and 160 m) further "
                                   "away. Spreads the shadow map over more ground: raise Shadow resolution with it. "
                                   "Takes effect at the next start.",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
+    [UI_MENU_DLAA] = "NVIDIA DLSS anti-aliasing",
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS for the 3D scene (NVIDIA RTX GPUs; nvngx_dlss.dll next to astralchain.exe): smoother edges "
                           "and less shimmer. The HUD is not touched. The mode below sets the resolution it works from. Takes effect "
                           "after a restart.",
@@ -135,7 +135,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                           "edges and less shimmer, for some GPU time. The HUD is not touched and the game's own SMAA is set "
                           "aside while it runs. DLSS / DLAA wins when both are on. Takes effect after a restart.",
     [UI_MENU_TAA_XESS_ON] = "Off while Intel XeSS anti-aliasing is on",
-    [UI_MENU_TAA_DLAA_ON] = "Off while DLSS / DLAA is on",
+    [UI_MENU_TAA_DLAA_ON] = "Off while NVIDIA DLSS anti-aliasing is on",
     [UI_MENU_TAA_WINDOWS] = "Windows only",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate",
@@ -509,7 +509,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SHADOW_RANGE_DESC] = "Отодвигает границы, за которыми тени становятся мягче (в игре 20, 40, 80 и 160 м). "
                                   "Карта теней растягивается на большую площадь, поэтому вместе с этим поднимайте "
                                   "разрешение теней. Действует после перезапуска.",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
+    [UI_MENU_DLAA] = "Сглаживание NVIDIA DLSS",
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS для 3D-сцены (видеокарты NVIDIA RTX; nvngx_dlss.dll рядом с astralchain.exe): ровнее края и "
                           "меньше мерцания. Интерфейс не затрагивается. Режим ниже задаёт разрешение, с которым он работает. "
                           "Действует после перезапуска.",
@@ -525,7 +525,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                           "затрагивается, собственное SMAA игры на это время отключается. Если включены оба, работает "
                           "DLSS / DLAA. Действует после перезапуска.",
     [UI_MENU_TAA_XESS_ON] = "Недоступно, пока включено сглаживание Intel XeSS",
-    [UI_MENU_TAA_DLAA_ON] = "Недоступно, пока включён DLSS / DLAA",
+    [UI_MENU_TAA_DLAA_ON] = "Недоступно, пока включено сглаживание NVIDIA DLSS",
     [UI_MENU_TAA_WINDOWS] = "Только в Windows",
 
     [UI_MENU_FPS_LIMIT] = "Частота кадров",
@@ -1172,7 +1172,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_PCSS] = "Sombras suaves",
     [UI_MENU_PCSS_DESC] = "Sombras do sol nítidas onde um objeto toca o chão e mais suaves quanto mais longe a sombra "
                           "cai (PCSS). 0 mantém o filtro do jogo. Vale no próximo início.",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
+    [UI_MENU_DLAA] = "Antisserrilhado NVIDIA DLSS",
     [UI_MENU_DLAA_DESC] = "NVIDIA DLSS para a cena 3D (placas NVIDIA RTX; nvngx_dlss.dll ao lado do astralchain.exe): bordas "
                           "mais suaves e menos cintilação. O HUD não é afetado. O modo abaixo define a resolução de "
                           "onde ele parte. Vale após reiniciar.",
@@ -1190,7 +1190,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
                           "é afetado e o SMAA do próprio jogo fica de lado enquanto ele roda. Com os dois ligados, vale o "
                           "DLSS / DLAA. Vale após reiniciar.",
     [UI_MENU_TAA_XESS_ON] = "Indisponível com o antisserrilhado Intel XeSS ligado",
-    [UI_MENU_TAA_DLAA_ON] = "Indisponível com o DLSS / DLAA ligado",
+    [UI_MENU_TAA_DLAA_ON] = "Indisponível com o antisserrilhado NVIDIA DLSS ligado",
     [UI_MENU_TAA_WINDOWS] = "Somente no Windows",
     [UI_MENU_TAB_CHEATS] = "Cheats",
     [UI_MENU_CHEATS_NONE] = "Nenhum cheat para esta versão do jogo. Os cheats de um mod são um arquivo de cheats do "
@@ -1692,7 +1692,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_CONTACT_SHADOWS_DESC] = "阴影贴图遗漏的细小太阳阴影：脚下、石头下、草丛和褶皱中。在光照之后于屏幕空间追踪。下次启动时生效。",
     [UI_MENU_PCSS] = "柔和阴影",
     [UI_MENU_PCSS_DESC] = "物体接触地面处的太阳阴影锐利，阴影投得越远越柔和（PCSS）。0 保留游戏自身的过滤。下次启动时生效。",
-    [UI_MENU_DLAA] = "NVIDIA DLSS / DLAA",
+    [UI_MENU_DLAA] = "NVIDIA DLSS 抗锯齿",
     [UI_MENU_DLAA_DESC] = "用于 3D 场景的 NVIDIA DLSS（NVIDIA RTX 显卡；nvngx_dlss.dll 放在 astralchain.exe 旁）：边缘更平滑，闪烁更少。HUD "
                           "不受影响。下方的模式决定它的工作分辨率。重启后生效。",
     [UI_MENU_DLSS] = "DLSS 模式",
@@ -1706,7 +1706,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                           "闪烁更少，但会占用一些 GPU 时间。HUD 不受影响，运行时游戏自身的 SMAA 会被搁置。两者都开启时以 DLSS / "
                           "DLAA 为准。重启后生效。",
     [UI_MENU_TAA_XESS_ON] = "Intel XeSS 抗锯齿开启时不可用",
-    [UI_MENU_TAA_DLAA_ON] = "DLSS / DLAA 开启时不可用",
+    [UI_MENU_TAA_DLAA_ON] = "NVIDIA DLSS 抗锯齿开启时不可用",
     [UI_MENU_TAA_WINDOWS] = "仅限 Windows",
     [UI_MENU_TAB_CHEATS] = "金手指",
     [UI_MENU_CHEATS_NONE] = "此游戏版本没有金手指。模组的金手指是它的 cheats 文件夹中以游戏构建命名的 Atmosphere "
