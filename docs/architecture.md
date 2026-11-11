@@ -150,7 +150,7 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   at the AA point into the motion image, with a last-frame variant of their vertex shader (translator patch
   `0012-motion-previous-position.patch` recomputes the position from the previous blocks) and a small motion fragment
   shader, so enemies and anything else that moves on its own get their own vectors; objects whose blocks did not
-  change keep the camera's. Astral Chain hands those blocks out at new addresses every frame, so `vk_mvprev.c` copies
+  change and instanced draws (scenery whose instance list changes from frame to frame) keep the camera's. Astral Chain hands those blocks out at new addresses every frame, so `vk_mvprev.c` copies
   each candidate's blocks per frame into a host-visible arena and finds the object again next frame by its draw
   (vertex program, index buffer, first vertex, counts) and the translation of its first matrix. `AC_DLAA_MVDEBUG=1`
   shows the vectors in place of the anti-aliased picture. Camera cuts, a missed AA point for 6 presents, another scene

@@ -2454,8 +2454,8 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
 // the original: vertex and index buffers, the other uniform blocks, the jittered viewport and the scene depth, tested
 // with the game's own test and its equal case (LESS -> LEQUAL) without writes, so only the visible surface writes its
 // vector. Last frame's blocks, camera included, come from vk_mvprev.c's copies. A draw whose variant or pipeline is
-// still building, that has no last-frame object, or whose blocks did not change (held still: the camera's motion is
-// right) is not drawn again. AC_DLAA_OBJMV=0 turns it off.
+// still building, that has no last-frame object, whose blocks did not change (held still: the camera's motion is
+// right) or that is instanced (mvobj_draw_) is not drawn again. AC_DLAA_OBJMV=0 turns it off.
 #include "vk_mvobj_fs.h"
 static const char MO_FS_RES[] = "{\"key\":\"mvobj\",\"stage\":\"ps\",\"notes\":[],\"cbufs\":[{\"binding\":1,\"slot\":3}],"
                                 "\"sbufs\":[],\"textures\":[],\"images\":[]}";
@@ -2469,7 +2469,7 @@ static struct {
 // The motion draws of the frame, kept as a list while the scene replays and recorded into the replay's own command
 // buffer by vk_mvobj_execute, through the recorder thread (vk_rec.h) like every other draw. What a draw shares with the
 // one before it (pipeline, dynamic state, viewport, buffers, descriptors) is recorded once; a push descriptor set is
-// pushed again only where a binding changed.
+// pushed again, whole, when one of its bindings changed.
 typedef struct {
     VkPipeline pipe;
     const VkPipeInfo *info;
@@ -2689,17 +2689,18 @@ static void mo_emit(VkCommandBuffer cb) {
                 k1 += info->bindings[i1].count ? info->bindings[i1].count : 1, i1++;
             if (i1 > i0) {
                 if (s ? info->push1 : info->push) {
-                    // the bindings that differ from the last push of this layout and pipeline (all after another)
-                    int same = lay[s] == info->layout && pinfo[s] == info && pdesc[s] >= 0;
-                    const VkDescSlot *pd = same ? MQ.desc + pdesc[s] : NULL;
-                    VkWriteDescriptorSet w[MAX_BINDINGS];
-                    uint32_t nw = 0;
-                    for (uint32_t i = i0, k = k0; i < i1; i++) {
-                        uint32_t cnt = info->bindings[i].count ? info->bindings[i].count : 1;
-                        if (!same || memcmp(d + k, pd + k, cnt * sizeof *d)) w[nw++] = mo_write(&info->bindings[i], d + k);
-                        k += cnt;
+                    // The whole set, unless it holds what the last push of this layout and pipeline held. Pushing only
+                    // the bindings that changed lost the others on an Intel Arc 140T (driver 101.8991): of a
+                    // character's parts only the first drew anything, the rest kept the camera's motion and XeSS
+                    // trailed them. The replay's own draws push whole sets too (bind_resources).
+                    int same = lay[s] == info->layout && pinfo[s] == info && pdesc[s] >= 0 &&
+                               !memcmp(d + k0, MQ.desc + pdesc[s] + k0, (k1 - k0) * sizeof *d);
+                    if (!same) {
+                        VkWriteDescriptorSet w[MAX_BINDINGS];
+                        for (uint32_t i = i0, k = k0; i < i1; k += info->bindings[i].count ? info->bindings[i].count : 1, i++)
+                            w[i - i0] = mo_write(&info->bindings[i], d + k);
+                        rec_push(vk_pipeline_push_fn(), cb, VK_PIPELINE_BIND_POINT_GRAPHICS, info->layout, s, i1 - i0, w);
                     }
-                    if (nw) rec_push(vk_pipeline_push_fn(), cb, VK_PIPELINE_BIND_POINT_GRAPHICS, info->layout, s, nw, w);
                     lay[s] = info->layout, pinfo[s] = info, pdesc[s] = (int)q->desc, bound[s] = VK_NULL_HANDLE;
                 } else if (q->set[s] != bound[s] || lay[s] != info->layout) {
                     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, info->layout, s, 1, &q->set[s], 0, NULL);
@@ -2732,6 +2733,11 @@ static void mvobj_draw_(VkExec *ex, const p_draw_idx *d, VkBuffer ib, VkDeviceSi
     // solid geometry only, which tests and writes the scene depth (the depth prepass): effects, particles and screen
     // quads write none, and drawn again they would put their motion on the surfaces behind them
     if (!B.st.ds.dt || !B.st.ds.dw) return;
+    // An instanced draw reads its places from a list in c14 (4x4 matrices, one per instance: the tables, chairs and
+    // parasols of a street) whose entries change from one frame to the next, one empty in a frame and another
+    // instance's in the next: with last frame's list a parasol standing still got another's place, 500 pixels of
+    // motion. The instanced draws are scenery, which the camera's motion is right for while it stands still.
+    if (d->instances > 1) return;
     // a vertex shader that reads a user bank besides the camera's (c3) may move on its own
     const GfxShaderRes *ur;
     int nu = gfx_shader_resources(B.st.vs, GFX_RES_UBO, &ur), reads = 0;
