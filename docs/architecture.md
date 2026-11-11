@@ -134,11 +134,30 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   in-game menu is drawn into an RGBA8 image and blended on at the HUD's white. Without an HDR10 surface format
   (Windows with "Use HDR" off, a compositor without colour management) the swapchain stays SDR and the tonemap writes
   the game's own result. `AC_SHOTS` reads the window texture, so its pictures clip highlights in HDR.
-- DLAA (`vk_dlaa.c`, `dlaa`, off by default). NVIDIA DLSS at the scene's own size, through the driver's NGX core loaded
-  at run time (no SDK code compiled in). It runs on the R11G11B10F light target right before the bloom chain's first
-  pass, so post effects and the HUD read the anti-aliased picture. The scene's draws get a sub-pixel Halton viewport
-  jitter; motion vectors are camera-only, reprojected from the scene depth through this and last frame's
-  view-projection of the scene camera block (constant bank c4). `fxaa` switches the game's own FXAA pass.
+- Temporal anti-aliasing at the scene's own size (`vk_dlaa.c`, off by default): NVIDIA DLAA (`dlaa`, through the
+  driver's NGX core loaded at run time) or Intel XeSS Native AA (`xess`, `vk_xess.c`, `libxess.dll` loaded at run time);
+  no SDK header or code of either is compiled in. Astral Chain renders forward: a depth-only prepass writes the scene
+  depth (D32F_S8), the opaque draws and the transparents go into an R11G11B10F light target with it (two images,
+  alternating per frame), the bloom chain reads it at half size and down, a composite tonemaps, SMAA anti-aliases and
+  the HUD is drawn over the result. The AA arms on the first light-target pass after a prepass and runs, in place on
+  the light target, at the first pass a quarter as wide (the bloom's third level), so the bloom, the composite and the
+  HUD read the resolved picture; the game's SMAA edge and weight passes are skipped meanwhile. The scene's draws get a
+  sub-pixel Halton viewport jitter. Motion vectors start from the camera: the camera block is the scene draws' vertex c3
+  (256 bytes: view, projection, view-projection, inverse view), and one reprojection matrix (last frame's
+  view-projection times the inverse of this frame's, in double precision on the CPU) takes every depth pixel to last
+  frame's position. Over them comes a per-object pass (`vk_exec_draw.c`, "per-object motion"; `AC_DLAA_OBJMV=0` turns
+  it off): the prepass's solid draws whose vertex position reads an object's uniform blocks besides c3 are drawn again
+  at the AA point into the motion image, with a last-frame variant of their vertex shader (translator patch
+  `0012-motion-previous-position.patch` recomputes the position from the previous blocks) and a small motion fragment
+  shader, so enemies and anything else that moves on its own get their own vectors; objects whose blocks did not
+  change keep the camera's. Astral Chain hands those blocks out at new addresses every frame, so `vk_mvprev.c` copies
+  each candidate's blocks per frame into a host-visible arena and finds the object again next frame by its draw
+  (vertex program, index buffer, first vertex, counts) and the translation of its first matrix. `AC_DLAA_MVDEBUG=1`
+  shows the vectors in place of the anti-aliased picture. Camera cuts, a missed AA point for 6 presents, another scene
+  size or another light target start a new history. DLSS is created with model K (the transformer) and given the
+  measured frame time. After 600 presents without DLSS its features are released, and without any temporal AA the work
+  images too, without waiting for the GPU; at exit NGX is shut down before the device goes. The performance overlay's
+  Scaling line names the AA while it resolves frames.
 - Occlusion queries never block the CPU; a result that is not ready counts as visible.
 - ASTC textures are uploaded as they are where the device reports `textureCompressionASTC_LDR`, and decoded by a
   compute shader everywhere else (`vk_astc.c`, `AC_ASTC`). A discrete GPU with 6 GB of video memory or more keeps

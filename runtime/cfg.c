@@ -28,7 +28,8 @@ static PlatMutex set_lock = PLAT_MUTEX_INIT;   // cfg_set, cfg_reset, cfg_save
 static int save_ok = 1;                         // the last cfg_save_to wrote (or had nothing to write)
 
 // Every name the runtime reads (and the patch sets in generated/), without the prefix. A file key outside this list is
-// logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line.
+// logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line. FXAA stays known
+// though nothing reads it any more (it switched TotK's FXAA, which Astral Chain does not have): older files carry it.
 static const char *const known[] = {
     "AB", "AMIIBO_DIR", "ANISO", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_OFF", "AUDIO_PREFILL_MS",
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
@@ -37,7 +38,7 @@ static const char *const known[] = {
     "BIND_SKIP", "BIND_STATS", "BIND_UP", "BIND_X", "BIND_Y",
     "BIND_ZL", "BIND_ZR", "BLOCK_VIEWS_3D", "CLOTH_REALTIME", "COLOR_BRIGHTNESS", "COLOR_CONTRAST", "COLOR_GAMMA",
     "COLOR_PRESET", "COLOR_SATURATION", "CONTACT_DEBUG", "CONTACT_SHADOWS", "CORE_DIAG", "CPU_BOOST", "CPU_BOOST_SPIN_US", "CRIT", "CRIT_OUT",
-    "DECK_RES_MIGRATED", "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLSS", "DUMP", "DUMP_AUTO", "DUMP_BUF", "DUMP_DIR", "DUMP_DRAWS",
+    "DECK_RES_MIGRATED", "DESC_TEMPLATE", "DEVICE_PROFILE", "DLAA", "DLAA_JITTER", "DLAA_MV", "DLAA_MVDEBUG", "DLAA_OBJMV", "DLAA_TIMES", "DLSS", "DUMP", "DUMP_AUTO", "DUMP_BUF", "DUMP_DIR", "DUMP_DRAWS",
     "DUMP_LOG", "DUMP_N", "DUMP_SKIP_RUNS", "DUMP_TEX", "DUMP_UBO", "EXEFS", "FEEDBACK", "FIX_C0", "FIX_ZERO", "FLIGHT", "FLIGHT_AT", "FLIGHT_DIR", "FLIGHT_FRAMES",
     "FLIGHT_SPIKE_MS", "FLIGHT_THUMBS", "FOV", "FOV_PATCH", "FPS", "FREEZE_IDLE", "FREE_CORES",
     "FULLSCREEN", "FXAA", "GPL", "GPL_DRAW_BUILD", "GPU", "GPU_INDEX", "GPU_NAME", "GPU_PASSES", "HDR", "HDR_GAME_NITS",
@@ -55,7 +56,8 @@ static const char *const known[] = {
     "SWKBD_ANSWER",
     "SWKBD_TEST", "TEST_HITCH", "TEST_PAD", "TEST_PREPARE_SHADERS", "TEX_ALIAS", "TEX_CACHE_MB", "TEX_MEMO", "TEX_MIP_SKIP", "TEX_PREFETCH", "TEX_VRAM_PRESSURE", "TIMER_1MS", "TRACE", "UBO_SNAPSHOT", "UPSCALER", "VK_DYN_A2C", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VS_OUTS",
-    "WALK_KEY", "WALK_SCALE", "WB_EXACT", "WB_FENCE_LIMIT", "WINDOW_SIZE", "XLATE", "XLATE_ID", "XLATE_PROCS",
+    "WALK_KEY", "WALK_SCALE", "WB_EXACT", "WB_FENCE_LIMIT", "WINDOW_SIZE", "XESS", "XESS_JITTER_SCALE", "XESS_MV_SCALE",
+    "XLATE", "XLATE_ID", "XLATE_PROCS",
     "ZSTD_CHECK", "ZSTD_NATIVE",
 };
 
@@ -70,7 +72,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"COLOR_BRIGHTNESS", "display"}, {"COLOR_CONTRAST", "display"}, {"COLOR_SATURATION", "display"},
     {"COLOR_GAMMA", "display"}, {"HDR", "display"}, {"HDR_PEAK_NITS", "display"}, {"HDR_GAME_NITS", "display"},
     {"HDR_UI_NITS", "display"}, {"HDR_HUE", "display"}, {"SHADOW_RES", "display"},
-    {"DLAA", "display"}, {"DLSS", "display"}, {"FXAA", "display"},
+    {"DLAA", "display"}, {"DLSS", "display"}, {"XESS", "display"},
     {"DEVICE_PROFILE", "display"}, {"DECK_RES_MIGRATED", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
@@ -113,7 +115,8 @@ static const CfgMeta metas[] = {
     // the size the game renders itself (resolution.c: TotK's output set, or on 1.0.1 the res set, res_pick)
     {"OUTPUT_RES", "1920x1080", NULL, RESTART}, {"RENDER_SCALE", "game", "game|50|67|75|100|125|150|200", RESTART},
     {"UPSCALER", "fsr", "fsr|bilinear", LIVE}, {"SHARPNESS", "80", "0..100", LIVE},
-    {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART}, {"FXAA", "1", "0|1", LIVE},
+    {"DLAA", "0", "0|1", RESTART}, {"DLSS", "dlaa", "dlaa|quality|balanced|performance", RESTART},
+    {"XESS", "0", "0|1", RESTART},   // vk_xess.c: libxess.dll is loaded at start; once up it switches live
     {"ASPECT", "fit", "fit|stretch", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "auto", "auto|game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses

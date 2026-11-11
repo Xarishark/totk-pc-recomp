@@ -130,8 +130,13 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                           "scale. Takes effect after a restart.",
     [UI_MENU_DLSS_DLAA] = "DLAA (native)", [UI_MENU_DLSS_QUALITY] = "Quality", [UI_MENU_DLSS_BALANCED] = "Balanced",
     [UI_MENU_DLSS_PERFORMANCE] = "Performance",
-    [UI_MENU_FXAA] = "Game anti-aliasing (FXAA)",
-    [UI_MENU_FXAA_DESC] = "The game's own FXAA edge smoothing. It blurs fine detail a little; with DLAA on it is not needed.",
+    [UI_MENU_XESS] = "Intel XeSS anti-aliasing",
+    [UI_MENU_XESS_DESC] = "Intel XeSS Native AA for the 3D scene (most recent GPUs; libxess.dll next to astralchain.exe): smoother "
+                          "edges and less shimmer, for some GPU time. The HUD is not touched and the game's own SMAA is set "
+                          "aside while it runs. DLSS / DLAA wins when both are on. Takes effect after a restart.",
+    [UI_MENU_TAA_XESS_ON] = "Off while Intel XeSS anti-aliasing is on",
+    [UI_MENU_TAA_DLAA_ON] = "Off while DLSS / DLAA is on",
+    [UI_MENU_TAA_WINDOWS] = "Windows only",
 
     [UI_MENU_FPS_LIMIT] = "Frame rate",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS runs the game's 60 fps patch; 30 FPS switches it off. Read live.",
@@ -514,8 +519,14 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                           "3D-отрисовки. Действует после перезапуска.",
     [UI_MENU_DLSS_DLAA] = "DLAA (родное)", [UI_MENU_DLSS_QUALITY] = "Качество", [UI_MENU_DLSS_BALANCED] = "Баланс",
     [UI_MENU_DLSS_PERFORMANCE] = "Производительность",
-    [UI_MENU_FXAA] = "Сглаживание игры (FXAA)",
-    [UI_MENU_FXAA_DESC] = "Собственное сглаживание FXAA. Слегка размывает мелкие детали; с DLAA оно не нужно.",
+    [UI_MENU_XESS] = "Сглаживание Intel XeSS",
+    [UI_MENU_XESS_DESC] = "Intel XeSS Native AA для 3D-сцены (большинство современных видеокарт; libxess.dll рядом с "
+                          "astralchain.exe): ровнее края и меньше мерцания ценой части времени видеокарты. Интерфейс не "
+                          "затрагивается, собственное SMAA игры на это время отключается. Если включены оба, работает "
+                          "DLSS / DLAA. Действует после перезапуска.",
+    [UI_MENU_TAA_XESS_ON] = "Недоступно, пока включено сглаживание Intel XeSS",
+    [UI_MENU_TAA_DLAA_ON] = "Недоступно, пока включён DLSS / DLAA",
+    [UI_MENU_TAA_WINDOWS] = "Только в Windows",
 
     [UI_MENU_FPS_LIMIT] = "Частота кадров",
     [UI_MENU_FPS_LIMIT_DESC] = "60 FPS включает патч игры на 60 кадров; 30 FPS отключает его. Читается на лету.",
@@ -1173,9 +1184,14 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_QUALITY] = "Qualidade",
     [UI_MENU_DLSS_BALANCED] = "Equilibrado",
     [UI_MENU_DLSS_PERFORMANCE] = "Desempenho",
-    [UI_MENU_FXAA] = "Antisserrilhado do jogo (FXAA)",
-    [UI_MENU_FXAA_DESC] = "A suavização de bordas FXAA do próprio jogo. Borra um pouco os detalhes finos; com o DLAA "
-                          "ligado não é necessária.",
+    [UI_MENU_XESS] = "Antisserrilhado Intel XeSS",
+    [UI_MENU_XESS_DESC] = "Intel XeSS Native AA para a cena 3D (a maioria das placas recentes; libxess.dll ao lado do "
+                          "astralchain.exe): bordas mais suaves e menos cintilação, ao custo de algum tempo de GPU. O HUD não "
+                          "é afetado e o SMAA do próprio jogo fica de lado enquanto ele roda. Com os dois ligados, vale o "
+                          "DLSS / DLAA. Vale após reiniciar.",
+    [UI_MENU_TAA_XESS_ON] = "Indisponível com o antisserrilhado Intel XeSS ligado",
+    [UI_MENU_TAA_DLAA_ON] = "Indisponível com o DLSS / DLAA ligado",
+    [UI_MENU_TAA_WINDOWS] = "Somente no Windows",
     [UI_MENU_TAB_CHEATS] = "Cheats",
     [UI_MENU_CHEATS_NONE] = "Nenhum cheat para esta versão do jogo. Os cheats de um mod são um arquivo de cheats do "
                             "Atmosphere na pasta cheats dele, com o nome da build do jogo: mods\\<mod>\\cheats\\%s. "
@@ -1685,8 +1701,13 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_DLSS_QUALITY] = "质量",
     [UI_MENU_DLSS_BALANCED] = "平衡",
     [UI_MENU_DLSS_PERFORMANCE] = "性能",
-    [UI_MENU_FXAA] = "游戏抗锯齿（FXAA）",
-    [UI_MENU_FXAA_DESC] = "游戏自身的 FXAA 边缘平滑。会让细节略微模糊；开启 DLAA 时不需要。",
+    [UI_MENU_XESS] = "Intel XeSS 抗锯齿",
+    [UI_MENU_XESS_DESC] = "用于 3D 场景的 Intel XeSS 原生抗锯齿（大多数较新的显卡；libxess.dll 放在 astralchain.exe 旁）：边缘更平滑，"
+                          "闪烁更少，但会占用一些 GPU 时间。HUD 不受影响，运行时游戏自身的 SMAA 会被搁置。两者都开启时以 DLSS / "
+                          "DLAA 为准。重启后生效。",
+    [UI_MENU_TAA_XESS_ON] = "Intel XeSS 抗锯齿开启时不可用",
+    [UI_MENU_TAA_DLAA_ON] = "DLSS / DLAA 开启时不可用",
+    [UI_MENU_TAA_WINDOWS] = "仅限 Windows",
     [UI_MENU_TAB_CHEATS] = "金手指",
     [UI_MENU_CHEATS_NONE] = "此游戏版本没有金手指。模组的金手指是它的 cheats 文件夹中以游戏构建命名的 Atmosphere "
                             "金手指文件：mods\\<模组>\\cheats\\%s。重启游戏后才会读取。对于修改游戏代码的金手指，"

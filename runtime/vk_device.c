@@ -15,6 +15,7 @@
 #include "vk.h"
 #include "platform/platform.h"
 #include "vk_dlaa.h"
+#include "vk_xess.h"
 
 static VkCtx g_vk;
 static int g_ready;
@@ -75,7 +76,7 @@ static void mesa_cache_beside_exe(void) {
 
 static int create_instance(void) {
     mesa_cache_beside_exe();
-    const char *ext[12];
+    const char *ext[24];
     uint32_t n_ext = (uint32_t)gfx_window_vk_extensions(ext, 7);
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
     int validate = cfg_bool("AC_VK_VALIDATION");
@@ -86,7 +87,8 @@ static int create_instance(void) {
     if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     if (vk_hdr_wanted() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))   // HDR10 surface formats
         ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
-    vk_dlaa_instance_exts(ext, &n_ext, 12);
+    vk_dlaa_instance_exts(ext, &n_ext, 18);
+    vk_xess_instance_exts(ext, &n_ext, 24);
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "Astral Chain Recomp",
                              .pEngineName = "Astral Chain Recomp", .apiVersion = VK_API_VERSION_1_3};
     VkInstanceCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app,
@@ -224,6 +226,7 @@ typedef struct {
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT fbl;
     VkPhysicalDeviceDynamicRenderingLocalReadFeaturesKHR lr;
+    VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT mut;   // XeSS (vk_xess.c) only
 } FeatureChain;
 
 static int create_device(void) {
@@ -231,7 +234,7 @@ static int create_device(void) {
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne ? ne : 1, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[48];
+    const char *ext[80];
     uint32_t n_ext = 0;
     for (size_t i = 0; i < sizeof k_required_ext / sizeof *k_required_ext; i++) ext[n_ext++] = k_required_ext[i];
 
@@ -268,7 +271,10 @@ static int create_device(void) {
         CHAIN(fbl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_FEATURES_EXT);
         CHAIN(lr, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR);
     }
-    vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40);   // NGX's; the eight slots after it stay for the ones below
+    vk_dlaa_device_exts(ep, ne, ext, &n_ext, 56);   // NGX's; the slots after them stay for XeSS's and the ones below
+    // XeSS's, when its whole list and every feature it asks for are there; its one non-core feature structure is chained
+    if (vk_xess_device_exts(g_vk.instance, g_vk.phys, ep, ne, ext, &n_ext, 72))
+        CHAIN(mut, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT);
     if (has_ext(ep, ne, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) { g_vk.has_memory_budget = 1; ext[n_ext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME; }
     // GPU timestamps on the CPU clock (vk_sync.c): the perf line splits GPU idle time into waiting for a submission or not.
     if (has_ext(ep, ne, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) { g_vk.has_calibrated = 2; ext[n_ext++] = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME; }
@@ -381,6 +387,7 @@ static void destroy_all(void) {
     if (g_vk.device) vkDeviceWaitIdle(g_vk.device);
     if (g_vk.device) vk_astc_release();
     if (g_vk.device) vk_crumbs_release();
+    if (g_vk.device) vk_dlaa_release();
     if (g_vk.timeline) vkDestroySemaphore(g_vk.device, g_vk.timeline, NULL);
     vk_headroom_stop();
     if (g_vk.vma) vmaDestroyAllocator(g_vk.vma);

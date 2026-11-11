@@ -24,7 +24,7 @@ The install folder (`main.c` `portable_paths()` reads this layout; it stays port
 
 ```
 <install folder>/
-  astralchain.exe, SDL3.dll, libopus-0.dll, ac_xlate.exe
+  astralchain.exe, SDL3.dll, libopus-0.dll, libxess.dll (Windows), ac_xlate.exe
   astralchain.ini                       language; the other keys as commented defaults (astralchain.ini.example)
   exefs/, romfs/                        extracted from the player's files
   shader-cache/                         the translated shaders, packed into one shader-cache.pack
@@ -136,7 +136,7 @@ recomp/, tools/       the lifter and the extraction, build and patch scripts the
 llvm/                 llvm-mingw, x86_64-only subset (Apache-2.0 with LLVM exception; mingw-w64 parts permissive)
 runtime/              libacrt.a, libacrt-v2.a, the headers the generated code and modules.c/romfs.c/patches.c include,
                       and deps/ (Vulkan, SDL3, Opus, libvpx headers and import libraries)
-bin/                  ac_xlate.exe (+ .id), hactool.exe, SDL3.dll, libopus-0.dll, ninja.exe
+bin/                  ac_xlate.exe (+ .id), hactool.exe, SDL3.dll, libopus-0.dll, libxess.dll, ninja.exe
 licenses/             the licence files of everything bundled
 THIRD_PARTY_NOTICES.md
 astralchain.ini.example, VERSION  the default ini; the release string (the repository's VERSION plus the commit)

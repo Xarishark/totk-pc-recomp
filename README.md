@@ -29,6 +29,7 @@ Report problems as issues, following [CONTRIBUTING.md](CONTRIBUTING.md).
 - HDR output (HDR10), with separate brightness for the game and the HUD
 - The game's own audio: music, effects and voices
 - Custom resolutions, AMD FSR 1 upscaling up to 4K and emulator-style 3D render scaling
+- Temporal anti-aliasing for the 3D scene: Intel XeSS Native AA on most recent GPUs, NVIDIA DLAA on RTX cards
 - Anisotropic texture filtering up to 16x, for sharp ground into the distance
 - In-game settings menu (F1) and performance overlay (F10)
 - Setup and in-game menu in English, Russian, Brazilian Portuguese and Simplified Chinese
@@ -66,7 +67,7 @@ started from. What was taken from each project, with its license, is listed in
 - [nxnative](https://github.com/seedds/nxnative)
 - [Ryujinx](https://github.com/Ryujinx/Ryujinx)
 - [deko3d](https://github.com/devkitPro/deko3d)
-- [SDL 3](https://libsdl.org), [Dear ImGui](https://github.com/ocornut/imgui), [AMD FSR 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR), [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator), [libopus](https://opus-codec.org), [Zstandard](https://github.com/facebook/zstd)
+- [SDL 3](https://libsdl.org), [Dear ImGui](https://github.com/ocornut/imgui), [AMD FSR 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR), [Intel XeSS](https://github.com/intel/xess), [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator), [libopus](https://opus-codec.org), [Zstandard](https://github.com/facebook/zstd)
 - [Switchbrew](https://switchbrew.org) and the Switch homebrew community
 
 ## License

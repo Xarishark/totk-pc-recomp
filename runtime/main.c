@@ -9,6 +9,7 @@
 //     --probe-gfx-abi   NVN object layouts against nvn.h's reserved sizes; needs no game files
 //     --probe-nvn, --probe-nvn-tex, --probe-window, --probe-shader, --probe-vkmem, --probe-vkexec    graphics probes
 //     --probe-astc      the compute ASTC decoder against astc_decode_ldr; needs no game files
+//     --probe-xess      Intel XeSS (vk_xess.c) once on synthetic images; passes when libxess.dll is absent
 //     --boot            run the game to the first NVN call
 //     --seconds S       run the game (implies --boot's start-up) until the world clock (game time since the loaded
 //                       save's first frame) passed S seconds, then exit 0 at that present
@@ -558,6 +559,7 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--probe-vkexec")) return probe_vkexec();
     if (!strcmp(mode, "--probe-astc")) return probe_astc();
     if (!strcmp(mode, "--probe-vkdevice")) return probe_vkdevice();
+    if (!strcmp(mode, "--probe-xess")) return probe_xess();
     if (!strcmp(mode, "--prepare-shaders")) return vk_pipeline_prepare_shaders();
     if (!strcmp(mode, "--warm-shaders")) return vk_pipeline_warm_shaders();
     if (!strcmp(mode, "--boot")) { cfg.boot = 1; rt_boot(); return 0; }

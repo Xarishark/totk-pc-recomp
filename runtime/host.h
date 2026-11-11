@@ -331,6 +331,7 @@ int probe_mods(void);                                      // mods_probe.c
 int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_services(void), probe_fs(void);
 int probe_gfx_abi(void);                                   // gfx_abi_probe.c
 int probe_vkdevice(void);                                 // vk_device.c
+int probe_xess(void);                                     // vk_xess.c
 int probe_nvn(void), probe_nvn_tex(void);                  // nvn_probe.c, nvn_tex_probe.c
 int probe_window(void);                                    // gfx_window_probe.c
 int probe_shader(void);                                    // gfx_shader.c

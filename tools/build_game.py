@@ -908,6 +908,11 @@ def main():
         return
     for dll in dlls:   # dynamic SDL3 (zlib) and its libiconv (LGPL, unmodified DLL), found next to astralchain.exe
         shutil.copy2(dll, exe.parent / dll.name)
+    # Intel XeSS (runtime/vk_xess.c, xess = 1): libxess.dll from toolchain/xess (tools/xess_sdk.py fetches it), loaded at
+    # run time when present; a release ships it in bin/ and the installer copies it (installer/layout.py)
+    xess = MAIN_ROOT / 'toolchain' / 'xess' / 'libxess.dll'
+    if WIN and xess.is_file():
+        shutil.copy2(xess, exe.parent / xess.name)
     sections, image = pe_sections(exe) if WIN else elf_sections(exe)
     print(f'{below_root(exe)}: file {mib(exe.stat().st_size)}, '
           f'image {mib(image)}; ' + ', '.join(f'{k} {mib(v)}' for k, v in sections.items() if k.startswith('.') and v))

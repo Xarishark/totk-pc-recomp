@@ -13,13 +13,14 @@ cached in toolchain/release-dl/ and checked against the sha256 in PINS; a mismat
     runtime/   libacrt.a and libacrt-v2.a (build_game.py --make-runtime-lib with llvm/, x86-64-v3 and v2), the
                runtime headers, romfs.c, patches.c and ov_zstd.c (compiled per install), deps/ (headers and import
                libraries of SDL3, Opus, libvpx, Vulkan and VMA)
-    bin/       ac_xlate.exe (+ .id), hactool.exe, SDL3.dll (upstream), libopus-0.dll, ninja.exe
+    bin/       ac_xlate.exe (+ .id), hactool.exe, SDL3.dll (upstream), libopus-0.dll, libxess.dll (Intel XeSS SDK),
+               ninja.exe
     recomp/, tools/, data/, installer/, licenses/, THIRD_PARTY_NOTICES.md, astralchain.ini.example
     VERSION    the repository's VERSION plus the commit, 0.1.0+973c626; the installer's release string
     Astral Chain-Setup.exe  installer/launcher/launcher.c built with llvm/ (-mwindows): starts python/pythonw.exe -m installer.gui
 
 --prove compiles the generated C and links build/release-check/astralchain.exe with nothing but the folder's python/, llvm/,
-runtime/ and bin/ (PATH holds the Windows system directory and those), then runs the four probes there.
+runtime/ and bin/ (PATH holds the Windows system directory and those), then runs the probes of PROBES there.
 
 Both need the game version extracted and lifted first (tools/extract.py, recomp/gen.py): generated/v101, and for
 --prove its build/extracted/v101 (they are read, nothing is written to them). The
@@ -49,6 +50,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_xlate  # noqa: E402
 import check_content  # noqa: E402
+import xess_sdk  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MAIN_ROOT = (ROOT / 'build').resolve().parent   # build/, generated/, toolchain/ and refs/ are junctions in a worktree
@@ -87,6 +89,7 @@ PINS = {
             '44c81162337915afecda3185f66fd98268a54454580b2717080c9dfef57fe781'),
     'zstd': (MSYS2 + 'mingw-w64-ucrt-x86_64-zstd-1.5.7-2-any.pkg.tar.zst',   # static libzstd.a (runtime/resolution.c)
              'dbdb8427280046a2b41697780aa4c52983b708082b0da4755951dc3bea96ca89'),
+    'xess': xess_sdk.PIN,   # libxess.dll and its licence texts (runtime/vk_xess.c)
 }
 # The component MSI inside the python.org installer that carries Tcl/Tk and tkinter (Burn names its payloads a0..a27).
 TCLTK_PAYLOAD = ('a12', 'ac87609db3f715404dd41a989c2f1706ea1512f3d86217f938d11c63af8eb505')
@@ -109,7 +112,7 @@ TOOLS_FILES = ['build_game.py', 'build_shaders.py', 'check_content.py', 'exefs_p
 TOOLS_DIRS = ['data']   # data/: the expected hashes of the base game and the update
 RUNTIME_SUFFIXES = {'.h', '.inc', '.ico'}   # .ico: the installer window icon
 
-PROBES = ['--probe-kernel', '--probe-vkexec', '--probe-nvn-tex', '--probe-shader']
+PROBES = ['--probe-kernel', '--probe-vkexec', '--probe-nvn-tex', '--probe-shader', '--probe-xess']
 
 
 def sha256_file(path):
@@ -317,7 +320,19 @@ def build_bin(out):
         sys.exit(f'{dll}: not the pinned SDL3.dll')
     shutil.copy2(dll, b / 'SDL3.dll')
     shutil.copy2(unpack('opus') / 'ucrt64' / 'bin' / 'libopus-0.dll', b / 'libopus-0.dll')
+    shutil.copy2(xess_dir() / 'libxess.dll', b / 'libxess.dll')
     shutil.copy2(unpack('ninja') / 'ninja.exe', b / 'ninja.exe')
+
+
+def xess_dir():
+    """libxess.dll, LICENSE.txt and third-party-programs.txt of the pinned XeSS SDK (only those: the zip also carries
+    samples and the DirectX libraries)."""
+    dest = WORK / 'xess'
+    if not (dest / '.unpacked').is_file():
+        shutil.rmtree(dest, ignore_errors=True)
+        xess_sdk.extract(fetch('xess'), dest)
+        (dest / '.unpacked').write_text('')
+    return dest
 
 
 def build_deps(out):
@@ -355,6 +370,8 @@ def collect_licenses(out):
         (ROOT / 'runtime' / 'shaders' / 'ffx' / 'LICENSE.txt', 'FidelityFX-FSR-LICENSE.txt'),
         (MAIN_ROOT / 'toolchain' / 'hactool' / 'LICENSE', 'hactool-LICENSE.txt'),
         (MAIN_ROOT / 'refs' / 'MacNativeGames' / 'LICENSE', 'MacNativeGames-LICENSE.txt'),
+        (xess_dir() / 'LICENSE.txt', 'XeSS-LICENSE.txt'),
+        (xess_dir() / 'third-party-programs.txt', 'XeSS-third-party-programs.txt'),
     ]
     for src, name in pairs:
         shutil.copy2(src, lic / name)
@@ -548,7 +565,7 @@ def prove(out, cpu='v3'):
          '--ninja', out / 'bin' / 'ninja.exe', '--version', version, '--gen', gen, '--out', chk, '--exefs', ext / 'exefs',
          '--romfs', ext / 'romfs', '--profile', chk / 'profile'], env=env)
     print(f'prove: build {time.time() - t0:.0f} s')
-    for dll in ('SDL3.dll', 'libopus-0.dll'):
+    for dll in ('SDL3.dll', 'libopus-0.dll', 'libxess.dll'):
         shutil.copy2(out / 'bin' / dll, chk / dll)
     failed = []
     for probe in PROBES:

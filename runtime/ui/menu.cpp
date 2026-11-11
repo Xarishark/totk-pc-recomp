@@ -652,11 +652,24 @@ static void tab_screen(float scale) {
     row_shadow_range();
     opt_slider("AC_PCSS", UI_MENU_PCSS, 0, 200, UI_MENU_PCSS_DESC, 10, "%.0f %%");
     opt_slider("AC_CONTACT_SHADOWS", UI_MENU_CONTACT_SHADOWS, 0, 100, UI_MENU_CONTACT_SHADOWS_DESC, 10, "%.0f %%");
+    // One temporal AA at a time: DLSS's rows are greyed out while XeSS is on and XeSS's while DLAA is on (both on from
+    // astralchain.ini: DLAA runs, so only XeSS's row is greyed and DLAA can still be switched off). NGX and XeSS are
+    // Windows libraries (vk_dlaa.c): elsewhere all three rows are.
+#ifdef _WIN32
+    bool dlaa_on = cfg_bool("AC_DLAA") != 0, xess_on = cfg_bool("AC_XESS") != 0;
+    UiTextId dlss_off = xess_on && !dlaa_on ? UI_MENU_TAA_XESS_ON : UI_TEXT_COUNT;
+    UiTextId xess_off = dlaa_on ? UI_MENU_TAA_DLAA_ON : UI_TEXT_COUNT;
+#else
+    UiTextId dlss_off = UI_MENU_TAA_WINDOWS, xess_off = UI_MENU_TAA_WINDOWS;
+#endif
+    if (dlss_off != UI_TEXT_COUNT) opt_disable_next(dlss_off);
     opt_toggle("AC_DLAA", UI_MENU_DLAA, UI_MENU_DLAA_DESC);
     static const UiTextId dlss[] = {UI_MENU_DLSS_DLAA, UI_MENU_DLSS_QUALITY, UI_MENU_DLSS_BALANCED,
                                     UI_MENU_DLSS_PERFORMANCE};
+    if (dlss_off != UI_TEXT_COUNT) opt_disable_next(dlss_off);
     opt_choice("AC_DLSS", UI_MENU_DLSS, dlss, 4, UI_MENU_DLSS_DESC);
-    opt_toggle("AC_FXAA", UI_MENU_FXAA, UI_MENU_FXAA_DESC);
+    if (xess_off != UI_TEXT_COUNT) opt_disable_next(xess_off);
+    opt_toggle("AC_XESS", UI_MENU_XESS, UI_MENU_XESS_DESC);
     rows_color();
     opt_group(UI_MENU_HDR_GROUP);
     opt_toggle("AC_HDR", UI_MENU_HDR, UI_MENU_HDR_DESC);
@@ -1130,9 +1143,11 @@ static void perf_label(UiTextId label, const ImVec4 &c) {
 
 static float perf_gb(float mb) { return mb < 0 ? -1 : mb / 1024; }
 
-// The picture lines: the window, the game image the present shows and the 3D scene it holds (resolution.c), how the
-// present scales the image to the window (gfx_present.c, the last present), the frame limit and the presentation mode
-// in use.
+extern "C" const char *vk_dlaa_running(void);   // vk_dlaa.h (which needs vk.h): DLAA or XeSS, NULL when off
+
+// The picture lines: the window, the game image the present shows and the 3D scene it holds (resolution.c), the
+// temporal AA that resolved the scene (vk_dlaa.c) and how the present scales the image to the window (gfx_present.c,
+// the last present), the frame limit and the presentation mode in use.
 static void perf_picture(const MenuTarget *t, const ImVec4 &c, const PerfStats &s) {
     unsigned out[2], scene[2];
     res_sizes(out, scene);
@@ -1149,6 +1164,12 @@ static void perf_picture(const MenuTarget *t, const ImVec4 &c, const PerfStats &
                  s < 0 ? 0 : s > 100 ? 100 : s);
     } else {
         snprintf(v[3], sizeof v[3], "%s", menu_text(t->scaler ? UI_MENU_OV_SCALE_BILINEAR : UI_MENU_OV_SCALE_NONE));
+    }
+    // the temporal AA that resolved the scene in the last frames, ahead of the present's scaling (vk_dlaa.c)
+    if (const char *taa = vk_dlaa_running()) {
+        char sc[64];
+        snprintf(sc, sizeof sc, "%s", v[3]);
+        snprintf(v[3], sizeof v[3], "%s + %s", taa, sc);
     }
     double hz = frame_step_limit_hz();
     snprintf(v[4], sizeof v[4], "%s", menu_text(UI_MENU_OV_NONE));

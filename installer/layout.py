@@ -127,7 +127,9 @@ def release_layout(root):
         runtime_lib_v2=root / 'runtime' / 'libacrt-v2.a',
         ninja=root / 'bin' / ('ninja' + EXE), hactool=root / 'bin' / ('hactool' + EXE),
         xlate=root / 'bin' / ('ac_xlate' + EXE),
-        dlls=(root / 'bin' / 'SDL3.dll', root / 'bin' / 'libopus-0.dll') if WIN else (root / 'bin' / 'libSDL3.so.0',),
+        # libxess.dll: Intel XeSS (runtime/vk_xess.c), Windows only
+        dlls=(root / 'bin' / 'SDL3.dll', root / 'bin' / 'libopus-0.dll', root / 'bin' / 'libxess.dll') if WIN
+        else (root / 'bin' / 'libSDL3.so.0',),
         shader_answers=root / 'data' / 'shader-answers.bin', ini_example=root / 'astralchain.ini.example',
         # Linux: None, the install folder's .setup-temp (installer/cli.py): the AppImage is mounted read-only, and on
         # a Steam Deck /home is often too full for the generated C while the install folder is on the SD card

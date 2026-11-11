@@ -83,6 +83,8 @@ def main():
     copy(exe, out / f'totk{EXE}')
     for d in DLLS:
         copy(build / d, out / d)
+    if os.name == 'nt' and (build / 'libxess.dll').exists():   # Intel XeSS (xess = 1), optional
+        copy(build / 'libxess.dll', out / 'libxess.dll')
     copy(a.xlate, out / f'ac_xlate{EXE}')
     idf = a.xlate.with_suffix('.id')
     if idf.exists():

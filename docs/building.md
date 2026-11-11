@@ -274,7 +274,14 @@ too, so they check the software fma the v2 build links rather than the C runtime
 Runtime probes, each a mode of `astralchain.exe` (the list is at the top of `runtime/main.c`): `--probe-kernel`,
 `--probe-vkexec`, `--probe-nvn-tex` and `--probe-shader` cover most runtime changes. `--probe-shader` and the draw
 part of `--probe-vkexec` translate shaders of the census below: they look for `build/<ver>/shaders/jobs.json` of the
-exe's own version first, then of the other one.
+exe's own version first, then of the other one. `--probe-xess` runs Intel XeSS once on synthetic images (it passes,
+saying so, without `libxess.dll` or on a GPU XeSS cannot use); a change to `runtime/vk_dlaa.c` or `runtime/vk_xess.c`
+also wants a scripted run into play with `AC_XESS=1`, whose log counts the frames anti-aliased and the history resets.
+A change to the per-object motion code (`runtime/vk_mvprev.c`, the "per-object motion" section of
+`runtime/vk_exec_draw.c`) wants the same run with `AC_XESS=1` to show the `mv_prev:` and `per-object motion:` log lines
+with draws drawn again; `AC_DLAA_MVDEBUG=1` with `--shot` shows the vectors (x red, y green) in place of the picture.
+`.venv\Scripts\python tools\xess_sdk.py` puts the pinned SDK's `libxess.dll` in `toolchain\xess\`, which
+`build_game.py` then copies next to `astralchain.exe`.
 
 Shaders: `.venv-py314\Scripts\python tools\shader_census.py --version <ver> --translate` extracts every Maxwell shader
 to `build\<ver>\shaders\` and runs it through the translator and `spirv-val`; failure groups go to `failures.txt`.
