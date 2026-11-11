@@ -5,9 +5,9 @@
 #include "vk_exec.h"   // VkExec, VkExecTarget, p_bind_buf
 
 int vk_dlaa_wanted(void);   // dlaa is on at start (the device may still lack DLSS)
-// vk_device.c: NGX's instance and device extensions join the lists (room for max names); vk_dlaa_init after the
-// device exists brings NGX up and checks that DLSS is available.
-void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max);
+// vk_device.c, after the instance exists (the NGX core is found through the loaded NVIDIA Vulkan driver): NGX's
+// device extensions join the list (room for max names); vk_dlaa_init after the device exists brings NGX up and checks
+// that DLSS is available.
 void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, const char **ext, uint32_t *n, uint32_t max);
 void vk_dlaa_init(void);
 void vk_dlaa_release(void);   // vk_device.c destroy_all, the device idle

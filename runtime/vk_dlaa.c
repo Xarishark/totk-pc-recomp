@@ -2,8 +2,10 @@
 // AA (AC_XESS, xess; vk_xess.c). This file finds the scene in Astral Chain's frame, jitters its draws, makes the motion
 // vectors (the camera's, then what moves on its own over them) and runs the chosen library on the scene's light target before the bloom; the sections below say how.
 //
-// NGX is loaded at run time from the driver's NGX core (_nvngx.dll, found through
-// HKLM\SOFTWARE\NVIDIA Corporation\Global\NGXCore); the DLSS model (nvngx_dlss.dll) is loaded by NGX from the folder of
+// NGX is loaded at run time from the driver's NGX core (_nvngx.dll), which sits beside NVIDIA's Vulkan driver: once
+// the instance exists that driver is in the process and its module gives the folder (core_load). The registry key older
+// drivers and Proton write (HKLM\SOFTWARE\NVIDIA Corporation\Global\NGXCore) is the fallback. The DLSS model
+// (nvngx_dlss.dll) is loaded by NGX from the folder of
 // astralchain.exe. No NVIDIA SDK code or header is compiled in: the few NGX types used are declared here from the SDK's
 // documented ABI, the way the Metroid Dread recomp's dlss.c reaches the core (read for behaviour only).
 // The core's parameter object is a C++ class whose virtual functions are called through the MSVC vtable: the Set
@@ -102,20 +104,31 @@ int vk_dlaa_wanted(void) {
     return wanted;
 }
 
+// Loads the NGX core. It must run after vkCreateInstance: the Vulkan loader has then loaded NVIDIA's ICD
+// (nvoglv64.dll), and the core is the _nvngx.dll in that module's folder, so the two always come from the same driver.
+// Recent drivers no longer write the NGXCore registry key, which is why it only comes second.
 static int core_load(void) {
     if (N.tried) return N.loaded;
     N.tried = 1;
-    char dir[MAX_PATH] = {0}, path[MAX_PATH + 32];
-    DWORD n = sizeof dir;
-    if (RegGetValueA(HKEY_LOCAL_MACHINE, "SOFTWARE\\NVIDIA Corporation\\Global\\NGXCore", "FullPath", RRF_RT_REG_SZ,
-                     NULL, dir, &n) != ERROR_SUCCESS) {
-        rt_log("dlaa: the driver has no NGX core (registry NGXCore missing): DLAA off");
-        return 0;
+    wchar_t path[MAX_PATH * 2 + 32] = {0};
+    HMODULE icd = GetModuleHandleW(L"nvoglv64.dll");
+    DWORD len = icd ? GetModuleFileNameW(icd, path, MAX_PATH * 2) : 0;
+    while (len && path[len - 1] != L'\\') len--;
+    if (len) {
+        wcscpy(path + len, L"_nvngx.dll");
+        N.core = LoadLibraryW(path);
     }
-    snprintf(path, sizeof path, "%s\\_nvngx.dll", dir);
-    N.core = LoadLibraryA(path);
     if (!N.core) {
-        rt_log("dlaa: cannot load %s (error %lu): DLAA off", path, GetLastError());
+        DWORD n = MAX_PATH * 2 * sizeof(wchar_t);
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\NVIDIA Corporation\\Global\\NGXCore", L"FullPath",
+                         RRF_RT_REG_SZ, NULL, path, &n) == ERROR_SUCCESS) {
+            wcscat(path, L"\\_nvngx.dll");
+            N.core = LoadLibraryW(path);
+        }
+    }
+    if (!N.core) {
+        rt_log("dlaa: no NGX core (_nvngx.dll) beside NVIDIA's Vulkan driver%s or through the NGXCore registry key: DLAA off",
+               icd ? "" : " (not loaded: no NVIDIA GPU?)");
         return 0;
     }
 #define FN(f, name) N.f = (void *)GetProcAddress(N.core, name)
@@ -130,11 +143,11 @@ static int core_load(void) {
     FN(shutdown, "NVSDK_NGX_VULKAN_Shutdown1");
 #undef FN
     if (!N.init || !N.req_ext || !N.caps || !N.alloc_params || !N.create || !N.evaluate || !N.release) {
-        rt_log("dlaa: the NGX core %s lacks Vulkan entry points: DLAA off", path);
+        rt_log("dlaa: the NGX core %ls lacks Vulkan entry points: DLAA off", path);
         return 0;
     }
     N.loaded = 1;
-    rt_log("dlaa: NGX core %s", path);
+    rt_log("dlaa: NGX core %ls", path);
     return 1;
 }
 
@@ -144,19 +157,16 @@ static int listed(const char *const *list, uint32_t n, const char *s) {
     return 0;
 }
 
-void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max) {
-    unsigned ni = 0, nd = 0;
-    const char **ie = NULL, **de = NULL;
-    if (!vk_dlaa_wanted() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
-    for (unsigned i = 0; i < ni; i++)
-        if (!listed(ext, *n, ie[i]) && *n < max) ext[(*n)++] = ie[i];
-}
-
 void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, const char **ext, uint32_t *n,
                          uint32_t max) {
     unsigned ni = 0, nd = 0;
     const char **ie = NULL, **de = NULL;
     if (!vk_dlaa_wanted() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
+    // The instance already exists (core_load needs it), so NGX's instance extensions cannot join it. The only one it
+    // asks for is part of Vulkan 1.1 and our instance is 1.3; anything else is logged, since DLSS may then fail.
+    for (unsigned i = 0; i < ni; i++)
+        if (strcmp(ie[i], VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME))
+            rt_log("dlaa: NGX asks for the instance extension %s, which is not enabled", ie[i]);
     for (unsigned i = 0; i < nd; i++) {
         int ok = 0;
         for (uint32_t k = 0; k < nhave && !ok; k++) ok = !strcmp(have[k].extensionName, de[i]);
@@ -985,7 +995,6 @@ void vk_dlaa_release(void) {
 #include "vk_dlaa.h"
 
 int vk_dlaa_wanted(void) { return 0; }
-void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max) { (void)ext, (void)n, (void)max; }
 void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, const char **ext, uint32_t *n, uint32_t max) {
     (void)have, (void)nhave, (void)ext, (void)n, (void)max;
 }

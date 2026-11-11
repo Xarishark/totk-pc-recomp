@@ -87,7 +87,6 @@ static int create_instance(void) {
     if (validate) ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     if (vk_hdr_wanted() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))   // HDR10 surface formats
         ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
-    vk_dlaa_instance_exts(ext, &n_ext, 18);
     vk_xess_instance_exts(ext, &n_ext, 24);
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "Astral Chain Recomp",
                              .pEngineName = "Astral Chain Recomp", .apiVersion = VK_API_VERSION_1_3};
