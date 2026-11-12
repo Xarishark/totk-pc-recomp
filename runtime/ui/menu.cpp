@@ -384,7 +384,9 @@ extern "C" void menu_vk_release(void) {
 // TOTK_MENU_TEST_SET=<frame>:<key>=<value>[,<key>=<value>...][;<frame>:...]: cfg_set of each key (TOTK_ prefix
 // optional) at that presented frame; changes live settings with no input, menu open or not. totk.ini is written only by
 // the pseudo-key SAVE=1 (cfg_save, as a row change does; a failed write shows the menu's save note).
-enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_MENU, TAB_MODS, TAB_CHEATS, TAB_COUNT };
+// The Cheats tab (ui/cheats_tab.cpp tab_cheats) is not listed: the cheats are not ready to be shown. Their switches
+// are still read from astralchain.ini (cheats.c).
+enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_MENU, TAB_MODS, TAB_COUNT };
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16 };
 struct TestSet { uint64_t frame; char key[64], value[64]; };
 static struct {
@@ -731,8 +733,6 @@ static void tab_screen(float scale) {
     static const UiTextId up[] = {UI_MENU_UPSCALER_FSR, UI_MENU_UPSCALER_BILINEAR};
     opt_choice("AC_UPSCALER", UI_MENU_UPSCALER, up, 2, UI_MENU_UPSCALER_DESC);
     opt_slider("AC_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
-    static const UiTextId aspect[] = {UI_MENU_ASPECT_FIT, UI_MENU_ASPECT_STRETCH, UI_MENU_ASPECT_WIDE};
-    opt_choice("AC_ASPECT", UI_MENU_ASPECT, aspect, 3, UI_MENU_ASPECT_DESC);
     opt_slider("AC_FOV", UI_MENU_FOV, 70, 140, UI_MENU_FOV_DESC, 5, "%.0f %%");
     static const char *const aniso[] = {"auto", "game", "2", "4", "8", "16"};
     const char *aniso_names[] = {menu_text(UI_MENU_ANISO_AUTO), menu_text(UI_MENU_ANISO_GAME), "2x", "4x", "8x", "16x"};
@@ -936,8 +936,7 @@ static void tab_menu(float scale) {
 }
 
 static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN,   UI_MENU_TAB_GAME,   UI_MENU_TAB_SOUND,
-                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_MENU,
-                                              UI_MENU_TAB_MODS,     UI_MENU_TAB_CHEATS};
+                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_MENU,   UI_MENU_TAB_MODS};
 static int g_tab;               // the tab shown
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
 static int g_focus_page = -1;   // this tab's first row takes the cursor once it is shown; -1 none
@@ -1063,13 +1062,6 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
             case TAB_SOUND: tab_sound(scale); break;
             case TAB_CONTROLS: tab_controls(scale); break;
             case TAB_MENU: tab_menu(scale); break;
-            case TAB_CHEATS:
-                if (tab_cheats(scale)) {
-                    restart_rebuild = true;
-                    ImGui::OpenPopup("##restart_confirm");
-                }
-                restart_confirm();
-                break;
             }
             ImGui::EndTabItem();
         }

@@ -171,12 +171,17 @@
 # upscaler = fsr
 # sharpness = 80
 # Picture shape when the window's shape differs from the game resolution's (a 16:9 picture in a 21:9 fullscreen
-# window): fit, the default, keeps the shape, with black bars at the sides or above and below, so a 16:9 game in a wider
-# window is no longer stretched as it used to be; stretch fills the window; wide widens the camera's view so the game
-# fills a window wider than 16:9 (21:9, 32:9, up to 48:9): the game still renders at the game resolution, more of the
-# world shows at the sides, the interface keeps its shape in the middle of the screen, and full-screen movies stay
-# 16:9 between black bars. Changes while the game runs take effect at once.
-# aspect = fit
+# window): wide, the default, widens the camera's view so the game fills a window wider than 16:9 (21:9, 32:9, up to
+# 48:9): the game still renders at the game resolution, more of the world shows at the sides, the HUD goes to the
+# screen's edges, menus keep their shape in the middle and full-screen movies stay 16:9 between black bars; in a window
+# of 16:9 or narrower it is the same as fit. fit keeps the picture's shape, with black bars at the sides or above and
+# below; stretch fills the window. Set here only, the menu has no row for it; changes while the game runs take effect
+# at once.
+# aspect = wide
+# Written by the game, not a setting: up to 1.11.0 the picture's shape was fit or stretch, and the first start of a
+# later version removes such an aspect line here once, so the default, wide, applies. aspect_migrated = 1 records that
+# this ran, so fit or stretch picked afterwards is kept.
+# aspect_migrated = 1
 # Field of view, in percent of the game's own: 70 to 140, 100 (the default) leaves the camera as it is. Higher shows
 # more of the world around Link. Game version 1.4.3 only. Changes while the game runs take effect at once.
 # fov = 100
@@ -357,8 +362,8 @@
 # shared_fonts =
 
 [cheats]
-# One line per cheat of the mods' cheat files, mods\<mod>\cheats\<build id>.txt (docs/cheats.md); the Cheats tab of
-# the menu writes them. cheat_<hash> = 1 switches a cheat on, the hash being FNV-1a 32 of "<mod folder>/<cheat name>".
+# One line per cheat of the mods' cheat files, mods\<mod>\cheats\<build id>.txt (docs/cheats.md); the menu has no tab
+# for them yet. cheat_<hash> = 1 switches a cheat on, the hash being FNV-1a 32 of "<mod folder>/<cheat name>".
 # Default: every cheat off.
 # cheat_0123abcd = 1
 

@@ -120,7 +120,9 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   HUD stretched over it. The `aspect` setting (`fit`, the default; `stretch`; `wide`) decides what the present does
   when the window's shape differs from the output's: `fit` letterboxes, where a 16:9 game in a wider window used to be
   stretched.
-- Wide pictures on 1.0.1 (`aspect = wide`, `resolution.c` `res_wide_tick`, set `wide` of `recomp/patches-v101.txt`).
+- Wide pictures on 1.0.1 (`aspect = wide`, the default; `resolution.c` `res_wide_tick`, set `wide` of
+  `recomp/patches-v101.txt`, switched on the first time the window is wider than 16:9; `cfg_migrate_aspect` removes,
+  once, an ini `aspect = fit` or `stretch` from before the option and marks the file with `aspect_migrated = 1`).
   The game's targets stay 16:9, since sizes off the 32n x 18n grid lose the device; a window wider than 16:9 (up to
   48:9) gets them drawn with a wider camera instead, and the present stretches the picture to the camera's shape, so
   the pixel count does not change. Each frame has a shape: the ratio its lenses were built with. `rt_wide_dirty_w8`,
@@ -135,11 +137,15 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   (`rt_wide_view_x8`) then maps onto that wider plane, and the visibility cone (`rt_wide_cone_s0`) is widened to the
   picture's corners. The rest of the interface (the mission banner, the dialogue's lines, the civilians' markers) is
   drawn through a flat camera over the same 1280x720 plane, the first of three the game makes; it also draws the
-  interface's 1280x720 textures (the minimap's picture), so it keeps its plane, and the passes that draw onto the
-  screen bind the second one instead, which `rt_wide_flat_w8` keeps as that plane at the frame's width. Not done:
-  anchoring the HUD's blocks to the screen's edges (their places come from the game's code and the `.uid` files of
-  `ui/ui.pkz`, not from one layout table), and widening what is meant to cover the whole screen from inside the
-  interface's layers, which covers the middle 16:9. `--shot` and `AC_SHOTS` save the
+  interface's 1280x720 textures (the minimap's picture) and the effects that cover the picture (the IRIS mode's
+  veil), so it keeps its plane, and the interface layers drawn onto the screen bind the second one instead, which
+  `rt_wide_flat_w8` keeps as that plane at the frame's width. The HUD's blocks then go to the picture's edges
+  (`rt_wide_anchor`): each is an instance of a layout, a tree of parts whose world matrices the game makes every
+  frame, and the top parts of a gameplay HUD layout (archive `hud2`) whose drawn parts sit in the left or right third
+  of the plane are moved by half the plane's extra width; the side is decided once per instance from the layout's
+  own places, only instances placed at the plane's middle count (one placed elsewhere hangs on a place in the world
+  or on a part of a block that has moved already), and menus keep their composition in the middle 16:9. Not done:
+  widening a layout's own backdrops that span the screen. `--shot` and `AC_SHOTS` save the
   game's 16:9 texture; `AC_PRESENT_SHOT` saves the window's picture.
 - HDR (`hdr = 1`, `vk_hdr.c`). The game tonemaps its scene (Uchimura's curve, or Hable's, then a 16³ colour LUT) into
   an R11G11B10F target at the output's size, sRGB-encoded; its SMAA reads that target and writes the 8-bit window

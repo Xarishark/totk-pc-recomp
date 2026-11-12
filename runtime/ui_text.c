@@ -62,12 +62,6 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_DESC] = "How the picture is scaled to the window. FSR keeps edges and detail sharper than "
                               "bilinear, and sharpens the picture even when it already fits the window.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
-    [UI_MENU_ASPECT] = "Picture shape",
-    [UI_MENU_ASPECT_DESC] = "When the window's shape differs from the game resolution's (a 16:9 picture on a 21:9 "
-                            "screen): keep the picture's shape with black bars, stretch it over the window, or widen "
-                            "the camera's view so the game fills a wider window (the interface keeps its shape in "
-                            "the middle; movies stay 16:9).",
-    [UI_MENU_ASPECT_FIT] = "Black bars", [UI_MENU_ASPECT_STRETCH] = "Stretch", [UI_MENU_ASPECT_WIDE] = "Wide view",
     [UI_MENU_FOV] = "Field of view",
     [UI_MENU_FOV_DESC] = "How much of the world the camera shows, in percent of the game's own (50 degrees vertically in play). Cutscenes keep the game's own framing.",
     [UI_MENU_SHADOW_RES] = "Shadow map size",
@@ -189,7 +183,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
                             "load code modules, so the whole mod stays off.",
     [UI_MENU_MODS_EXEFS_LATER] = "This mod patches the game code (exefs). The game builds the patches in when it "
                                  "starts next (a rebuild of a few minutes); until then the whole mod stays off.",
-    [UI_MENU_MODS_CHEATS] = "Cheats: %d. Switch them on the Cheats tab.",
+    [UI_MENU_MODS_CHEATS] = "Cheats: %d.",
     [UI_MENU_MODS_CHEATS_FILE] = "Cheats for this game version are read at start from cheats\\%s in this mod.",
     [UI_MENU_MODS_BAD_NAME] = "The folder name contains |, which the mod list uses between names. Rename the folder.",
     [UI_MENU_MODS_OTHER_VERSION] = "%u of its files are made for another game version and are left out. Look for a "
@@ -467,13 +461,6 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_DESC] = "Как картинка подгоняется под окно. FSR сохраняет края и детали чётче билинейного и "
                               "повышает резкость, даже когда картинка уже совпадает с окном.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Билинейное",
-    [UI_MENU_ASPECT] = "Форма картинки",
-    [UI_MENU_ASPECT_DESC] = "Когда форма окна отличается от разрешения игры (картинка 16:9 на экране 21:9): сохранить "
-                            "форму картинки с чёрными полосами, растянуть её на всё окно или расширить обзор камеры, "
-                            "чтобы игра заполнила более широкое окно (интерфейс сохраняет форму в центре; ролики "
-                            "остаются 16:9).",
-    [UI_MENU_ASPECT_FIT] = "Чёрные полосы", [UI_MENU_ASPECT_STRETCH] = "Растянуть",
-    [UI_MENU_ASPECT_WIDE] = "Широкий обзор",
     [UI_MENU_FOV] = "Поле зрения",
     [UI_MENU_FOV_DESC] = "Сколько мира показывает камера, в процентах от игрового (50 градусов по вертикали в игре). Ролики сохраняют исходное кадрирование.",
     [UI_MENU_SHADOW_RES] = "Размер карты теней",
@@ -596,7 +583,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
                             "модули кода, поэтому мод выключен целиком.",
     [UI_MENU_MODS_EXEFS_LATER] = "Этот мод меняет код игры (exefs). Игра соберёт эти патчи при следующем запуске "
                                  "(пересборка на несколько минут); до тех пор мод выключен целиком.",
-    [UI_MENU_MODS_CHEATS] = "Читов: %d. Они включаются на вкладке «Читы».",
+    [UI_MENU_MODS_CHEATS] = "Читов: %d.",
     [UI_MENU_MODS_CHEATS_FILE] = "Читы для этой версии игры читаются при запуске из cheats\\%s в этом моде.",
     [UI_MENU_MODS_BAD_NAME] = "В имени папки есть символ |, которым список модов разделяет имена. Переименуйте папку.",
     [UI_MENU_MODS_OTHER_VERSION] = "Файлов для другой версии игры: %u, они пропущены. Поищите версию этого мода для "
@@ -863,7 +850,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EXEFS_LATER] = "Este mod altera o código do jogo (exefs). O jogo compila esses patches na próxima "
                                  "vez que iniciar (uma recompilação de alguns minutos); até lá o mod inteiro fica "
                                  "desligado.",
-    [UI_MENU_MODS_CHEATS] = "Cheats: %d. Ligue-os na aba Cheats.",
+    [UI_MENU_MODS_CHEATS] = "Cheats: %d.",
     [UI_MENU_MODS_CHEATS_FILE] = "Os cheats desta versão do jogo são lidos ao iniciar de cheats\\%s neste mod.",
     [UI_MENU_MODS_BAD_NAME] = "O nome da pasta contém |, que a lista de mods usa entre os nomes. Renomeie a pasta.",
     [UI_MENU_MODS_OTHER_VERSION] = "%u dos seus arquivos são de outra versão do jogo e ficam de fora. Procure uma versão "
@@ -903,13 +890,6 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_UPSCALER_DESC] = "Como a imagem é ajustada à janela. O FSR mantém bordas e detalhes mais nítidos que o "
                               "bilinear e aumenta a nitidez mesmo quando a imagem já tem o tamanho da janela.",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1", [UI_MENU_UPSCALER_BILINEAR] = "Bilinear",
-    [UI_MENU_ASPECT] = "Formato da imagem",
-    [UI_MENU_ASPECT_DESC] = "Quando o formato da janela difere do da resolução do jogo (uma imagem 16:9 numa tela "
-                            "21:9): manter o formato da imagem com barras pretas, esticá-la sobre a janela ou ampliar a "
-                            "visão da câmera para o jogo preencher uma janela mais larga (a interface mantém o "
-                            "formato no centro; os vídeos permanecem em 16:9).",
-    [UI_MENU_ASPECT_FIT] = "Barras pretas", [UI_MENU_ASPECT_STRETCH] = "Esticar",
-    [UI_MENU_ASPECT_WIDE] = "Visão ampla",
     [UI_MENU_SHARPNESS] = "Nitidez do FSR",
     [UI_MENU_SHARPNESS_DESC] = "Aumento de nitidez após a ampliação do FSR; 0 desliga.",
 
@@ -1304,7 +1284,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_MODS_EMPTY] = "此文件夹中没有 romfs、exefs 或 cheats 文件。",
     [UI_MENU_MODS_SUBSDK] = "此模组带有自己的游戏代码（subsdk 插件或替换的 main）。移植版无法加载代码模块，因此整个模组保持关闭。",
     [UI_MENU_MODS_EXEFS_LATER] = "此模组修改游戏代码（exefs）。游戏会在下次启动时把这些补丁构建进去（重新构建需要几分钟）；在此之前整个模组保持关闭。",
-    [UI_MENU_MODS_CHEATS] = "金手指：%d 个。在“金手指”标签页中开关。",
+    [UI_MENU_MODS_CHEATS] = "金手指：%d 个。",
     [UI_MENU_MODS_CHEATS_FILE] = "此游戏版本的金手指在启动时从此模组的 cheats\\%s 读取。",
     [UI_MENU_MODS_BAD_NAME] = "文件夹名称含有 |，模组列表用它分隔名称。请重命名该文件夹。",
     [UI_MENU_MODS_OTHER_VERSION] = "它有 %u 个文件是为其他游戏版本制作的，已被跳过。请寻找适用于你的游戏版本的此模组。",
@@ -1354,13 +1334,6 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
                               "FSR 比双线性更能保留边缘和细节，即使画面已与窗口同样大小也会锐化。",
     [UI_MENU_UPSCALER_FSR] = "AMD FSR 1",
     [UI_MENU_UPSCALER_BILINEAR] = "双线性",
-    [UI_MENU_ASPECT] = "画面宽高比",
-    [UI_MENU_ASPECT_DESC] = "当窗口宽高比和游戏分辨率不同时（21:9 屏幕上显示 16:9 画面）："
-                            "用黑边保持画面比例、拉伸铺满窗口，或扩大镜头视野让游戏铺满更宽的窗口"
-                            "（界面在中间保持原比例；影片保持 16:9）。",
-    [UI_MENU_ASPECT_FIT] = "黑边",
-    [UI_MENU_ASPECT_STRETCH] = "拉伸",
-    [UI_MENU_ASPECT_WIDE] = "宽视野",
     [UI_MENU_FOV] = "视野",
     [UI_MENU_FOV_DESC] = "镜头能看到多大范围，以游戏自身视野的百分比表示。"
                           "游戏中垂直视角为 50 度；过场动画保持原有构图。",

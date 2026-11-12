@@ -31,7 +31,7 @@ static int save_ok = 1;                         // the last cfg_save_to wrote (o
 // logged as unknown. A new variable goes here too, or its ini key logs a harmless "unknown key" line. FXAA stays known
 // though nothing reads it any more (it switched TotK's FXAA, which Astral Chain does not have): older files carry it.
 static const char *const known[] = {
-    "AB", "AMIIBO_DIR", "ANISO", "ANTI_ALIASING", "APP_POOL", "ASPECT", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_OFF", "AUDIO_PREFILL_MS",
+    "AB", "AMIIBO_DIR", "ANISO", "ANTI_ALIASING", "APP_POOL", "ASPECT", "ASPECT_MIGRATED", "ASPECT_PATCH", "ASSUME_FOCUS", "ASTC", "ASTC_BC", "ASTC_TIME", "ASYNC_PREEMPT", "AUDIO", "AUDIO_OFF", "AUDIO_PREFILL_MS",
     "BACKGROUND_WINDOW", "BIND_A", "BIND_B", "BIND_DOWN", "BIND_L", "BIND_LCLICK", "BIND_LEFT", "BIND_LSTICK_DOWN", "BIND_LSTICK_LEFT",
     "BIND_LSTICK_RIGHT", "BIND_LSTICK_UP", "BIND_MINUS",
     "BIND_PLUS", "BIND_R", "BIND_RCLICK", "BIND_RIGHT", "BIND_RSTICK_DOWN", "BIND_RSTICK_LEFT", "BIND_RSTICK_RIGHT", "BIND_RSTICK_UP",
@@ -75,7 +75,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"HDR_UI_NITS", "display"}, {"HDR_HUE", "display"}, {"SHADOW_RES", "display"},
     {"ANTI_ALIASING", "display"}, {"UPSCALING", "display"}, {"UPSCALING_QUALITY", "display"}, {"DLAA", "display"},
     {"DLSS", "display"}, {"XESS", "display"},
-    {"DEVICE_PROFILE", "display"}, {"DECK_RES_MIGRATED", "display"}, {"ASSUME_FOCUS", "display"},
+    {"DEVICE_PROFILE", "display"}, {"DECK_RES_MIGRATED", "display"}, {"ASPECT_MIGRATED", "display"}, {"ASSUME_FOCUS", "display"},
     {"SHADOW_SCALE", "display"}, {"SHADOW_RANGE", "display"}, {"CONTACT_SHADOWS", "display"},
     {"PCSS", "display"},
     {"MODS_DIR", "mods"}, {"MODS_ORDER", "mods"}, {"MODS_DISABLED", "mods"}, {"MODS_REBUILD", "mods"},
@@ -124,7 +124,7 @@ static const CfgMeta metas[] = {
     {"UPSCALING", "off", "off|auto|dlss|xess|fsr3", LIVE},
     {"UPSCALING_QUALITY", "native", "native|quality|balanced|performance|ultra_performance", RESTART},
     {"ANTI_ALIASING", "smaa", "off|smaa", LIVE},
-    {"ASPECT", "fit", "fit|stretch|wide", LIVE}, {"FOV", "100", "70..140", LIVE},
+    {"ASPECT", "wide", "fit|stretch|wide", LIVE}, {"FOV", "100", "70..140", LIVE},
     {"ANISO", "auto", "auto|game|2|4|8|16", RESTART},   // vk_texture.c sampler_features
     // colour adjustment (vk_color.c); the preset is the menu's, the four values are what the present uses
     {"COLOR_PRESET", "default", "default|vivid|clarity|custom", LIVE}, {"COLOR_BRIGHTNESS", "0", "-30..30", LIVE},
@@ -864,6 +864,37 @@ int cfg_migrate_deck_res(int deck) {
     return reset ? 2 : 1;
 }
 
+// ---- the picture's shape: one move to wide. Up to 1.11.0 aspect was fit or stretch; wide, which fills a window wider
+// than 16:9 with a wider view and is the same as fit in a 16:9 one, is the default since. A fit or stretch line in
+// astralchain.ini was chosen when there was no wide to choose, so it is removed once and the default applies. The
+// marker aspect_migrated = 1 goes into the file whether or not a line moved, so fit or stretch picked afterwards
+// stays. The environment's AC_ASPECT is a choice for one launch and is not looked at. Returns 0 when nothing ran
+// (already done), 1 when only the marker was set, 2 when the aspect line was removed as well; the caller saves.
+int cfg_migrate_aspect(void) {
+    plat_mutex_lock(&set_lock);
+    CfgEntry *mark = NULL, *aspect = NULL;
+    for (int i = 0; i < n_entries; i++) {
+        if (!strcmp(entries[i].key, "ASPECT_MIGRATED")) mark = &entries[i];
+        if (!strcmp(entries[i].key, "ASPECT")) aspect = &entries[i];
+    }
+    if (mark && mark->value && strcmp(mark->value, "0")) {
+        plat_mutex_unlock(&set_lock);
+        return 0;
+    }
+    int reset = aspect && aspect->value && !aspect->removed && strcmp(aspect->value, "wide");
+    if (reset) {
+        rt_log("cfg: astralchain.ini aspect = %s dates from before the wide view; removed once so the default, wide, "
+               "applies (aspect_migrated = 1 marks it done: fit or stretch picked again stays)", aspect->value);
+        __atomic_store_n(&aspect->value, NULL, __ATOMIC_RELEASE);   // the old string stays for readers
+        aspect->dirty = 0;
+        aspect->removed = 1;   // cfg_save_to deletes the line
+        __atomic_add_fetch(&version, 1, __ATOMIC_RELEASE);
+    }
+    plat_mutex_unlock(&set_lock);
+    cfg_set(PREFIX "ASPECT_MIGRATED", "1");
+    return reset ? 2 : 1;
+}
+
 // The environment's anti_aliasing of 1.10.1 (AC_ANTI_ALIASING=dlaa, xess or fsr3: scripts, docs/building.md's checks),
 // which migrate_upscaling cannot rewrite: read as that upscaler in its native mode while upscaling is set nowhere, for
 // the run, not saved. NULL: none. The upscaler's name, "dlss", "xess" or "fsr3" (dlss and xess on Windows only).
@@ -896,6 +927,7 @@ void cfg_init(void) {
                "turns it off)");
     // Saved at once, but no file is made only for the marker: without astralchain.ini it stays pending in memory and goes
     // in with the first save that makes the file (a menu change, F11), the only way a stored output_res can appear.
-    int moved = cfg_migrate_deck_res(profile_of());
+    int moved = cfg_migrate_deck_res(profile_of()), shape = cfg_migrate_aspect();
+    if (moved < shape) moved = shape;
     if (moved == 2 || (moved == 1 && find_ini() && plat_file_exists(ini_path))) cfg_save();
 }

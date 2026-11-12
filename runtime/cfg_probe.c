@@ -549,6 +549,26 @@ int probe_cfg(void) {
     CHECK(plat_file_write(path, ssaa_own, sizeof ssaa_own - 1) && cfg_load(path) == 1 &&
               EQ(cfg_value("AC_OUTPUT_RES"), "2560x1440"),
           "an output_res of the file's own wins over ssaa");
+    // The one-time move of a stored aspect = fit or stretch to the default, wide (cfg.c cfg_migrate_aspect)
+    static const char shape_old[] = "[display]\naspect = stretch\n";
+    static const char shape_done[] = "[display]\naspect_migrated = 1\n";
+    CHECK(plat_file_write(path, shape_old, sizeof shape_old - 1) && cfg_load(path) == 1 && cfg_migrate_aspect() == 2 &&
+              !cfg_is_set("AC_ASPECT") && EQ(cfg_value("AC_ASPECT"), "wide") && cfg_save_to(path) == 1,
+          "aspect migration: a stored stretch is removed and the default, wide, applies");
+    got = plat_file_read(path, &got_n);
+    CHECK(got && got_n == sizeof shape_done - 1 && !memcmp(got, shape_done, got_n),
+          "aspect migration: the aspect line leaves the file, the marker comes in");
+    if (got && (got_n != sizeof shape_done - 1 || memcmp(got, shape_done, got_n)))
+        fprintf(stderr, "---- saved:\n%s\n----\n", got);
+    free(got);
+    CHECK(cfg_load(path) == 1 && cfg_migrate_aspect() == 0, "aspect migration: runs once");
+    cfg_set("AC_ASPECT", "fit");   // black bars picked again
+    CHECK(cfg_save_to(path) == 1 && cfg_load(path) == 1 && cfg_migrate_aspect() == 0 && EQ(cfg_get("AC_ASPECT"), "fit"),
+          "aspect migration: fit picked after the move stays");
+    static const char shape_wide[] = "[display]\naspect = wide\n";
+    CHECK(plat_file_write(path, shape_wide, sizeof shape_wide - 1) && cfg_load(path) == 1 && cfg_migrate_aspect() == 1 &&
+              EQ(cfg_get("AC_ASPECT"), "wide"),
+          "aspect migration: a wide line stays, the marker only");
     // The Steam Deck's one-time move from a stored 1080p output_res to the profile's 1280x720 (cfg.c cfg_migrate_deck_res)
     static const char deck_1080[] = "[display]\noutput_res = 1920x1080\n";
     static const char deck_done[] = "[display]\ndeck_res_migrated = 1\n";

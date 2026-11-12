@@ -91,7 +91,7 @@ void rt_wide_dirty_w8(Cpu *c);      // wide pictures: a 16:9 lens (x24) takes th
 void rt_wide_cone_s0(Cpu *c);       // wide pictures: s0 (the lens's angle) widened for the visibility cone
 void rt_wide_view_x8(Cpu *c);       // wide pictures: x8 = the viewport world to screen maps the lens (x4) onto
 void rt_wide_flat_w8(Cpu *c);       // wide pictures: the second flat camera (x19) kept at the frame's width; w8 = dirty
-void rt_wide_flat_w2(Cpu *c);       // wide pictures: w2 = the flat camera of the piece (x20) being drawn
+void rt_wide_anchor(Cpu *c);        // wide pictures: a layout block (its top part x19) moved to its edge
 // game resolution (resolution.c, set res): the output width or height from the patch page into a register, the
 // ladder's cmp w0 against the width (returns packed NZCV), and the render-target budget for that size into w8
 void rt_res_w8(Cpu *c), rt_res_h8(Cpu *c), rt_res_w9(Cpu *c), rt_res_h9(Cpu *c), rt_res_h22(Cpu *c);
