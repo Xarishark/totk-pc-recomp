@@ -87,7 +87,11 @@ void rt_movie_opened(Cpu *c);       // Bink player open: x0 = BinkOpen's handle 
 void rt_movie_close(Cpu *c);        // Bink player: x0 = the handle BinkClose takes
 void rt_movie_wait(Cpu *c);         // Bink player: x0 = the handle BinkWait takes (a full-screen movie is playing)
 void rt_fov_s0(Cpu *c);             // field of view: s0 (the scene's vertical angle) *= AC_FOV factor (resolution.c)
+void rt_fov_lens24_s0(Cpu *c);      // the same for a lens's projection (lens x24 / x8), then a taller frame's angle
+void rt_fov_lens8_s0(Cpu *c);
 void rt_wide_dirty_w8(Cpu *c);      // wide pictures: a 16:9 lens (x24) takes the frame's ratio; w8 = its dirty word
+void rt_wide_angle24_s0(Cpu *c);    // wide pictures: s0 (a lens's vertical angle; lens x24 / x8) for a taller frame
+void rt_wide_angle8_s0(Cpu *c);
 void rt_wide_cone_s0(Cpu *c);       // wide pictures: s0 (the lens's angle) widened for the visibility cone
 void rt_wide_view_x8(Cpu *c);       // wide pictures: x8 = the viewport world to screen maps the lens (x4) onto
 void rt_wide_flat_w8(Cpu *c);       // wide pictures: the second flat camera (x19) kept at the frame's width; w8 = dirty

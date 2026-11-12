@@ -125,9 +125,11 @@ site res main 40e0b0 52a26c08 @fn:rt_res_budget_w8   # mov w8, #0x13600000 -> th
 # multiplies the loaded or stored angle by the factor on page +60 (rt_fov_s0), so the projection, the culling built
 # from it and the screen sizes stay in step; while the game's cutscene flag is set the angle passes unscaled, so
 # cutscenes keep their framing. Off while AC_FOV is 100, so the camera code is the game's own.
+# The two projection sites are the wide set's too (a taller frame's angle, below); this set comes first and wins there,
+# so its helpers for them apply that angle as well (resolution.c rt_fov_lens24_s0).
 set  fov AC_FOV_PATCH 0
-site fov main 9a3010 bd427f00 bd427f00 @fn:rt_fov_s0   # ldr s0,[x24,#0x27c]; then s0 *= factor (projection)
-site fov main 9a3054 bd427d00 bd427d00 @fn:rt_fov_s0   # ldr s0,[x8,#0x27c]; then s0 *= factor (second target)
+site fov main 9a3010 bd427f00 bd427f00 @fn:rt_fov_lens24_s0   # ldr s0,[x24,#0x27c]; then s0 *= factor (projection)
+site fov main 9a3054 bd427d00 bd427d00 @fn:rt_fov_lens8_s0    # ldr s0,[x8,#0x27c]; then s0 *= factor (second target)
 site fov main 998b5c bd014260 @fn:rt_fov_s0 bd014260   # str s0,[x19,#0x140] -> s0 *= factor; the same store
 site fov main 998f90 bd014260 @fn:rt_fov_s0 bd014260   # str s0,[x19,#0x140] -> s0 *= factor; the same store
 
@@ -361,7 +363,8 @@ site movies main 9bf6a8 97f5034e @fn:rt_movie_wait 97f5034e     # bl BinkWait
 # Wide pictures (the aspect setting's wide, AC_ASPECT=wide; runtime/resolution.c res_wide_tick). The game renders 16:9
 # whatever the window's shape (off the 32n x 18n grid it loses the device, resolution.c res_output_grid), so a wider
 # window gets the same 16:9 targets drawn with a wider camera, and the present stretches that picture back to the
-# camera's shape (gfx_present.c gfx_fit_rect). A camera's lens (*(handle), handle = camera+0x58 for the game's cameras)
+# camera's shape (gfx_present.c gfx_fit_rect). A taller window (16:10, down to 4:3) gets them drawn with a taller one
+# that keeps the 16:9 view's width: more of the world above and below instead of black bars. A camera's lens (*(handle), handle = camera+0x58 for the game's cameras)
 # keeps its viewport {x, y, width, height} at +0x260 and the aspect ratio at +0x278; main+0x9a30a0 fills both from a
 # width and a height and has three callers: the game camera (main+0x3a2398, 1280x720), the interface camera
 # (main+0x9045d4, 1280x720, a 20 degree lens 2040 units in front of the 1280x720 plane, made by the message system) and
@@ -379,14 +382,21 @@ site movies main 9bf6a8 97f5034e @fn:rt_movie_wait 97f5034e     # bl BinkWait
 # The game's visibility cone (main+0x991240: an object outside it and beyond its own distance is not shown) is the
 # lens's vertical half angle plus 20 degrees around the camera's axis, 45 degrees in play, which holds a 16:9 picture's
 # corners (43.4 degrees) and no more; a 21:9 picture's are at 50.4. Its site widens the half angle by the ratio's
-# share over 16:9 (rt_wide_cone_s0).
+# share over 16:9, or a taller picture's by 16:9's share over its ratio (rt_wide_cone_s0).
+# A lens's projection takes its vertical angle (+0x27c) and its ratio; a taller ratio at the same angle would only cut
+# the sides off, so where the projection is built from the angle (the fov set's two sites, which win while a field of
+# view is set and do the same) a lens made 16:9 that holds a taller ratio gets the angle whose picture is as wide as
+# the 16:9 one (rt_wide_angle24_s0). The lens keeps the game's angle, which the game may read back.
 set  wide AC_WIDE_PATCH 0
 site wide main 9a3004 b9428f08 @fn:rt_wide_dirty_w8   # ldr w8,[x24,#0x28c] -> the lens's ratio brought up to date; w8 = dirty
 site wide main 99132c 1e2c1001 @fn:rt_wide_cone_s0 1e2c1001   # fmov s1,#0.5; before it s0 = the angle for the frame's ratio
+site wide main 9a3010 bd427f00 bd427f00 @fn:rt_wide_angle24_s0   # ldr s0,[x24,#0x27c]; then the angle for a taller ratio
+site wide main 9a3054 bd427d00 bd427d00 @fn:rt_wide_angle8_s0    # ldr s0,[x8,#0x27c]; the same (second target)
 # World to screen and back (main+0x9a31f0, main+0x9a3270; the game cameras' main+0x88f760 and main+0x88f770) map a
 # lens's picture onto its viewport, 1280x720 for the game camera, and what they return is used as a place on the
-# interface's 1280x720 plane. With the interface camera at the frame's ratio that plane shows 720 x ratio units across,
-# so the picture's edges are no longer at 0 and 1280: both sites hand over a viewport of that width, centred.
+# interface's 1280x720 plane. With the interface camera at the frame's ratio that plane shows 720 x ratio units across
+# (1280 / ratio down, in a taller frame), so the picture's edges are no longer at 0 and 1280 (0 and 720): both sites
+# hand over a viewport of that width (height), centred.
 site wide main 9a320c 91098088 @fn:rt_wide_view_x8    # add x8,x4,#0x260 -> the viewport for the frame's ratio
 site wide main 9a327c 91098088 @fn:rt_wide_view_x8    # add x8,x4,#0x260 -> the same
 # What is not drawn through the interface camera (the mission banner, the dialogue's lines, the civilians' markers)
@@ -395,8 +405,8 @@ site wide main 9a327c 91098088 @fn:rt_wide_view_x8    # add x8,x4,#0x260 -> the 
 # main+0x3bb7f4 gives the 1280x720 plane; main+0x9e3f70, called for each every frame (main+0x9e4420), writes a dirty
 # one's matrices into its uniform block, and main+0x9e2080 binds camera w2's block for the draws that follow. That
 # camera serves the screen and the interface's 1280x720 layers alike (the minimap's picture is drawn into one), so it
-# keeps its plane; the site in main+0x9e3f70 keeps the second camera as the same plane at the width the frame's ratio
-# shows (resolution.c rt_wide_flat_w8), and the interface layers drawn onto the screen bind that one where they begin
+# keeps its plane; the site in main+0x9e3f70 keeps the second camera as the same plane at the width (or height) the
+# frame's ratio shows (resolution.c rt_wide_flat_w8), and the interface layers drawn onto the screen bind that one where they begin
 # (the layers and their begin functions are registered from main+0x409a08 to main+0x409fec, main+0x9e1f00). Layer
 # 0x5d (main+0x3ffa90) and the flat pieces that bind the camera themselves (main+0x3defd0) keep the first one: they
 # are effects that cover the picture, such as the IRIS mode's veil over the scene, and must reach its edges.
@@ -408,7 +418,8 @@ site wide main 403704 2a1f03e2 52800022               # layer 0x6e's (main+0x403
 # The HUD's blocks at the picture's edges. A block is an instance of a layout (a .uid file of an interface archive),
 # a tree of parts; main+0x910f60 makes each part's world matrix every frame from its own and its parent's. The site,
 # after a part's matrix is made, moves the top parts of the gameplay HUD's layouts whose content sits in the left or
-# the right third of the 1280x720 plane to that side's edge of the wider plane (resolution.c rt_wide_anchor); what
+# the right third of the 1280x720 plane to that side's edge of the wider plane, or in a taller frame those in the top
+# or bottom third to the top or bottom edge (resolution.c rt_wide_anchor); what
 # hangs on a moved part follows it, and the layouts of the menus, the centre of the screen and the markers placed on
 # the world stay where they are.
 site wide main 9111d8 9105c260 @fn:rt_wide_anchor 9105c260    # add x0,x19,#0x170; before it the world matrix moved

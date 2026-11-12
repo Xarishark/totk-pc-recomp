@@ -865,7 +865,7 @@ int cfg_migrate_deck_res(int deck) {
 }
 
 // ---- the picture's shape: one move to wide. Up to 1.11.0 aspect was fit or stretch; wide, which fills a window wider
-// than 16:9 with a wider view and is the same as fit in a 16:9 one, is the default since. A fit or stretch line in
+// or taller than 16:9 with a view of its shape and is the same as fit in a 16:9 one, is the default since. A fit or stretch line in
 // astralchain.ini was chosen when there was no wide to choose, so it is removed once and the default applies. The
 // marker aspect_migrated = 1 goes into the file whether or not a line moved, so fit or stretch picked afterwards
 // stays. The environment's AC_ASPECT is a choice for one launch and is not looked at. Returns 0 when nothing ran

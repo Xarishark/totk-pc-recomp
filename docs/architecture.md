@@ -121,10 +121,13 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   when the window's shape differs from the output's: `fit` letterboxes, where a 16:9 game in a wider window used to be
   stretched.
 - Wide pictures on 1.0.1 (`aspect = wide`, the default; `resolution.c` `res_wide_tick`, set `wide` of
-  `recomp/patches-v101.txt`, switched on the first time the window is wider than 16:9; `cfg_migrate_aspect` removes,
-  once, an ini `aspect = fit` or `stretch` from before the option and marks the file with `aspect_migrated = 1`).
-  The game's targets stay 16:9, since sizes off the 32n x 18n grid lose the device; a window wider than 16:9 (up to
-  48:9) gets them drawn with a wider camera instead, and the present stretches the picture to the camera's shape, so
+  `recomp/patches-v101.txt`, switched on the first time the window's shape is more than 1 % off 16:9;
+  `cfg_migrate_aspect` removes, once, an ini `aspect = fit` or `stretch` from before the option and marks the file
+  with `aspect_migrated = 1`). The game's targets stay 16:9, since sizes off the 32n x 18n grid lose the device; a
+  window wider than 16:9 (up to 48:9) gets them drawn with a wider camera instead, and a taller one (16:10, the Steam
+  Deck's 1280x800, down to 4:3) with a taller camera that keeps the 16:9 view's width: where the projection is built
+  from the lens's vertical angle, `rt_wide_angle24_s0` (or the fov set's helper on the same site) widens that angle
+  for the taller ratio, and the lens keeps the game's own. The present stretches the picture to the camera's shape, so
   the pixel count does not change. Each frame has a shape: the ratio its lenses were built with. `rt_wide_dirty_w8`,
   where the game builds a lens's matrices, hands every lens made 16:9 the ratio of the frame being built; the game's
   present (`vk_backend.c` `vk_be_present`) takes that frame's shape along to the present thread
@@ -142,7 +145,8 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   `rt_wide_flat_w8` keeps as that plane at the frame's width. The HUD's blocks then go to the picture's edges
   (`rt_wide_anchor`): each is an instance of a layout, a tree of parts whose world matrices the game makes every
   frame, and the top parts of a gameplay HUD layout (archive `hud2`) whose drawn parts sit in the left or right third
-  of the plane are moved by half the plane's extra width; the side is decided once per instance from the layout's
+  of the plane are moved by half the plane's extra width (in a taller frame, those in the top or bottom third by half
+  its extra height); the side is decided once per instance from the layout's
   own places, only instances placed at the plane's middle count (one placed elsewhere hangs on a place in the world
   or on a part of a block that has moved already), and menus keep their composition in the middle 16:9. Not done:
   widening a layout's own backdrops that span the screen. `--shot` and `AC_SHOTS` save the

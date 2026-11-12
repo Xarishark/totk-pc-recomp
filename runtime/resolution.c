@@ -702,6 +702,18 @@ void rt_fov_s0(Cpu *c) {
     FP_SETS(0, VSF32(0) * k);
 }
 
+// The fov set's sites where a lens's projection is built (main+0x9a3010, lens x24; main+0x9a3054, lens x8) are the
+// wide set's too, and the fov set comes first in the file, so its helpers also give a taller frame's lens its angle.
+static void wide_tall_angle(Cpu *c, const uint8_t *lens);
+void rt_fov_lens24_s0(Cpu *c) {
+    rt_fov_s0(c);
+    wide_tall_angle(c, (const uint8_t *)(uintptr_t)c->x[24]);
+}
+void rt_fov_lens8_s0(Cpu *c) {
+    rt_fov_s0(c);
+    wide_tall_angle(c, (const uint8_t *)(uintptr_t)c->x[8]);
+}
+
 void res_fov_live(void) {
     static int set = -2, shown = 100;
     if (set == -2) set = rt_patch_set("fov");
@@ -737,16 +749,19 @@ void res_sizes(unsigned out[2], unsigned scene[2]) {
 
 // ---- wide pictures (the aspect setting's wide; recomp/patches-v101.txt, set wide). The game's targets stay 16:9; a
 // 16:9 lens takes the frame's ratio where its matrices are built (rt_wide_dirty_w8), and the present shows the frame in
-// that shape (res_wide_tick hands it to vk_backend.c with the present). The frame's ratio is the window's, from 16:9 up
-// to 48:9; a window of 16:9 or narrower keeps 16:9, and so does every frame while a full-screen movie plays
-// (frame_rate.c rt_movie_showing), which is a 16:9 picture. It changes between frames only, at the game's present, so
-// the lenses of one frame and its present agree. The interface camera's lens takes the ratio too: what is drawn
-// through it keeps its proportions, in the middle 16:9 of the picture (ui_camera_refresh, rt_wide_view_x8).
-// The set is switched on the first time the setting is wide (the default) in a window wider than 16:9, and stays on,
-// so lenses go back to 16:9 through the same site when the setting leaves wide; in a 16:9 window the game's code runs
-// as it is.
+// that shape (res_wide_tick hands it to vk_backend.c with the present). The frame's ratio is the window's, from 4:3 to
+// 48:9; a window within 1 % of 16:9 keeps 16:9, and so does every frame while a full-screen movie plays (frame_rate.c
+// rt_movie_showing), which is a 16:9 picture. It changes between frames only, at the game's present, so the lenses of
+// one frame and its present agree. A wider frame shows more of the world at the sides; a taller one (16:10, the Steam
+// Deck's 1280x800) keeps the 16:9 view's width and shows more above and below: its lenses get a vertical angle widened
+// to match where the projection is built (rt_wide_angle24_s0). The interface camera's lens takes the ratio too: what
+// is drawn through it keeps its proportions, in the middle 16:9 of the picture (ui_camera_refresh, rt_wide_view_x8).
+// The set is switched on the first time the setting is wide (the default) in a window of another shape than 16:9, and
+// stays on, so lenses go back to 16:9 through the same site when the setting leaves wide; in a 16:9 window the game's
+// code runs as it is.
 #define WIDE_16X9 (16.0f / 9.0f)
 #define WIDE_MAX (48.0f / 9.0f)
+#define TALL_MIN (4.0f / 3.0f)
 #define LENS_VIEW_W 0x268    // the lens's viewport width and height (int32), as main+0x9a30a0 got them
 #define LENS_VIEW_H 0x26c
 #define LENS_ASPECT 0x278    // float
@@ -781,7 +796,7 @@ void res_wide_window(unsigned w, unsigned h) {
     if (h) f_bits(&W.window, (float)w / (float)h);
 }
 
-// The ratio the window asks for: its own shape from 16:9 (more than 1 % wider) to 48:9. Before the first swapchain,
+// The ratio the window asks for: its own shape, more than 1 % off 16:9, from 4:3 to 48:9. Before the first swapchain,
 // the window size setting's when the window is not fullscreen.
 static float wide_target(void) {
     if (!W.wanted) return WIDE_16X9;
@@ -791,8 +806,8 @@ static float wide_target(void) {
         char tail;
         if (sscanf(cfg_value("AC_WINDOW_SIZE"), "%ux%u%c", &w, &h, &tail) == 2 && h) r = (float)w / (float)h;
     }
-    if (r <= WIDE_16X9 * 1.01f) return WIDE_16X9;
-    return r > WIDE_MAX ? WIDE_MAX : r;
+    if (r <= 0 || (r <= WIDE_16X9 * 1.01f && r >= WIDE_16X9 / 1.01f)) return WIDE_16X9;
+    return r > WIDE_MAX ? WIDE_MAX : r < TALL_MIN ? TALL_MIN : r;
 }
 
 static void wide_settings(void) {
@@ -802,10 +817,10 @@ static void wide_settings(void) {
     W.wanted = !strcmp(cfg_value("AC_ASPECT"), "wide");
 }
 
-// 1 once the set is on: from the first time the setting is wide and the window wider than 16:9.
+// 1 once the set is on: from the first time the setting is wide and the window of another shape than 16:9.
 static int wide_arm(void) {
     if (W.on) return 1;
-    if (!W.wanted || wide_target() <= WIDE_16X9) return 0;
+    if (!W.wanted || wide_target() == WIDE_16X9) return 0;
     if (W.set < 0) {
         if (!W.told)
             rt_log("resolution: aspect = wide needs the wide patch set, which the generated C lacks: the picture is "
@@ -815,7 +830,7 @@ static int wide_arm(void) {
     }
     W.on = 1;
     rt_patch_switch(W.set, 1);
-    rt_log("resolution: wide pictures on: 16:9 lenses take the window's shape (aspect = wide)");
+    rt_log("resolution: wide pictures on: 16:9 lenses take the window's shape, %.4f (aspect = wide)", wide_target());
     return 1;
 }
 
@@ -894,9 +909,26 @@ void rt_wide_dirty_w8(Cpu *c) {
     c->x[8] = dirty;
 }
 
+// A taller picture than 16:9 keeps the 16:9 view's width: the vertical angle's tangent grows by 16:9 over the ratio.
+// s0 = the vertical angle (radians) loaded for a lens's projection; widened when the lens is made 16:9 and holds a
+// taller ratio (rt_wide_dirty_w8 gave it the frame's). Also called from the fov set's helpers on the same sites
+// (rt_fov_lens24_s0), which win over these while a field of view is set (patches.py: the first set in file order).
+static void wide_tall_angle(Cpu *c, const uint8_t *lens) {
+    float ratio;
+    memcpy(&ratio, lens + LENS_ASPECT, sizeof ratio);
+    if (ratio > 0 && ratio < WIDE_16X9 / 1.001f && lens_16x9(lens))
+        FP_SETS(0, 2.0f * atanf(tanf(VSF32(0) * 0.5f) * (WIDE_16X9 / ratio)));
+}
+
+// main+0x9a3010 (ldr s0,[x24,#0x27c]; x24 = the lens) and main+0x9a3054 (ldr s0,[x8,#0x27c]; x8 = the lens), where a
+// lens's projection is built from its vertical angle: after the load, the angle for the lens's ratio.
+void rt_wide_angle24_s0(Cpu *c) { wide_tall_angle(c, (const uint8_t *)(uintptr_t)c->x[24]); }
+void rt_wide_angle8_s0(Cpu *c) { wide_tall_angle(c, (const uint8_t *)(uintptr_t)c->x[8]); }
+
 // main+0x9a320c and main+0x9a327c (add x8,x4,#0x260), in world to screen and screen to world: x4 = the lens, x8 = its
 // viewport {x, y, width, height} (int32). For a lens that holds a wider ratio than its viewport's, a viewport of the
-// ratio's width at the same height, centred on the lens's own: the interface plane's units for that picture.
+// ratio's width at the same height, centred on the lens's own; for a taller one, of the ratio's height at the same
+// width: the interface plane's units for that picture.
 void rt_wide_view_x8(Cpu *c) {
     static _Thread_local int32_t view[4];   // read by the callee these sites are the arguments of, on this thread
     uint8_t *lens = (uint8_t *)(uintptr_t)c->x[4];
@@ -905,45 +937,58 @@ void rt_wide_view_x8(Cpu *c) {
     memcpy(own, lens + 0x260, sizeof own);
     memcpy(&ratio, lens + LENS_ASPECT, sizeof ratio);
     c->x[8] = (uint64_t)(uintptr_t)(lens + 0x260);
-    if (!lens_16x9(lens) || ratio <= WIDE_16X9 * 1.001f) return;
-    view[2] = (int32_t)lroundf((float)own[3] * ratio);
-    view[3] = own[3];
-    view[0] = own[0] + (own[2] - view[2]) / 2;
-    view[1] = own[1];
+    if (!lens_16x9(lens) || ratio <= 0) return;
+    if (ratio > WIDE_16X9 * 1.001f) {
+        view[2] = (int32_t)lroundf((float)own[3] * ratio);
+        view[3] = own[3];
+        view[0] = own[0] + (own[2] - view[2]) / 2;
+        view[1] = own[1];
+    } else if (ratio < WIDE_16X9 / 1.001f) {
+        view[2] = own[2];
+        view[3] = (int32_t)lroundf((float)own[2] / ratio);
+        view[0] = own[0];
+        view[1] = own[1] + (own[3] - view[3]) / 2;
+    } else {
+        return;
+    }
     c->x[8] = (uint64_t)(uintptr_t)view;
 }
 
 // main+0x99132c, in the visibility cone test: s0 = the lens's vertical angle, from which the game takes half plus 20
 // degrees as the cone's half angle, enough for a 16:9 picture's corners. The angle that gives a 16:9 picture the width
-// this frame's ratio shows, so the cone holds the wider picture's corners as well.
+// a wider frame shows, or the height a taller one shows, so the cone holds that picture's corners as well.
 void rt_wide_cone_s0(Cpu *c) {
     float r = bits_f(&W.now);
     if (r > WIDE_16X9) FP_SETS(0, 2.0f * atanf(tanf(VSF32(0) * 0.5f) * (r / WIDE_16X9)));
+    else if (r < WIDE_16X9) FP_SETS(0, 2.0f * atanf(tanf(VSF32(0) * 0.5f) * (WIDE_16X9 / r)));
 }
 
 // main+0x9e3f84 (ldr w8,[x19,#0x30]), in the function that writes a flat camera's matrices when it is dirty, called
 // for each of them every frame: x19 = the camera, 0x40 bytes: its bounds {left, right, bottom, top, near, far} (floats)
 // at +0x18, the dirty word at +0x30. The game draws through the first one only, the 1280x720 plane; the second one,
-// which the set's sites bind for what is drawn onto the screen, is kept as the first one's plane at the width this
-// frame's ratio shows, around the same middle, and written as a dirty one when that changed.
-// w8 = the camera's dirty word.
+// which the set's sites bind for what is drawn onto the screen, is kept as the first one's plane at the width (or, for
+// a taller frame, the height) this frame's ratio shows, around the same middle, and written as a dirty one when that
+// changed. w8 = the camera's dirty word.
 void rt_wide_flat_w8(Cpu *c) {
     uint8_t *cam = (uint8_t *)(uintptr_t)c->x[19];
     const uint8_t *first = **(uint8_t *const *const *)((uintptr_t)MOD_MAIN_BASE + FLAT_CAMERAS);
     uint32_t dirty;
     memcpy(&dirty, cam + 0x30, sizeof dirty);
     if (first && cam == first + 0x40) {
-        float want[6], have[6], r = bits_f(&W.now), k = r > WIDE_16X9 ? r / WIDE_16X9 : 1;
+        float want[6], have[6], r = bits_f(&W.now), k = r > WIDE_16X9 ? r / WIDE_16X9 : 1,
+                                                    t = r < WIDE_16X9 ? WIDE_16X9 / r : 1;
         memcpy(want, first + 0x18, sizeof want);
         memcpy(have, cam + 0x18, sizeof have);
         float mid = (want[0] + want[1]) * 0.5f, half = (want[1] - want[0]) * 0.5f * k;
         want[0] = mid - half, want[1] = mid + half;
+        mid = (want[2] + want[3]) * 0.5f, half = (want[3] - want[2]) * 0.5f * t;
+        want[2] = mid - half, want[3] = mid + half;
         if (memcmp(have, want, sizeof want)) {
             memcpy(cam + 0x18, want, sizeof want);
             dirty = 1;
             if (rt_trace & RT_TRACE_PERF)
-                rt_log("resolution: wide: flat camera %p columns %.1f..%.1f -> %.1f..%.1f", (void *)cam, have[0],
-                       have[1], want[0], want[1]);
+                rt_log("resolution: wide: flat camera %p columns %.1f..%.1f rows %.1f..%.1f -> %.1f..%.1f, %.1f..%.1f",
+                       (void *)cam, have[0], have[1], have[2], have[3], want[0], want[1], want[2], want[3]);
         }
     }
     c->x[8] = dirty;
@@ -971,7 +1016,7 @@ void rt_wide_flat_w8(Cpu *c) {
 #define ANCHOR_SLOTS 1024
 #define ANCHOR_PARTS 4096
 
-static struct { const uint8_t *inst; uint32_t arc, uid; int8_t side; } g_anchor[ANCHOR_SLOTS];
+static struct { const uint8_t *inst; uint32_t arc, uid; int8_t side[2]; } g_anchor[ANCHOR_SLOTS];
 static unsigned g_anchor_n;
 
 static float part_f(const uint8_t *p, unsigned off) {
@@ -980,16 +1025,18 @@ static float part_f(const uint8_t *p, unsigned off) {
     return f;
 }
 
-// The columns, in the layout's own units from its origin, of the drawn parts under p (p's place at x, its scale sx).
-static void anchor_span(const uint8_t *p, float x, float sx, float *lo, float *hi, unsigned *n, int depth) {
+// The columns (a = 0) or rows (a = 1), in the layout's own units from its origin, of the drawn parts under p (p's place
+// at x on that axis, its scale sx).
+static void anchor_span(const uint8_t *p, int a, float x, float sx, float *lo, float *hi, unsigned *n, int depth) {
     if (*(const uint64_t *)(p + PART_DRAWN)) {
         if (x < *lo) *lo = x;
         if (x > *hi) *hi = x;
     }
     if (++*n > ANCHOR_PARTS || depth > 24) return;
+    unsigned o = 4u * (unsigned)a;
     for (const uint8_t *k = *(const uint8_t *const *)(p + PART_CHILD); k; k = *(const uint8_t *const *)(k + PART_NEXT))
-        anchor_span(k, x + sx * part_f(k, PART_PLACE), sx * part_f(k, PART_SCALE) * part_f(k, PART_SCALE2), lo, hi, n,
-                    depth + 1);
+        anchor_span(k, a, x + sx * part_f(k, PART_PLACE + o), sx * part_f(k, PART_SCALE + o) * part_f(k, PART_SCALE2 + o),
+                    lo, hi, n, depth + 1);
 }
 
 // The name of the interface archive ("hud2", "menu", "core", ...) a layout instance's +0xb4 stands for, from the
@@ -1003,19 +1050,20 @@ static const char *anchor_archive(uint32_t arc) {
     return "";
 }
 
-// The side a layout instance's block sits on: -1 left, 1 right, 0 neither, from where the layout puts what it draws:
-// the middle of the columns its drawn parts start at, in the outer thirds of the 1280 columns or not. Decided once per
-// instance and layout, when it is first updated, over all its top parts (the parts no other part has as a child), so
-// a row across the screen stays whole; the places are the ones the layout's animation holds then, which a block that
-// slides in from its own side does not change the answer of. Only the gameplay HUD's archive has blocks to move: a
-// menu is one composition over the middle 16:9, and its parts are clipped to it.
-static int anchor_side(const uint8_t *inst) {
+// The side a layout instance's block sits on along axis a: for columns (a = 0) -1 left, 1 right, for rows (a = 1) -1
+// top, 1 bottom (the plane's y grows downwards), 0 neither, from where the layout puts what it draws: the middle of
+// the columns or rows its drawn parts start at, in the outer thirds of the 1280 columns or 720 rows or not. Decided
+// once per instance and layout, when it is first updated, over all its top parts (the parts no other part has as a
+// child), so a row across the screen stays whole; the places are the ones the layout's animation holds then, which a
+// block that slides in from its own side does not change the answer of. Only the gameplay HUD's archive has blocks to
+// move: a menu is one composition over the middle 16:9, and its parts are clipped to it.
+static int anchor_side(const uint8_t *inst, int a) {
     uint32_t arc, uid;
     memcpy(&arc, inst + INST_ARCHIVE, sizeof arc);
     memcpy(&uid, inst + INST_UID, sizeof uid);
     unsigned h = (unsigned)(((uintptr_t)inst >> 4) * 2654435761u) % ANCHOR_SLOTS;
     for (unsigned i = 0; i < ANCHOR_SLOTS; i++, h = (h + 1) % ANCHOR_SLOTS) {
-        if (g_anchor[h].inst == inst && g_anchor[h].uid == uid && g_anchor[h].arc == arc) return g_anchor[h].side;
+        if (g_anchor[h].inst == inst && g_anchor[h].uid == uid && g_anchor[h].arc == arc) return g_anchor[h].side[a];
         if (!g_anchor[h].inst || g_anchor[h].inst == inst) break;
     }
     if (g_anchor_n >= ANCHOR_SLOTS * 3 / 4) {
@@ -1025,7 +1073,7 @@ static int anchor_side(const uint8_t *inst) {
     }
     const uint8_t *parts = *(const uint8_t *const *)(inst + INST_PARTS);
     uint64_t count = *(const uint64_t *)(inst + INST_PART_COUNT);
-    float lo = 1e9f, hi = -1e9f;
+    float lo[2] = {1e9f, 1e9f}, hi[2] = {-1e9f, -1e9f};
     unsigned n = 0;
     if (parts && count && count <= ANCHOR_PARTS && !strcmp(anchor_archive(arc), "hud2")) {
         uint8_t child[ANCHOR_PARTS / 8] = {0};
@@ -1039,35 +1087,47 @@ static int anchor_side(const uint8_t *inst) {
         for (uint64_t i = 0; i < count; i++)
             if (!(child[i >> 3] >> (i & 7) & 1)) {
                 const uint8_t *p = parts + i * PART_SIZE;
-                anchor_span(p, part_f(p, PART_PLACE), part_f(p, PART_SCALE) * part_f(p, PART_SCALE2), &lo, &hi, &n, 0);
+                for (int k = 0; k < 2; k++) {
+                    unsigned o = 4u * (unsigned)k, m = 0;
+                    anchor_span(p, k, part_f(p, PART_PLACE + o), part_f(p, PART_SCALE + o) * part_f(p, PART_SCALE2 + o),
+                                &lo[k], &hi[k], &m, 0);
+                    if (!k) n += m;
+                }
             }
     }
-    float mid = (lo + hi) * 0.5f;
-    int side = lo > hi ? 0 : mid < -640.0f / 3 ? -1 : mid > 640.0f / 3 ? 1 : 0;
+    int8_t side[2];
+    for (int k = 0; k < 2; k++) {
+        float mid = (lo[k] + hi[k]) * 0.5f, third = (k ? 360.0f : 640.0f) / 3;
+        side[k] = (int8_t)(lo[k] > hi[k] ? 0 : mid < -third ? -1 : mid > third ? 1 : 0);
+    }
     if (!g_anchor[h].inst) g_anchor_n++;
-    g_anchor[h].side = (int8_t)side, g_anchor[h].arc = arc, g_anchor[h].uid = uid, g_anchor[h].inst = inst;
+    g_anchor[h].side[0] = side[0], g_anchor[h].side[1] = side[1];
+    g_anchor[h].arc = arc, g_anchor[h].uid = uid, g_anchor[h].inst = inst;
     if (rt_trace & RT_TRACE_PERF)
-        rt_log("resolution: wide: layout %s %04x at %p: columns %.0f..%.0f of %u parts, side %d", anchor_archive(arc),
-               uid, (void *)inst, lo, hi, n, side);
-    return side;
+        rt_log("resolution: wide: layout %s %04x at %p: columns %.0f..%.0f rows %.0f..%.0f of %u parts, side %d / %d",
+               anchor_archive(arc), uid, (void *)inst, lo[0], hi[0], lo[1], hi[1], n, side[0], side[1]);
+    return side[a];
 }
 
 // main+0x9111d8 (add x0,x19,#0x170), in the update of a layout part: x19 = the part, x21 = its parent's world
 // transform, sp+0x10 = the part's world matrix, just made, which the part keeps and its children multiply by. A top
 // part (its parent is its instance's transform) of a block that sits on one side moves to that side's edge of the
-// picture: the 1280x720 plane shows 720 x ratio columns, so by half the difference. Only an instance placed at the
-// plane's middle is a screen layout; one placed elsewhere is put there by the game, on a place in the world or on a
-// part of another layout, which has moved with its own block already.
+// picture: in a wider frame the 1280x720 plane shows 720 x ratio columns, so by half the difference along x; in a
+// taller one 1280 / ratio rows, so by half the difference along y, for the blocks at the top and the bottom. Only an
+// instance placed at the plane's middle is a screen layout; one placed elsewhere is put there by the game, on a place
+// in the world or on a part of another layout, which has moved with its own block already.
 void rt_wide_anchor(Cpu *c) {
     float r = bits_f(&W.now);
-    if (r <= WIDE_16X9) return;
+    if (r == WIDE_16X9) return;
     const uint8_t *p = (const uint8_t *)(uintptr_t)c->x[19];
     const uint8_t *own = *(const uint8_t *const *)(p + PART_OWNER);
     if (!own || c->x[21] != (uint64_t)(uintptr_t)(own + INST_TRANSFORM)) return;
-    float move = 360.0f * r - 640.0f;
-    if (fabsf(part_f(own, INST_TRANSFORM + 8) - 640.0f) >= move * 0.5f) return;
-    int side = anchor_side(own);
+    int a = r < WIDE_16X9;   // the axis: 0 columns (wider), 1 rows (taller)
+    float move = a ? 640.0f / r - 360.0f : 360.0f * r - 640.0f;
+    if (fabsf(part_f(own, INST_TRANSFORM + 8 + 4 * a) - (a ? 360.0f : 640.0f)) >= move * 0.5f) return;
+    if (a && fabsf(part_f(own, INST_TRANSFORM + 8) - 640.0f) >= move * 0.5f) return;   // and at the middle column
+    int side = anchor_side(own, a);
     if (!side) return;
     float *m = (float *)(uintptr_t)(c->sp + 0x10);
-    m[12] += (float)side * move;
+    m[12 + a] += (float)side * move;
 }
