@@ -66,6 +66,8 @@ typedef struct Tex {
                                        // upload consumes it (bc_verdict_current); 0 none
     uint32_t ahead;                    // AC_TEX_PREFETCH: the submit_epoch pre_step made it at (0: made by a use). Not
                                        // drawn yet while last_use still equals it (cache_before)
+    uint32_t nomem_epoch;              // submit_epoch of an ASTC upload that found video memory full (upload): the
+                                       // next submit tries again, not every binding of this one
 } Tex;
 
 // A slot keeps what vk_texture_by_id resolved for it, so a draw binding skips the key lookup and the address chain: the
@@ -878,6 +880,10 @@ static void rel_unlink(Tex *e) {
 
 static void bc_flip_remove(Tex *e);   // destroy_tex calls it; defined with the trade list below
 
+// tex_reclaim's purge, while it destroys: the timeline value its entries were last used before (vk_defer_image_after),
+// so their memory comes back without waiting for the submission being recorded; 0 otherwise.
+static uint64_t purge_tl;
+
 static void destroy_tex(Tex *e) {
     own_remove(e);
     if (e->bytes) own_bytes -= e->bytes;
@@ -894,7 +900,8 @@ static void destroy_tex(Tex *e) {
     if (e->released) nreleased--, rel_unlink(e);
     if (e->bc_flip) bc_flip_remove(e);
     vk_exec_image_gone(e->pub.image);
-    vk_defer_image(e->pub.image, e->alloc);
+    if (purge_tl) vk_defer_image_after(e->pub.image, e->alloc, purge_tl);
+    else vk_defer_image(e->pub.image, e->alloc);
     free(e->snap);
     free(e);
 }
@@ -947,10 +954,13 @@ static void sweep_released(void) {
 // one decoded to RGBA8) while the heap spills into system memory. A few per submit, for the reason above. Only entries
 // that come back intact are dropped: mirrored ones the GPU never wrote, re-uploaded from their storage. A render target
 // lives only in its image; dropping it brought the texture back empty (black flashes in a Depths boss fight, ~170
-// "left uninitialised" aliases a minute).
+// "left uninitialised" aliases a minute). Past the whole budget the cache itself gives way and the ASTC textures made
+// from then on are BC3 (over_budget).
 #define PRESSURE_STEP 32
 static int vram_pressure = -1;
 static uint64_t n_pressure_drops;
+
+static void over_budget(uint64_t used, uint64_t budget);   // defined with the cache budget below
 
 static void sweep_pressure(void) {   // tex_lock held
     if (vram_pressure < 0) {
@@ -959,10 +969,12 @@ static void sweep_pressure(void) {   // tex_lock held
         if (vram_pressure < 0 || vram_pressure > 100) vram_pressure = 90;
         rt_log("vk: released textures under VRAM pressure: %s%d%%", vram_pressure ? "dropped above " : "off", vram_pressure);
     }
-    if (!vram_pressure || !rel_head || submit_epoch & 7) return;   // the budget query every 8 submits
+    if (!vram_pressure || submit_epoch & 7) return;   // the budget query every 8 submits
     uint64_t used, budget;
     int exact;
-    if (!vk_mem_vram(&used, &budget, &exact) || used <= budget / 100 * (uint64_t)vram_pressure) return;
+    if (!vk_mem_vram(&used, &budget, &exact)) return;
+    if (used > budget) over_budget(used, budget);
+    if (used <= budget / 100 * (uint64_t)vram_pressure) return;
     int dropped = 0;
     for (Tex *e = rel_head, *next; e && dropped < PRESSURE_STEP; e = next) {
         next = e->rel_next;
@@ -1036,6 +1048,134 @@ static void sweep_cache(void) {   // tex_lock held
         pre_keep(best);
         destroy_tex(best);
     }
+}
+
+// Video memory is short by over bytes: the cache budget becomes what the cache holds less that, and stays there for the
+// rest of the session, as the cache would fill the memory again. It never grows. 1 when it was lowered. tex_lock held.
+//
+// RECLAIM_MIN keeps a cache an area's textures fit in; below the Steam Deck profile's 512 MiB, so the budget can still
+// be lowered there.
+#define RECLAIM_MIN (256ull << 20)
+
+static int cache_budget_shrink(uint64_t over) {
+    cache_budget_init();
+    uint64_t target = own_bytes > over ? own_bytes - over : 0;
+    if (target < RECLAIM_MIN) target = RECLAIM_MIN;
+    if (cache_budget && target >= cache_budget) return 0;
+    cache_budget = target;
+    return 1;
+}
+
+// Over the device's whole budget, seen by sweep_pressure before any allocation failed. Either the game's own textures
+// grew past what the card has left (RGBA8 on a 6 GB card: 5490 MiB in use of a 5233 MiB budget in ordinary play, and a
+// decode that found no memory at 5626), or another program took video memory after the game started (a recorder, a
+// browser) and the system lowered the budget under what the game already holds. Past its budget the system moves the
+// game's video memory to system memory, and a few hundred MiB further allocations fail. So before that the ASTC
+// textures made from here on are BC3 instead of RGBA8 (vk_astc.c vk_astc_low_memory), and the cache budget becomes
+// what the cache holds less the overshoot past the pressure threshold (cache_budget_shrink), so the sweep drops the
+// entries nothing used lately and the upload ahead waits. Both stay for the rest of the session. The budget is lowered
+// again only once the cache is down to the last one: while the sweep is still dropping entries, the device's overshoot
+// is the one already subtracted. tex_lock held, vram_pressure on.
+static void over_budget(uint64_t used, uint64_t budget) {
+    static uint32_t n_logs;
+    int bc3 = vk_astc_low_memory();
+    cache_budget_init();
+    uint64_t was = cache_budget, held = own_bytes;
+    int lowered = (!cache_budget || own_bytes <= cache_budget) &&
+                  cache_budget_shrink(used - budget / 100 * (uint64_t)vram_pressure);
+    if ((bc3 || lowered) && n_logs++ < 16)
+        rt_log("vk: video memory over its budget (%llu of %llu MiB in use): texture cache budget %llu -> %llu MiB (it "
+               "holds %llu MiB)%s",
+               (unsigned long long)(used >> 20), (unsigned long long)(budget >> 20), (unsigned long long)(was >> 20),
+               (unsigned long long)(cache_budget >> 20), (unsigned long long)(held >> 20),
+               bc3 ? ", new ASTC textures are BC3" : "");
+}
+
+static int reclaim_order(const void *a, const void *b) {   // tex_reclaim's purge: the order the budget drops entries in
+    const Tex *x = *(Tex *const *)a, *y = *(Tex *const *)b;
+    return cache_before(x, y) ? -1 : cache_before(y, x) ? 1 : 0;
+}
+
+// Video memory full: an ASTC decode found no room for its scratch buffer (vk_astc_record, VK_ASTC_NO_SCRATCH). Left
+// undecoded, the image kept whatever its memory held and stayed so while the game used it, as the entry counted as
+// uploaded: black characters and a floor showing another texture on a 6 GB card with RGBA8 textures (5626 MiB in use
+// of a 5233 MiB budget). The caller calls this and records the decode again while it returns 1; at 0 it takes the
+// scratch from system memory (vk_astc_record_host). Two steps, each at most once per submit, as each waits for the GPU
+// and the textures of an area arriving in the same submit find the room the first one made:
+//
+// 1. vk_mem_reclaim alone: the deferred objects that are done give their memory back, first of all the scratch buffers
+//    of the decodes this submit recorded before, which live until their upload batch completes. Nothing is dropped.
+//    1 when something was freed.
+// 2. The purge: the cache budget was too large for what the device has left beside the game's pools, so it loses the
+//    device's overshoot (cache_budget_shrink): the bytes in use above the VRAM pressure threshold
+//    (AC_TEX_VRAM_PRESSURE, 90% or the Steam Deck's 70%), and at least the failed decode's texels. Every entry that can
+//    come back intact goes, least recently used first, down to the new budget; then vk_mem_reclaim waits for the GPU
+//    to be done with their images and frees them. 1 when entries were dropped.
+//
+// From the first call on, the ASTC textures made are BC3 instead of RGBA8 (vk_astc.c vk_astc_low_memory). keep is the
+// entry being uploaded, which may itself be old enough to qualify. Every other entry the caller may hold was used in
+// this submit (last_use) and does not qualify either. tex_lock held, outside vk_upload_begin / vk_upload_end.
+static int tex_reclaim(const Tex *keep, VkDeviceSize decode_bytes) {
+    static uint32_t n_logs, flush_epoch, purge_epoch;   // submit_epoch is never 0
+    vk_astc_low_memory();
+    if (flush_epoch == submit_epoch && purge_epoch == submit_epoch) return 0;
+    uint64_t used0 = 0, dev = 0, used = 0, budget = 0;
+    int exact;
+    vk_mem_vram(&used0, &dev, &exact);
+    if (flush_epoch != submit_epoch) {
+        flush_epoch = submit_epoch;
+        int freed = vk_mem_reclaim(vk_sync_issued());
+        if (n_logs < 32) {
+            n_logs++;
+            vk_mem_vram(&used, &budget, &exact);
+            rt_log("vk: video memory full at an ASTC decode of %.1f MiB (%llu of %llu MiB in use): %d deferred objects "
+                   "freed once the GPU was done with them; %llu MiB in use",
+                   decode_bytes / 1048576.0, (unsigned long long)(used0 >> 20), (unsigned long long)(dev >> 20), freed,
+                   (unsigned long long)(used >> 20));
+        }
+        if (freed) return 1;
+    }
+    if (purge_epoch == submit_epoch) return 0;
+    purge_epoch = submit_epoch;
+    cache_budget_init();
+    uint64_t was = cache_budget, held = own_bytes;
+    uint64_t over = 0, pct = vram_pressure > 0 ? (uint64_t)vram_pressure : 90;
+    if (used0 > dev / 100 * pct) over = used0 - dev / 100 * pct;
+    if (over < decode_bytes) over = decode_bytes;
+    cache_budget_shrink(over);
+    uint32_t n = 0, cap = 0, dropped = 0;
+    uint64_t dropped_bytes = 0;
+    Tex **list = NULL;
+    for (uint32_t i = 0; i < by_key.cap; i++) {
+        Tex *e = by_key.vals[i];
+        if (!e || e == keep || !cache_evictable(e)) continue;
+        if (n == cap && !(list = realloc(list, sizeof *list * (cap = cap ? 2 * cap : 256))))
+            rt_fatal("vk: out of memory for the texture purge list");
+        list[n++] = e;
+    }
+    if (n) qsort(list, n, sizeof *list, reclaim_order);
+    // Unused for CACHE_AGE submits (cache_evictable): no submission after the newest submitted value uses them.
+    uint64_t tl = vk_sync_issued();
+    purge_tl = tl;
+    for (uint32_t i = 0; i < n && own_bytes > cache_budget; i++) {
+        n_cache_drops++, n_cache_drop_bytes += list[i]->bytes;
+        dropped++, dropped_bytes += list[i]->bytes;
+        pre_keep(list[i]);
+        destroy_tex(list[i]);
+    }
+    purge_tl = 0;
+    free(list);
+    int freed = dropped ? vk_mem_reclaim(tl) : 0;   // nothing dropped: nothing to wait for
+    if (n_logs < 32) {
+        n_logs++;
+        vk_mem_vram(&used, &budget, &exact);
+        rt_log("vk: video memory full at an ASTC decode of %.1f MiB (%llu of %llu MiB in use): texture cache budget "
+               "%llu -> %llu MiB (it held %llu MiB), %u entries dropped (%llu MiB), %d objects freed; %llu MiB in use",
+               decode_bytes / 1048576.0, (unsigned long long)(used0 >> 20), (unsigned long long)(dev >> 20),
+               (unsigned long long)(was >> 20), (unsigned long long)(cache_budget >> 20), (unsigned long long)(held >> 20),
+               dropped, (unsigned long long)(dropped_bytes >> 20), freed, (unsigned long long)(used >> 20));
+    }
+    return dropped != 0;
 }
 
 // ---------------------------------------------------------------- uploads
@@ -1129,6 +1269,7 @@ static void upload(Tex *e) {
     const nvn_texdesc *d = &t->d;
     int bw, bh, bpb = nvn_fmt_bpb(d->format, &bw, &bh);
     if (!bpb || !t->mem || e->bc_flip) return;
+    if (e->nomem_epoch && e->nomem_epoch == submit_epoch) return;   // video memory full in this submit: the next one
     uint64_t p0 = perf_begin(), u0 = kern_now_ns();
     int linear = nvn_tex_is_linear(d), is3d = d->target == NVN_TEXTURE_TARGET_3D, one_d = e->pub.type == VK_IMAGE_TYPE_1D;
     // AC_ASTC_BC=bc1: an upload is the moment the storage's content is read, so the alpha scan runs again.
@@ -1168,7 +1309,7 @@ static void upload(Tex *e) {
     VkBuffer sb, rbuf = VK_NULL_HANDLE;
     VmaAllocation ralloc = NULL;
     uint8_t *rmap = NULL, *raw_copy = NULL;
-    int checked = 0, parts = 1;
+    int checked = 0, parts = 1, host = 0;   // host: the decoder's scratch comes from system memory
     // A CPU decode or copy stages at most UPLOAD_PART bytes per staging buffer (a region larger than that alone) and
     // records one copy per buffer; every part stays in the same upload batch, submitted as before. The GPU decoder
     // takes the raw blocks of every region from one buffer.
@@ -1216,12 +1357,29 @@ static void upload(Tex *e) {
         barrier(cb, ALL_RW, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         if (agpu) {
             uint64_t a0 = perf_begin();
-            checked = vk_astc_record(cb, sb, size, ar, (int)n, e->f.astc_bw, e->f.astc_bh, e->f.astc_srgb, e->f.astc_bc,
-                                     e->pub.image, e->pub.aspect, rbuf);
+            checked = (host ? vk_astc_record_host : vk_astc_record)(cb, sb, size, ar, (int)n, e->f.astc_bw, e->f.astc_bh,
+                                                                    e->f.astc_srgb, e->f.astc_bc, e->pub.image,
+                                                                    e->pub.aspect, rbuf);
             perf_end(PERF_ASTC, a0);
-            if (!checked)
-                log_limited(&n_undecoded, "ASTC texture %#llx (fmt %#x %ux%u) not decoded on the GPU: left as it was",
-                            (unsigned long long)e->pub.addr, d->format, d->width, d->height);
+            if (checked == VK_ASTC_NO_SCRATCH && !host) {
+                // Video memory full, nothing recorded. The decode is recorded again while freeing memory helps
+                // (tex_reclaim: at most twice a submit), then once with its scratch in system memory. Freeing submits
+                // this batch, and its staging buffer goes with it: the part (the only one, the GPU decoder takes
+                // every region from one buffer, so base is 0) is staged again.
+                vk_upload_end();
+                if (!tex_reclaim(e, decoded)) host = 1;
+                if (acheck) {
+                    vmaDestroyBuffer(vk_ctx()->vma, rbuf, ralloc);
+                    rbuf = VK_NULL_HANDLE, ralloc = NULL;
+                    free(raw_copy), raw_copy = NULL;
+                }
+                k1 = k0;
+                continue;
+            }
+            if (checked <= 0)
+                log_limited(&n_undecoded, "ASTC texture %#llx (fmt %#x %ux%u) not decoded on the GPU: %s",
+                            (unsigned long long)e->pub.addr, d->format, d->width, d->height,
+                            checked ? "decoded again at its next use" : "left as it was");
         } else {
             vkCmdCopyBufferToImage(cb, sb, e->pub.image, VK_IMAGE_LAYOUT_GENERAL, k1 - k0, rg + k0);
         }
@@ -1234,7 +1392,7 @@ static void upload(Tex *e) {
                     parts);
     if (acheck) {   // waits for the GPU
         vk_upload_flush(1);
-        if (checked) {
+        if (checked > 0) {
             vmaInvalidateAllocation(vk_ctx()->vma, ralloc, 0, VK_WHOLE_SIZE);
             astc_check(e, raw_copy, ar, (int)n, rmap);
         }
@@ -1259,7 +1417,11 @@ static void upload(Tex *e) {
         if (astc && !pre_in_step) pre_n_draw++, pre_tx_draw += decoded / 4;
     }
     e->wt_n = 0;
-    e->uploaded = 1;
+    // Neither video memory, after what this submit could free, nor system memory had room for the decoder's scratch:
+    // the image did not get the content, and an entry counted as uploaded is only uploaded again when its storage
+    // changes. Not counted, the next use (make_fresh) tries again.
+    e->uploaded = checked != VK_ASTC_NO_SCRATCH;
+    e->nomem_epoch = e->uploaded ? 0 : submit_epoch ? submit_epoch : 1;
     e->n_up++;
     perf_end(PERF_TEX, p0);
 }
@@ -1950,11 +2112,25 @@ static int image_texels_at(Tex *e, const Region *g, const NVNcopyRegion *r, uint
             uint64_t a0 = perf_begin();
             done = vk_astc_record(cb, sb, slice * (size_t)g->nz, ar, g->nz, e->f.astc_bw, e->f.astc_bh, e->f.astc_srgb, e->f.astc_bc,
                                   e->pub.image, aspect, VK_NULL_HANDLE);
+            // Video memory full, nothing recorded. These texels exist nowhere else when the texture is not mirrored or
+            // the GPU owns it, so a write left out stayed missing for as long as the game used the texture. The decode
+            // is recorded again while freeing memory helps (tex_reclaim: at most twice a submit), then once with its
+            // scratch in system memory. The staging buffer is this function's, so it outlives the batch that freeing
+            // submits; that batch took the barrier, which the next one needs again.
+            for (int again = 1; done == VK_ASTC_NO_SCRATCH && again;) {
+                vk_upload_end();
+                again = tex_reclaim(e, (VkDeviceSize)texels * 4 * (VkDeviceSize)g->nz);
+                cb = vk_upload_begin();
+                barrier(cb, ALL_RW, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                done = (again ? vk_astc_record : vk_astc_record_host)(cb, sb, slice * (size_t)g->nz, ar, g->nz,
+                                                                      e->f.astc_bw, e->f.astc_bh, e->f.astc_srgb,
+                                                                      e->f.astc_bc, e->pub.image, aspect, VK_NULL_HANDLE);
+            }
             perf_end(PERF_ASTC, a0);
             free(ar);
         }
         if (!agpu) vkCmdCopyBufferToImage(cb, sb, e->pub.image, VK_IMAGE_LAYOUT_GENERAL, (uint32_t)g->nz, rg);
-        else if (!done) log_limited(&n_astc, "WriteTexels of ASTC texture %#llx not decoded on the GPU: left as it was",
+        else if (done <= 0) log_limited(&n_astc, "WriteTexels of ASTC texture %#llx not decoded on the GPU: left as it was",
                                     (unsigned long long)e->pub.addr);
         barrier(cb, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, ALL_RW);
     } else {

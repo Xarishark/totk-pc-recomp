@@ -226,6 +226,16 @@ Every guest thread is a host thread. Astral Chain assumes Horizon's scheduler: t
   permutes 16-byte sectors) picks BC1 for the provably opaque textures — the same colour quality as BC3 at half its
   size — and BC3 for the rest. Both lose against RGBA8 (blockier gradients, less precise normal maps), which shows
   most on the environments' large tiled surfaces. `1` forces BC3 everywhere.
+  Video memory can still run short: the RGBA8 textures outgrow a 6 GB card, or another program takes memory after the
+  game started (a recorder) and the system lowers the game's budget. Two guards, both for the rest of the session.
+  Before anything fails, once the device is over its whole budget, RGBA8 turns into BC3 for every ASTC texture made
+  from then on and the texture cache's budget drops to what it holds less the overshoot past `AC_TEX_VRAM_PRESSURE`
+  (`vk_texture.c` `over_budget`, `vk_astc.c` `vk_astc_low_memory`). When an ASTC decode finds no room for its scratch
+  buffer anyway, the deferred objects that are done are freed (the scratch buffers of the decodes before it first) and
+  the decode runs again; then the cache budget drops the same way, the entries that can come back intact are purged
+  and the decode runs again; at last the scratch is taken from system memory, slower but never left out
+  (`vk_texture.c` `tex_reclaim`, `vk_astc.c` `vk_astc_record_host`). A texture that still got nothing is decoded again
+  at its next use instead of keeping stale memory.
   --probe-astc holds both encoders and the scan to PSNR and exactness bounds. The CPU decoder (`tex_astc*.c`) is the fallback and the test oracle.
 - Draw state. A draw whose program, bound state and textures repeat reuses the previous draw's shaders and skips rebuilding its descriptor sets; descriptor sets are written through update templates (`vk_exec_draw.c`, `vk_pipeline.c`).
 - Allocation: Vulkan Memory Allocator. Debugging: Vulkan validation layers, per-pass frame dumps (`AC_DUMP`, `vk_dump.c`) and a flight recorder (`AC_FLIGHT`). RenderDoc cannot capture, because it hides `VK_EXT_external_memory_host` from the application.

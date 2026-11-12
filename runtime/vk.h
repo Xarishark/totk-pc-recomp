@@ -302,9 +302,15 @@ void *vk_staging(VkDeviceSize size, VkBuffer *buf, VmaAllocation *alloc);
 uint64_t vk_upload_flush(int wait);
 // Deferred destruction: freed once the upload batches recorded so far and the timeline value last noted have completed.
 void vk_defer_image(VkImage img, VmaAllocation alloc);   // alloc NULL: vkDestroyImage only
+// The same, for an image no submission after timeline value tl uses (the texture cache's purge of entries unused for
+// many submits): freed once tl is done, not the value of a submission still being recorded.
+void vk_defer_image_after(VkImage img, VmaAllocation alloc, uint64_t tl);
 void vk_defer_view(VkImageView view);
 void vk_exec_image_gone(VkImage image);   // destroy_tex, texture lock held: the replay's views of image go with it
 void vk_defer_buffer(VkBuffer buf, VmaAllocation alloc);
+// The same, for a buffer only upload batches use (the ASTC decoder's scratch): freed once the batches recorded so far
+// have completed, without waiting for the frames in flight, which never see it.
+void vk_defer_buffer_upload(VkBuffer buf, VmaAllocation alloc);
 VmaPool vk_scratch_pool(const VkBufferCreateInfo *bi);   // the ASTC decoder's scratch pool for bi; NULL: the default pool
 // ---- ASTC (vk_astc.c). AC_ASTC = auto | gpu | native | cpu | check; see vk_astc.c.
 enum { VK_ASTC_CPU, VK_ASTC_GPU, VK_ASTC_NATIVE, VK_ASTC_CHECK };
@@ -313,7 +319,11 @@ int vk_astc_native(VkFormat astc_fmt);  // 1: images of this ASTC format are cre
 int vk_astc_gpu(void);                  // 1: ASTC images decoded to RGBA8 by the compute decoder (vk_astc_record)
 int vk_astc_bc(void);                   // the recompression of those images: 0 none (RGBA8), 1 BC3 (AC_ASTC_BC=1),
                                         // 2 BC1 for the textures the alpha scan proves opaque (AC_ASTC_BC=bc1,
-                                        // the default), BC3 for the rest; the per-texture choice is vk_texture.c's
+                                        // the default), BC3 for the rest; the per-texture choice is vk_texture.c's.
+                                        // 0 turns into 1 when video memory is short (vk_astc_low_memory).
+int vk_astc_low_memory(void);           // vk_texture.c, video memory over its budget or full: new ASTC images are BC3
+                                        // for the rest of the run (when they were RGBA8); 1 when the switch happened
+                                        // in this call
 // One image region decoded from raw blocks: tight rows of 16-byte blocks at byte src of the source buffer (slices one
 // after the other), w x h texels and slices deep, written at offset of level / layer.
 typedef struct { VkDeviceSize src; uint32_t w, h, slices, level, layer; VkOffset3D offset; } VkAstcRegion;
@@ -323,9 +333,16 @@ typedef struct { VkDeviceSize src; uint32_t w, h, slices, level, layer; VkOffset
 // call. readback (optional, host-visible, TRANSFER_DST): also gets the decoded texels, the regions one after the other.
 // bc: img is BC3 (TexVkFormat.astc_bc 1) or BC1 (2); the texels are encoded to BC blocks before the copy, and
 // readback is ignored.
-// 0 when the decoder is unavailable or the scratch buffer cannot be allocated (nothing recorded).
+// 1 when recorded; 0 when the decoder is unavailable or refuses the regions; VK_ASTC_NO_SCRATCH when its scratch buffer
+// does not fit in video memory, which freeing memory (vk_mem_reclaim) can change. Nothing is recorded unless 1.
+enum { VK_ASTC_NO_SCRATCH = -1 };
 int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, const VkAstcRegion *rg, int n, uint32_t bw,
                    uint32_t bh, int srgb, int bc, VkImage img, VkImageAspectFlags aspect, VkBuffer readback);
+// The same with the scratch buffer in system memory: the last resort once vk_astc_record returned VK_ASTC_NO_SCRATCH
+// and freeing video memory did not help. The decode is slower there on a discrete GPU, but the image gets its content.
+int vk_astc_record_host(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, const VkAstcRegion *rg, int n,
+                        uint32_t bw, uint32_t bh, int srgb, int bc, VkImage img, VkImageAspectFlags aspect,
+                        VkBuffer readback);
 void vk_astc_stats(uint64_t *dispatches, uint64_t *texels);   // since start
 // AC_ASTC_TIME=1: GPU timestamps around each vk_astc_record's dispatches (logged per footprint and the largest one)
 void vk_astc_time_enable(int on);
@@ -334,6 +351,12 @@ void vk_astc_time_summary(void);        // logs the totals
 void vk_astc_release(void);             // vk_device.c, before the device goes: frees the decoder's objects
 void vk_mem_note_submit(uint64_t timeline_value);  // vk_sync.c: after each submit that signals ctx->timeline with this value
 void vk_mem_collect(void);                         // frees what has completed
+// Video memory full (vk_texture.c tex_reclaim): submits the open upload batch, waits for the upload batches and (at most
+// half a second) for timeline value tl, a submitted one (vk_sync_issued), then frees every deferred object that is done:
+// the scratch buffers of the decodes recorded so far (vk_defer_buffer_upload) and what was deferred with
+// vk_defer_image_after(.., tl) give their memory back now. Not between vk_upload_begin and vk_upload_end. Returns the
+// number of objects freed.
+int vk_mem_reclaim(uint64_t tl);
 typedef struct { uint64_t imported_pools, physical_pools, virtual_pools, import_failures, upload_batches; } VkMemStats;
 void vk_mem_stats(VkMemStats *s);
 void vk_mem_shutdown(void);                        // before vk_shutdown: waits idle, frees every memory and texture object

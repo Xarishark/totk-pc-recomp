@@ -2242,13 +2242,28 @@ uint64_t vk_upload_flush(int wait) {
     return seq;
 }
 
-static void defer(int kind, uint64_t handle, VmaAllocation alloc) {
+// tl: the timeline value the object waits for besides the upload batches; never later than the newest submitted one,
+// which TL_NOTED asks for. 0: the upload batches only.
+#define TL_NOTED UINT64_MAX
+
+static void defer_tl(int kind, uint64_t handle, VmaAllocation alloc, uint64_t tl) {
     plat_once(&cmd_once, cmd_init, NULL);
     plat_rmutex_lock(&cmd_lock);
     if (ndead == cap_dead) grow((void **)&dead, &cap_dead, sizeof *dead);
+    if (tl > tl_noted) tl = tl_noted;
     // The open batch may record into the object: it counts as the newest user.
-    dead[ndead++] = (Dead){kind, handle, alloc, open_active ? open_b.seq : next_seq, tl_noted};
+    dead[ndead++] = (Dead){kind, handle, alloc, open_active ? open_b.seq : next_seq, tl};
     plat_rmutex_unlock(&cmd_lock);
+}
+
+static void defer(int kind, uint64_t handle, VmaAllocation alloc) { defer_tl(kind, handle, alloc, TL_NOTED); }
+
+void vk_defer_image_after(VkImage img, VmaAllocation alloc, uint64_t tl) {
+    if (img) defer_tl(alloc ? DEAD_IMAGE_VMA : DEAD_IMAGE, (uint64_t)(uintptr_t)img, alloc, tl);
+}
+
+void vk_defer_buffer_upload(VkBuffer buf, VmaAllocation alloc) {
+    if (buf) defer_tl(DEAD_BUFFER_VMA, (uint64_t)(uintptr_t)buf, alloc, 0);
 }
 
 static int dead_pending(void) {
@@ -2281,6 +2296,36 @@ void vk_mem_collect(void) {
     plat_rmutex_lock(&cmd_lock);
     collect_locked(c);
     plat_rmutex_unlock(&cmd_lock);
+}
+
+// Video memory full (vk_texture.c tex_reclaim): the deferred objects are freed once the upload batches and the frames
+// in flight are done with them, which the next collect would see a frame or two later; the allocation that failed needs
+// their memory now. That is the ASTC decoder's scratch buffers of the textures this submit already uploaded
+// (vk_defer_buffer_upload: a load decodes tens of them into one batch, each with a scratch of up to 32 MiB and more),
+// and the images of a texture cache purge (vk_defer_image_after). The open batch goes to the queue (a deferred object
+// counts it as a user), then the CPU waits for it and for timeline value tl. tl must be a submitted value
+// (vk_sync_issued): the value of a submission still being recorded is only signalled once its recording, maybe the
+// caller's own thread, is done. The wait is bounded: the frames in flight end within a few frame times, and a GPU that
+// does not (a hang) leaves the objects to a later collect instead of holding the caller.
+#define RECLAIM_WAIT_NS 500000000ull
+
+int vk_mem_reclaim(uint64_t tl) {
+    VkCtx *c = vk_ctx();
+    if (!c) return 0;
+    plat_rmutex_lock(&cmd_lock);
+    int before = ndead;   // before the flush, whose collect may free some of them already
+    plat_rmutex_unlock(&cmd_lock);
+    vk_upload_flush(1);
+    if (c->timeline && tl) {
+        VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1,
+                                  .pSemaphores = &c->timeline, .pValues = &tl};
+        vkWaitSemaphores(c->device, &wi, RECLAIM_WAIT_NS);
+    }
+    plat_rmutex_lock(&cmd_lock);
+    collect_locked(c);
+    int freed = before - ndead;
+    plat_rmutex_unlock(&cmd_lock);
+    return freed > 0 ? freed : 0;
 }
 
 void vk_mem_stats(VkMemStats *s) {

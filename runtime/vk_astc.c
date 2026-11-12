@@ -2,7 +2,8 @@
 // decoder (tex_astc.c) would have written, and the native ASTC formats where the device samples them itself.
 //
 // AC_ASTC_BC (gpu mode only) = auto (default): 0 on a discrete GPU with 6 GB of video memory or more, bc1 below
-// it and on integrated GPUs (auto_bc). 0 keeps the decoded images as RGBA8, the quality of the ASTC data.
+// it and on integrated GPUs (auto_bc). 0 keeps the decoded images as RGBA8, the quality of the ASTC data, until video
+// memory is short: the textures made after that are BC3 (vk_astc_low_memory).
 // bc1: a second pass encodes the decoded texels to block compression and the image is compressed instead of
 // RGBA8. The alpha scan of the raw storage (tex_astc.c astc_storage_alpha_possible, vk_texture.c) picks the
 // format per texture: one whose every block decodes alpha 255 takes BC1 (runtime/shaders/bc1_encode.comp,
@@ -122,6 +123,7 @@ static struct {
     VkBuffer tab;                 // device-local copy of the tables
     VmaAllocation tab_alloc;
     int tab_uploaded;
+    int low_memory;               // video memory was short on dev (vk_astc_low_memory): bc forced to BC3 from then on
 } G = {.mode = -1};
 static uint64_t n_dispatch, n_texels, n_chunks;   // n_chunks: the breadcrumb number of the next scratch chunk
 
@@ -465,6 +467,34 @@ int vk_astc_bc(void) {
     return on;
 }
 
+// Video memory is short (vk_texture.c, the first time: the device is over its budget, sweep_pressure, or an allocation
+// failed, tex_reclaim): RGBA8 was the choice of AC_ASTC_BC=auto or 0 for a card it assumed large enough, and the
+// session proved it is not, or another program took the memory since (a recorder started after the game). The ASTC
+// textures made from here on are encoded to BC3, a quarter of RGBA8's bytes, for the rest of the run. The images
+// already made keep their format (each entry holds its own, TexVkFormat.astc_bc) until the cache drops them and they
+// come back as BC3. BC3 rather than bc1: bc1 needs the alpha scan's CPU time on every new texture and its entries are
+// traded when the verdict changes, which the RGBA8 setup never armed. Once per device; nothing when the images are
+// already compressed or the device does not sample BC3. Returns 1 when the switch happened in this call.
+int vk_astc_low_memory(void) {
+    VkCtx *c = vk_ctx();
+    if (!c || vk_astc_mode() != VK_ASTC_GPU) return 0;
+    plat_mutex_lock_shared(&g_lock);   // every call after the first ends here
+    int todo = G.dev == c->device && G.pipe && !G.bc && !G.low_memory;
+    plat_mutex_unlock_shared(&g_lock);
+    if (!todo) return 0;
+    int now = 0;
+    plat_mutex_lock(&g_lock);
+    if (G.dev == c->device && G.pipe && !G.bc && !G.low_memory) {
+        G.low_memory = 1;
+        if (G.bc_pipe || create_bc_pipeline(c)) G.bc = 1, now = 1;
+    }
+    plat_mutex_unlock(&g_lock);
+    if (now)
+        rt_log("vk: video memory is short: ASTC textures made from now on are encoded to BC3 (a quarter of RGBA8) for "
+               "the rest of the run");
+    return now;
+}
+
 static void mem_barrier(VkCommandBuffer cb, VkPipelineStageFlags2 src, VkAccessFlags2 sa, VkPipelineStageFlags2 dst,
                         VkAccessFlags2 da) {
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = src, .srcAccessMask = sa,
@@ -487,9 +517,10 @@ static VkDeviceSize region_bc(const VkAstcRegion *r, int bc) {   // BC1: 8, BC3:
 
 typedef struct { uint32_t in_base, out_base, width, height, bx, bslice; } BcPush;   // bc3_encode.comp Params
 
-int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, const VkAstcRegion *rg, int n, uint32_t bw,
-                   uint32_t bh, int srgb, int bc, VkImage img, VkImageAspectFlags aspect, VkBuffer readback) {
-    static volatile int32_t n_fail, n_unaligned;
+// vk_astc_record (host 0) and vk_astc_record_host (host 1: the scratch buffer comes from system memory).
+static int record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, const VkAstcRegion *rg, int n, uint32_t bw,
+                  uint32_t bh, int srgb, int bc, VkImage img, VkImageAspectFlags aspect, VkBuffer readback, int host) {
+    static volatile int32_t n_fail, n_host, n_unaligned;
     (void)src_size;
     VkCtx *c = vk_ctx();
     if (!c || !vk_astc_gpu() || bw < 4 || bh < 4 || bw > 12 || bh > 12) return 0;
@@ -532,11 +563,34 @@ int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, cons
     VmaAllocationCreateInfo aci = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE, .pool = vk_scratch_pool(&bi)};
     VkBuffer sb;
     VmaAllocation sa;
-    if (vmaCreateBuffer(c->vma, &bi, &aci, &sb, &sa, NULL) != VK_SUCCESS) {
+    VkResult vr;
+    if (host) {
+        // Video memory has no room and freeing some did not help: the scratch goes where the staging buffers live
+        // (vk_memory.c vk_staging: host-visible, cached when the device has it), which is system memory on a discrete
+        // GPU. The dispatches read and write it across the bus, slower than video memory, and the image still gets
+        // its texels instead of keeping what its memory held.
+        VmaAllocationCreateInfo sys = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                       .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT};
+        vr = vmaCreateBuffer(c->vma, &bi, &sys, &sb, &sa, NULL);
+        if (vr == VK_SUCCESS && plat_inc32(&n_host) <= 16)
+            rt_log("vk: ASTC scratch buffer of %llu bytes taken from system memory: video memory full",
+                   (unsigned long long)bi.size);
+    } else {
+        vr = vmaCreateBuffer(c->vma, &bi, &aci, &sb, &sa, NULL);
+        if (vr != VK_SUCCESS && aci.pool) {
+            // The scratch pool needs a new block and the device refused it (video memory full). The free ranges inside
+            // the default pool's blocks may still hold it; NEVER_ALLOCATE takes one of those without asking the device
+            // for another block, so the scratch only borrows a hole the texture images already left.
+            VmaAllocationCreateInfo hole = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+                                            .flags = VMA_ALLOCATION_CREATE_NEVER_ALLOCATE_BIT};
+            vr = vmaCreateBuffer(c->vma, &bi, &hole, &sb, &sa, NULL);
+        }
+    }
+    if (vr != VK_SUCCESS) {   // the caller frees video memory (vk_texture.c tex_reclaim) and calls again
         if (plat_inc32(&n_fail) <= 16)
-            rt_log("vk: ASTC scratch buffer of %llu bytes failed: texture left undecoded",
-                   (unsigned long long)(cap_in + cap_out));
-        return 0;
+            rt_log("vk: ASTC scratch buffer of %llu bytes failed (%d): %s memory full", (unsigned long long)bi.size,
+                   (int)vr, host ? "system" : "video");
+        return VK_ASTC_NO_SCRATCH;
     }
     plat_mutex_lock(&g_lock);
     int need_tab = !G.tab_uploaded;
@@ -670,8 +724,19 @@ int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, cons
     }
     n_dispatch += (uint64_t)n;
     free(copies), free(bcp);
-    vk_defer_buffer(sb, sa);
+    vk_defer_buffer_upload(sb, sa);   // only this batch uses it: its memory comes back when the batch is done
     return 1;
+}
+
+int vk_astc_record(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, const VkAstcRegion *rg, int n, uint32_t bw,
+                   uint32_t bh, int srgb, int bc, VkImage img, VkImageAspectFlags aspect, VkBuffer readback) {
+    return record(cb, src, src_size, rg, n, bw, bh, srgb, bc, img, aspect, readback, 0);
+}
+
+int vk_astc_record_host(VkCommandBuffer cb, VkBuffer src, VkDeviceSize src_size, const VkAstcRegion *rg, int n,
+                        uint32_t bw, uint32_t bh, int srgb, int bc, VkImage img, VkImageAspectFlags aspect,
+                        VkBuffer readback) {
+    return record(cb, src, src_size, rg, n, bw, bh, srgb, bc, img, aspect, readback, 1);
 }
 
 void vk_astc_release(void) {

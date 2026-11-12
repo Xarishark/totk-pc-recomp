@@ -155,7 +155,7 @@ static int gpu_decode(VkCtx *c, const uint8_t *blk, size_t n0, size_t n1, uint32
     vmaDestroyBuffer(c->vma, rb, ra), vmaDestroyBuffer(c->vma, ib, ia);
     vk_defer_image(im.img, im.alloc);
     vk_upload_flush(1);
-    return ok;
+    return ok > 0;
 }
 
 // The same two regions decoded and encoded to BC3 (bc 1) or BC1 (bc 2) (AC_ASTC_BC) into an image of that
@@ -193,7 +193,7 @@ static int gpu_bc(VkCtx *c, const uint8_t *blk, size_t n0, size_t n1, uint32_t w
     vmaDestroyBuffer(c->vma, ib, ia);
     vk_defer_image(im.img, im.alloc);
     vk_upload_flush(1);
-    return ok;
+    return ok > 0;
 }
 
 // One BC3 block to 16 RGBA8 texels, as the format defines it (565 endpoints widened by bit replication; the colour

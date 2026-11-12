@@ -295,7 +295,8 @@ static void machine_copy(PerfStats *d, const PerfStats *s) {
 
 // The texture holding as the overlay shows it: the ASTC mode (vk_astc.c) with the recompression the AC_ASTC_BC
 // knob resolved to. English like the other technical strings the panel shows (the device names, FSR's line); the
-// labels around them are ui_text.c's. AC_ASTC and ASTC_BC are startup knobs, so this does not move in play.
+// labels around them are ui_text.c's. AC_ASTC and ASTC_BC are startup knobs; RGBA8 turns into BC3 in play only when
+// video memory is short (vk_astc.c vk_astc_low_memory).
 static void tex_holding(char *out, size_t n) {
     switch (vk_astc_mode()) {
     case VK_ASTC_NATIVE: snprintf(out, n, "ASTC native"); break;
