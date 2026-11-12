@@ -622,64 +622,95 @@ void rt_cut_state(Cpu *c) {
 // screen's menus stay at 60. The player's BinkOpen call returns the handle (main+0x9BF058, x0), BinkClose
 // (main+0x9BF26C) and BinkWait (three sites) take it in x0. The sites are a set of their own (patches-v101.txt,
 // movies), on at 30 fps too, so a movie opened before a switch to 60 is known.
+//
+// Those four effect movies are 1280x720 and play in a loop on screens in the scene for as long as it lasts (three of
+// them are open at once in one scene). They hold a cutscene like any movie of their size, which costs as much to
+// decode, but they are not the picture: a movie below 1600x900 that loops is a screen (g_movie_screen), and
+// rt_movie_showing leaves it out. The event movies that loop, the title screen's backgrounds, are all 1600x900; the
+// 1280x720 event movies are story movies, played once.
 #define MOVIE_SLOTS 4
 #define MOVIE_MIN_PIXELS (1280u * 720u)
-static _Atomic uintptr_t g_movies[MOVIE_SLOTS];   // the open full-screen movies' Bink handles
+#define MOVIE_FULL_PIXELS (1600u * 900u)   // a looping movie of at least this size is the picture (a title background)
+#define PLAYER_LOOP 0x118                  // the player's loop word: non-zero, main+0x9BF6F0 skips its end-of-movie test
+static _Atomic uintptr_t g_movies[MOVIE_SLOTS];   // the open movies' Bink handles, those of MOVIE_MIN_PIXELS or more
+static _Atomic uint32_t g_movie_frame[MOVIE_SLOTS];   // each one's frame number at its last BinkWait
+static _Atomic int g_movie_screen[MOVIE_SLOTS];       // each one is a screen in the scene, not the picture
 static _Atomic uint64_t g_movie_wait_frame;      // the game frame (g_timer_frames) of the last BinkWait on one; 0 none
 // The same in presents, which count at 30 fps too (rt_fps_timer runs with the 60 fps patch only): the present count
-// plus one at the last open or BinkWait of a full-screen movie, 0 none (rt_movie_showing).
+// plus one at the last open or BinkWait of a movie that is the picture, 0 none (rt_movie_showing).
 static _Atomic uint64_t g_presents, g_movie_wait_present;
 
-static void movie_seen(void) {
+// A movie was opened or waited for its next frame: the hold counts from here, and the picture's shape too unless the
+// movie is a screen in the scene.
+static void movie_seen(int screen) {
     atomic_store_explicit(&g_movie_wait_frame, atomic_load_explicit(&g_timer_frames, memory_order_relaxed),
                           memory_order_relaxed);
-    atomic_store_explicit(&g_movie_wait_present, atomic_load_explicit(&g_presents, memory_order_relaxed) + 1,
-                          memory_order_relaxed);
+    if (!screen)
+        atomic_store_explicit(&g_movie_wait_present, atomic_load_explicit(&g_presents, memory_order_relaxed) + 1,
+                              memory_order_relaxed);
 }
 
-// x0 = the handle BinkOpen returned. HBINK starts with the width, the height and the frame count.
+// x0 = the handle BinkOpen returned, x20 = the player, whose loop word the open function set before the call. HBINK
+// starts with the width, the height, the frame count and the current frame's number.
 void rt_movie_opened(Cpu *c) {
     uintptr_t h = (uintptr_t)c->x[0];
     if (!h) return;
     const uint32_t *hb = (const uint32_t *)h;
     if ((uint64_t)hb[0] * hb[1] < MOVIE_MIN_PIXELS) return;
+    uint32_t loop;
+    memcpy(&loop, (const uint8_t *)(uintptr_t)c->x[20] + PLAYER_LOOP, sizeof loop);
+    int screen = loop && (uint64_t)hb[0] * hb[1] < MOVIE_FULL_PIXELS;
     for (int i = 0; i < MOVIE_SLOTS; i++) {
         uintptr_t none = 0;
         if (atomic_compare_exchange_strong(&g_movies[i], &none, h)) {
+            atomic_store(&g_movie_frame[i], hb[3]);
+            atomic_store(&g_movie_screen[i], screen);
             // It counts as playing from here on: the timer ran before the player in this frame, so without this the
             // frames up to the first BinkWait would step at 60.
-            movie_seen();
-            rt_log("frame rate: movie opened, %ux%u, %u frames (wall %.3f s); a cutscene holds 30 fps while it plays",
-                   hb[0], hb[1], hb[2], wall_s());
+            movie_seen(screen);
+            rt_log("frame rate: movie opened, %ux%u, %u frames%s (wall %.3f s); a cutscene holds 30 fps while it plays",
+                   hb[0], hb[1], hb[2], screen ? ", looping on a screen in the scene" : "", wall_s());
             return;
         }
     }
     // BinkClose has one caller in main (the site at main+0x9BF26C), so a slot is never left behind; this is more
-    // full-screen movies open at once than the table holds, and this one plays without the hold.
-    rt_log("frame rate: movie opened, %ux%u, but %d full-screen movies are open already: not tracked", hb[0], hb[1],
+    // movies of that size open at once than the table holds, and this one plays without the hold.
+    rt_log("frame rate: movie opened, %ux%u, but %d movies of that size are open already: not tracked", hb[0], hb[1],
            MOVIE_SLOTS);
 }
 
-// The last full-screen movie closing ends the hold at once; closing one of two (the opening's logo, before the
-// opening) keeps it.
+// The last movie closing ends the hold at once; closing one of two (the opening's logo, before the opening) keeps it.
+// The picture's shape likewise, with the last movie that is not a screen.
 void rt_movie_close(Cpu *c) {
     uintptr_t h = (uintptr_t)c->x[0];
-    int closed = 0, open = 0;
+    int closed = 0, open = 0, picture = 0;
     for (int i = 0; i < MOVIE_SLOTS; i++) {
         uintptr_t want = h;
         if (h && atomic_compare_exchange_strong(&g_movies[i], &want, 0)) closed = 1;
-        else if (atomic_load(&g_movies[i])) open = 1;
+        else if (atomic_load(&g_movies[i])) open = 1, picture |= !atomic_load(&g_movie_screen[i]);
     }
     if (!closed) return;
-    if (!open) atomic_store(&g_movie_wait_frame, 0), atomic_store(&g_movie_wait_present, 0);
+    if (!open) atomic_store(&g_movie_wait_frame, 0);
+    if (!picture) atomic_store(&g_movie_wait_present, 0);
     rt_log("frame rate: movie closed (wall %.3f s)", wall_s());
 }
 
+// A movie below MOVIE_FULL_PIXELS whose frame number went back has started over: it loops, whatever its player's loop
+// word said when it opened, and is a screen from then on.
 void rt_movie_wait(Cpu *c) {
     uintptr_t h = (uintptr_t)c->x[0];
     for (int i = 0; i < MOVIE_SLOTS; i++)
         if (h && atomic_load_explicit(&g_movies[i], memory_order_relaxed) == h) {
-            movie_seen();
+            const uint32_t *hb = (const uint32_t *)h;
+            int screen = atomic_load_explicit(&g_movie_screen[i], memory_order_relaxed);
+            uint32_t last = atomic_exchange_explicit(&g_movie_frame[i], hb[3], memory_order_relaxed);
+            if (!screen && hb[3] < last && (uint64_t)hb[0] * hb[1] < MOVIE_FULL_PIXELS) {
+                screen = 1;
+                atomic_store(&g_movie_screen[i], 1);
+                rt_log("frame rate: the %ux%u movie of %u frames started over: a screen in the scene (wall %.3f s)",
+                       hb[0], hb[1], hb[2], wall_s());
+            }
+            movie_seen(screen);
             return;
         }
 }
