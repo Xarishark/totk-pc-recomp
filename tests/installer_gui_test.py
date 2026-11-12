@@ -33,6 +33,7 @@ from installer.runner import Context  # noqa: E402
 from installer.steps import all_steps  # noqa: E402
 from installer.guilogic import (DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGE_LABELS,  # noqa: E402
                                 UI_LANGUAGES, Catalog, Form, Model, Process, amount, default_game_language,
+                                default_install_folder,
                                 describe_event, parse_line, ui_language_for_langid, windows_ui_language)
 
 INSTALLED = ROOT / 'build' / 'install-test'
@@ -208,6 +209,15 @@ class FormTest(unittest.TestCase):
 
     def test_unknown_language(self):
         self.assertEqual(self.form(lang='xx').problems(), ['ui.need_lang'])
+
+    def test_default_install_folder_is_inside_the_release(self):
+        release = SimpleNamespace(dev=False, root=Path('C:/Games/Astral Chain Setup'))
+        want = str(release.root / 'Astral Chain') if os.name == 'nt' else ''
+        self.assertEqual(default_install_folder(release), want)
+
+    def test_default_install_folder_is_empty_in_a_checkout(self):
+        checkout = SimpleNamespace(dev=True, root=Path('C:/src/astral'))
+        self.assertEqual(default_install_folder(checkout), '')
 
     def test_command(self):
         cmd = self.form().command('py.exe', root=ROOT, temp=self.dir / 't', verify_hashes=True)

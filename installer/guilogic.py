@@ -37,6 +37,22 @@ LANG_PT_BR = 0x0416   # Portuguese (Brazil), the whole LANGID: Portugal's Portug
 # the window does not have.
 LANGIDS_ZH_HANS = (0x0804, 0x1004)
 
+# The folder the window suggests for the game, next to the setup's own folders. A launcher that unpacks each release
+# over the folder it keeps for the game then never touches the built game, which is not in the release zip.
+GAME_FOLDER = 'Astral Chain'
+
+
+def default_install_folder(layout):
+    """The install folder to suggest: a new folder inside the unpacked release (Windows release only).
+
+    The check step refuses a non-empty folder, so the release folder itself is never a valid choice. A subfolder keeps
+    the built game apart from the setup's tools, and a newer release unpacked over the release folder leaves it alone.
+    The Linux release runs from a read-only AppImage mount and a repository checkout has no unpacked release, so those
+    get no suggestion."""
+    if layout.dev or os.name != 'nt':
+        return ''
+    return str(layout.root / GAME_FOLDER)
+
 
 def load_texts(lang):
     path = TEXT / f'{lang}.json'

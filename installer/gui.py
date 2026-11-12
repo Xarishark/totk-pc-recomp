@@ -27,7 +27,8 @@ except ImportError:
 from . import ini
 from . import layout as layouts
 from .guilogic import (DONE, FAILED, PENDING, RUNNING, SKIPPED, UI_LANGUAGE_LABELS, UI_LANGUAGES, Catalog, Form, Model,
-                       Process, amount, default_game_language, describe_event, parse_line, windows_ui_language)
+                       Process, amount, default_game_language, default_install_folder, describe_event, parse_line,
+                       windows_ui_language)
 
 POLL_MS = 100
 GLYPH = {PENDING: '\u25cb', RUNNING: '\u25b6', DONE: '\u2714', SKIPPED: '\u2013', FAILED: '\u2716'}
@@ -103,6 +104,8 @@ class App:
         self.body.pack(fill='both', expand=True)
         self.frames = {'form': self.build_form(), 'run': self.build_run(), 'finish': self.build_finish()}
         self.vars['lang'].set(self.lang_label(self.lang_code))
+        if not rebuild:
+            self.vars['dest'].set(default_install_folder(layout))
         self.vars['dest'].trace_add('write', lambda *_: self.refresh_form())
         self.show('form')
         if rebuild:
