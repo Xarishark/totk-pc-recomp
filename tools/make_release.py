@@ -241,8 +241,12 @@ def tcltk_files():
     msi = src / (name + '.msi')
     (src / name).rename(msi)
     shutil.rmtree(dest, ignore_errors=True)
-    # Administrative image: copies the MSI's files to TARGETDIR, installs nothing and shows no window.
-    run(['msiexec', '/a', msi, '/qn', f'TARGETDIR={dest}'])
+    # Administrative image: copies the MSI's files to TARGETDIR, installs nothing and shows no window. msiexec takes a
+    # property's value in quotes after the '=', not the whole argument quoted, which is what subprocess writes for a
+    # path with a space (exit 1639): the command line is written here instead.
+    cmd = f'msiexec /a "{msi}" /qn TARGETDIR="{dest}"'
+    print('+', cmd, flush=True)
+    subprocess.run(cmd, check=True)
     if not (dest / 'DLLs' / '_tkinter.pyd').is_file():
         sys.exit(f'{dest}: no _tkinter.pyd after msiexec /a')
     return dest

@@ -316,6 +316,7 @@ int frame_step_realtime(void);                             // the real-time step
 uint64_t frame_step_cap_ns(void);                          // with the real-time step: the shortest frame in ns
 double frame_step_limit_hz(void);                         // the frame rate the limit gives (overlay); 0 unknown
 int rt_movie_showing(void);                                // a full-screen movie is on screen (frame_rate.c); any thread
+void rt_movie_list(char *buf, size_t cap);                 // the open movies and their state, for a log line
 int frame_step_cutscene(void);                             // 1 while a cutscene holds presents to 30 under the 60 fps
                                                            // patch (frame_rate.c cutscene_rate); any thread
 int64_t frame_step_world_us(void);                         // game time since the loaded save's first frame, -1 before

@@ -846,7 +846,25 @@ static void wide_init(void) {
 float res_wide_tick(void) {
     wide_settings();
     if (!wide_arm()) return 0;
-    float shown = bits_f(&W.now), next = rt_movie_showing() ? WIDE_16X9 : wide_target();
+    // Logged whatever the trace: when a movie takes the picture to 16:9 and when it gives it back, with the open
+    // movies, and once more when it has kept it for MOVIE_LOG_PRESENTS presents (half a minute at 60 fps), so a log
+    // tells which movie keeps a scene between bars.
+    enum { MOVIE_LOG_PRESENTS = 1800 };
+    static int movie_was;
+    static unsigned movie_presents;
+    int movie = rt_movie_showing();
+    if (movie != movie_was || (movie && ++movie_presents == MOVIE_LOG_PRESENTS)) {
+        char list[256];
+        rt_movie_list(list, sizeof list);
+        if (movie != movie_was)
+            rt_log(movie ? "resolution: wide: 16:9 while a movie shows (%s)"
+                         : "resolution: wide: the movie is gone, back to the window's shape (%s)", list);
+        else
+            rt_log("resolution: wide: still 16:9 after %d presents of a movie (%s)", MOVIE_LOG_PRESENTS, list);
+        if (movie != movie_was) movie_presents = 0;
+        movie_was = movie;
+    }
+    float shown = bits_f(&W.now), next = movie ? WIDE_16X9 : wide_target();
     if (next != shown) {
         f_bits(&W.now, next);
         if (rt_trace & RT_TRACE_PERF) rt_log("resolution: wide: lens ratio %.4f -> %.4f", shown, next);
