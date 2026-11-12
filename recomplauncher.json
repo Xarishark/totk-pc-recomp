@@ -5,6 +5,7 @@
     "repo": "captainj-sparrow/astral-chain-pc-recomp",
     "start": {
         "program": [
+            "Astral Chain/astralchain.exe",
             "astralchain.exe",
             "Astral Chain-Setup.exe"
         ]

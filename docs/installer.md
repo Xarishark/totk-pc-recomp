@@ -16,9 +16,12 @@ folder to read: the game's own data carries everything.
    - the base game (XCI or NSP, version 1.0.0);
    - the update (NSP, version 1.0.1);
    - their `prod.keys`;
-   - the game language and the install folder.
+   - the game language and the install folder. The window suggests `Astral Chain` inside the unpacked setup folder;
+     the setup refuses a folder that is not empty, so the unpacked folder itself is never the install folder.
 3. Waits for the setup, one time. The window shows each step and its progress.
-4. Plays `astralchain.exe` from the install folder. The installer and the source files can be deleted.
+4. Plays `astralchain.exe` from the install folder. The installer and the source files can be deleted, or kept
+   beside it: the suggested folder holds only the game, so a launcher can unpack a newer setup over the setup folder
+   without touching it.
 
 The install folder (`main.c` `portable_paths()` reads this layout; it stays portable):
 
